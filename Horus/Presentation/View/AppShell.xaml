@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<Shell
+    x:Class="Horus.AppShell"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    xmlns:local="clr-namespace:Horus"
+    Title="Horus">
+
+    <TabBar 
+    Shell.BackgroundColor="{StaticResource NightPurple}" 
+    Shell.TabBarTitleColor="{StaticResource TextAccent}" 
+    Shell.TabBarUnselectedColor="{StaticResource TextMuted}">
+        <Tab Title="HOME">
+            <Tab.Icon>
+                <FontImageSource
+                Glyph="⊙"
+                FontFamily="OpenSansRegular"
+                Size="22"
+                />
+            </Tab.Icon>
+            <ShellContent
+            Title="Main"
+            ContentTemplate="{DataTemplate local:MainPage}"
+            Route="MainPage" />
+        </Tab>
+        <Tab Title="SETTINGS">
+            <Tab.Icon>
+                <FontImageSource
+                Glyph="⚙"
+                FontFamily="OpenSansRegular"
+                Size="22"
+            />
+            </Tab.Icon>
+            <ShellContent
+            Title="Settings"
+            ContentTemplate="{DataTemplate local:SettingsPage}"
+            Route="SettingsPage" />
+        </Tab>
+    </TabBar>
+
+</Shell>

@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="Horus.AuthPage"
+             Title="Horus"
+             NavigationPage.HasNavigationBar="False">
+
+    <Grid RowDefinitions="Auto,*,Auto"
+          BackgroundColor="{StaticResource DeepVoid}">
+
+        <!-- ── DECORATIVE BACKGROUND GLOWS ── -->
+        <AbsoluteLayout Grid.RowSpan="3">
+
+            <!-- Top purple radial glow -->
+            <Ellipse AbsoluteLayout.LayoutBounds="0.5, -0.05, 500, 500"
+                     AbsoluteLayout.LayoutFlags="XProportional,YProportional"
+                     WidthRequest="500"
+                     HeightRequest="500">
+                <Ellipse.Fill>
+                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                        <GradientStop Color="#664A2060" Offset="0.0" />
+                        <GradientStop Color="#003D1850" Offset="0.7" />
+                        <GradientStop Color="Transparent" Offset="1.0" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+
+            <!-- Bottom cyan glow hint -->
+            <Ellipse AbsoluteLayout.LayoutBounds="0.5, 1.05, 340, 340"
+                     AbsoluteLayout.LayoutFlags="XProportional,YProportional"
+                     WidthRequest="340"
+                     HeightRequest="340">
+                <Ellipse.Fill>
+                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                        <GradientStop Color="#2200E5FF" Offset="0.0" />
+                        <GradientStop Color="Transparent" Offset="1.0" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+
+        </AbsoluteLayout>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!--                    SCROLLABLE BODY                       -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Spacing="0" Padding="24,0">
+
+                <!-- ─────────────────────────────────── -->
+                <!--              LOGO / HERO             -->
+                <!-- ─────────────────────────────────── -->
+                <VerticalStackLayout HorizontalOptions="Center"
+                                     Spacing="8"
+                                     Margin="0,56,0,40">
+
+                    <!-- Icon ring -->
+                    <Grid HorizontalOptions="Center">
+                        <Ellipse WidthRequest="96"
+                                 HeightRequest="96"
+                                 HorizontalOptions="Center"
+                                 VerticalOptions="Center">
+                            <Ellipse.Fill>
+                                <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                                    <GradientStop Color="#3300E5FF" Offset="0.0" />
+                                    <GradientStop Color="Transparent" Offset="1.0" />
+                                </RadialGradientBrush>
+                            </Ellipse.Fill>
+                        </Ellipse>
+
+                        <Ellipse WidthRequest="72"
+                                 HeightRequest="72"
+                                 HorizontalOptions="Center"
+                                 VerticalOptions="Center"
+                                 StrokeThickness="1">
+                            <Ellipse.Stroke>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                    <GradientStop Color="#6600E5FF" Offset="0" />
+                                    <GradientStop Color="#33BF5FFF" Offset="1" />
+                                </LinearGradientBrush>
+                            </Ellipse.Stroke>
+                        </Ellipse>
+
+                        <Frame WidthRequest="72"
+                               HeightRequest="72"
+                               CornerRadius="36"
+                               Padding="0"
+                               HorizontalOptions="Center"
+                               VerticalOptions="Center"
+                               HasShadow="False"
+                               BorderColor="Transparent">
+                            <Frame.Background>
+                                <RadialGradientBrush>
+                                    <GradientStop Color="#4A2060" Offset="0" />
+                                    <GradientStop Color="#2E123BCC" Offset="1" />
+                                </RadialGradientBrush>
+                            </Frame.Background>
+                            <Label Text="🔐"
+                                   FontSize="28"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center" />
+                        </Frame>
+                    </Grid>
+
+                    <!-- App name -->
+                    <Label Text="HORUS"
+                           Style="{StaticResource LabelHeadline}"
+                           FontSize="{StaticResource FontSizeXXL}"
+                           CharacterSpacing="6"
+                           HorizontalOptions="Center" />
+
+                    <Label Text="SECURE · PRIVATE · FAST"
+                           Style="{StaticResource LabelCaption}"
+                           HorizontalOptions="Center" />
+
+                </VerticalStackLayout>
+
+                <!-- ─────────────────────────────────── -->
+                <!--           AUTH CARD                  -->
+                <!-- ─────────────────────────────────── -->
+                <Frame Style="{StaticResource CardFrame}" Padding="24">
+                    <VerticalStackLayout Spacing="20">
+
+                        <!-- Card heading -->
+                        <VerticalStackLayout Spacing="4">
+                            <Label x:Name="LblCardTitle"
+                                   Text="SIGN IN"
+                                   Style="{StaticResource LabelAccent}"
+                                   FontSize="{StaticResource FontSizeSM}" />
+                            <Label x:Name="LblCardSubtitle"
+                                   Text="Enter your credentials to continue"
+                                   Style="{StaticResource LabelSecondary}" />
+                        </VerticalStackLayout>
+
+                        <BoxView Style="{StaticResource Divider}" />
+
+                        <!-- Email field -->
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="LOGIN"
+                                   Style="{StaticResource LabelCaption}" />
+                            <Frame BackgroundColor="{StaticResource NightPurple}"
+                                   BorderColor="{StaticResource OverlayBorder}"
+                                   CornerRadius="{StaticResource RadiusMD}"
+                                   Padding="14,0"
+                                   HasShadow="False">
+                                <Entry x:Name="EntryLogin"
+                                       Style="{StaticResource EntryField}"
+                                       Placeholder="Login"
+                                       Keyboard="Text"
+                                       ReturnType="Next"
+                                       HeightRequest="46"
+                                       BackgroundColor="Transparent" />
+                            </Frame>
+                        </VerticalStackLayout>
+
+                        <!-- Password field -->
+                        <VerticalStackLayout Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <Label Text="PASSWORD"
+                                       Style="{StaticResource LabelCaption}"
+                                       VerticalOptions="Center" />
+                                <Label x:Name="LblForgot"
+                                       Grid.Column="1"
+                                       Text="Forgot?"
+                                       TextColor="{StaticResource NeonCyan}"
+                                       FontSize="{StaticResource FontSizeXS}"
+                                       CharacterSpacing="1"
+                                       VerticalOptions="Center">
+                                    <Label.GestureRecognizers>
+                                        <TapGestureRecognizer Tapped="OnForgotPasswordTapped" />
+                                    </Label.GestureRecognizers>
+                                </Label>
+                            </Grid>
+                            <Frame BackgroundColor="{StaticResource NightPurple}"
+                                   BorderColor="{StaticResource OverlayBorder}"
+                                   CornerRadius="{StaticResource RadiusMD}"
+                                   Padding="14,0"
+                                   HasShadow="False">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Entry x:Name="EntryPassword"
+                                           Style="{StaticResource EntryField}"
+                                           Placeholder="••••••••"
+                                           IsPassword="True"
+                                           ReturnType="Done"
+                                           HeightRequest="46"
+                                           BackgroundColor="Transparent"
+                                           ReturnCommand="{Binding LoginCommand}" />
+                                    <!-- Show/hide password toggle -->
+                                    <Label x:Name="LblTogglePassword"
+                                           Grid.Column="1"
+                                           Text="👁"
+                                           FontSize="18"
+                                           VerticalOptions="Center"
+                                           Margin="0,0,4,0">
+                                        <Label.GestureRecognizers>
+                                            <TapGestureRecognizer Tapped="OnTogglePasswordTapped" />
+                                        </Label.GestureRecognizers>
+                                    </Label>
+                                </Grid>
+                            </Frame>
+                        </VerticalStackLayout>
+
+                        <!-- Error message -->
+                        <Frame x:Name="FrameError"
+                               BackgroundColor="#33FF4466"
+                               BorderColor="#66FF4466"
+                               CornerRadius="{StaticResource RadiusSM}"
+                               Padding="12,8"
+                               HasShadow="False"
+                               IsVisible="{Binding HasError}">
+                            <HorizontalStackLayout Spacing="8">
+                                <Label Text="⚠"
+                                       TextColor="{StaticResource StatusDisconnected}"
+                                       FontSize="14"
+                                       VerticalOptions="Center" />
+                                <Label Text="{Binding ErrorMessage}"
+                                       TextColor="{StaticResource StatusDisconnected}"
+                                       FontSize="{StaticResource FontSizeSM}"
+                                       VerticalOptions="Center" />
+                            </HorizontalStackLayout>
+                        </Frame>
+
+                        <!-- Primary login button -->
+                        <Button x:Name="BtnLogin"
+                                Text="SIGN IN"
+                                Style="{StaticResource ButtonPrimary}"
+                                HorizontalOptions="Fill"
+                                Command="{Binding LoginCommand}">
+                            <Button.Triggers>
+                                <DataTrigger TargetType="Button"
+                                             Binding="{Binding IsLoading}"
+                                             Value="True">
+                                    <Setter Property="Text" Value="AUTHENTICATING..." />
+                                    <Setter Property="IsEnabled" Value="False" />
+                                    <Setter Property="Opacity" Value="0.7" />
+                                </DataTrigger>
+                            </Button.Triggers>
+                        </Button>
+
+                        <!-- Activity indicator while loading -->
+                        <ActivityIndicator IsRunning="{Binding IsLoading}"
+                                           IsVisible="{Binding IsLoading}"
+                                           Color="{StaticResource NeonCyan}"
+                                           HorizontalOptions="Center"
+                                           HeightRequest="24" />
+
+                    </VerticalStackLayout>
+                </Frame>
+
+                <!-- ─────────────────────────────────── -->
+                <!--         DIVIDER  ·  OR  ·           -->
+                <!-- ─────────────────────────────────── -->
+                <Grid ColumnDefinitions="*,Auto,*"
+                      Margin="0,20,0,20"
+                      VerticalOptions="Center">
+                    <BoxView Grid.Column="0"
+                             Style="{StaticResource Divider}"
+                             VerticalOptions="Center" />
+                    <Label Grid.Column="1"
+                           Text="OR"
+                           Style="{StaticResource LabelCaption}"
+                           Margin="12,0"
+                           VerticalOptions="Center" />
+                    <BoxView Grid.Column="2"
+                             Style="{StaticResource Divider}"
+                             VerticalOptions="Center" />
+                </Grid>
+
+                <!-- ─────────────────────────────────── -->
+                <!--         REGISTER LINK CARD          -->
+                <!-- ─────────────────────────────────── -->
+                <Frame Style="{StaticResource CardFrame}"
+                       Padding="20,16">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                            <Label Text="New to Horus?"
+                                   Style="{StaticResource LabelSecondary}" />
+                            <Label Text="Create a free account"
+                                   TextColor="{StaticResource NeonCyan}"
+                                   FontSize="{StaticResource FontSizeSM}"
+                                   CharacterSpacing="0.5">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnRegisterTapped" />
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </VerticalStackLayout>
+                        <Label Grid.Column="1"
+                               Text="→"
+                               TextColor="{StaticResource NeonCyan}"
+                               FontSize="20"
+                               VerticalOptions="Center">
+                            <Label.GestureRecognizers>
+                                <TapGestureRecognizer Tapped="OnRegisterTapped" />
+                            </Label.GestureRecognizers>
+                        </Label>
+                    </Grid>
+                </Frame>
+
+                <!-- ─────────────────────────────────── -->
+                <!--         SUBSCRIPTION STATUS         -->
+                <!-- ─────────────────────────────────── -->
+                <Frame Style="{StaticResource CardFrame}"
+                       Padding="16,12"
+                       Margin="0,12,0,0">
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Ellipse Grid.Column="0"
+                                 WidthRequest="8"
+                                 HeightRequest="8"
+                                 Fill="{StaticResource NeonCyan}"
+                                 VerticalOptions="Center"
+                                 Margin="0,0,10,0" />
+                        <VerticalStackLayout Grid.Column="1" Spacing="2">
+                            <Label Text="SUBSCRIPTION CHECK"
+                                   Style="{StaticResource LabelCaption}" />
+                            <Label Text="Verified server-side on every login"
+                                   Style="{StaticResource LabelSecondary}"
+                                   FontSize="{StaticResource FontSizeXS}" />
+                        </VerticalStackLayout>
+                    </Grid>
+                </Frame>
+
+                <!-- Bottom spacer -->
+                <BoxView HeightRequest="32" Color="Transparent" />
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <!-- ─────────────────────────────────── -->
+        <!--            BOTTOM VERSION BAR        -->
+        <!-- ─────────────────────────────────── -->
+        <Frame Grid.Row="2"
+               BackgroundColor="{StaticResource NightPurple}"
+               BorderColor="{StaticResource OverlayBorder}"
+               CornerRadius="0"
+               HasShadow="False"
+               Padding="20,10">
+            <Grid ColumnDefinitions="*,Auto">
+                <Label Text="HORUS VPN"
+                       Style="{StaticResource LabelCaption}"
+                       VerticalOptions="Center" />
+                <Label Grid.Column="1"
+                       Text="v1.0.0"
+                       Style="{StaticResource LabelCaption}"
+                       VerticalOptions="Center" />
+            </Grid>
+        </Frame>
+
+    </Grid>
+
+</ContentPage>

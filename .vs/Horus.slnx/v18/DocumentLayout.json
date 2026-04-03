@@ -1,0 +1,251 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "D:\\GitHub\\Horus\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\mainpage.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\mainpage.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\viewmodels\\mainviewmodel.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\viewmodels\\mainviewmodel.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\appshell.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\appshell.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\authpage.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\authpage.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\authpage.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\authpage.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\viewmodels\\authviewmodel.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\viewmodels\\authviewmodel.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\application\\subscriptionservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\application\\subscriptionservice.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\protocols\\hysteria2protocol.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\protocols\\hysteria2protocol.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\settingspage.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\settingspage.xaml.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\appshell.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\appshell.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\settingspage.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\settingspage.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\presentation\\view\\app.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\presentation\\view\\app.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\application\\vpnmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\application\\vpnmanager.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|d:\\github\\horus\\horus\\protocols\\protocolfactory.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{66EE8C27-C6EA-E8C6-7AA3-971D31F111FA}|Horus\\Horus.csproj|solutionrelative:horus\\protocols\\protocolfactory.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 6,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "AuthViewModel.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\ViewModels\\AuthViewModel.cs",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\ViewModels\\AuthViewModel.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\ViewModels\\AuthViewModel.cs",
+              "RelativeToolTip": "Horus\\Presentation\\ViewModels\\AuthViewModel.cs",
+              "ViewState": "AgIAAAIAAAAAAAAAAAAAAAUAAAAvAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-02T07:11:03.888Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "AuthPage.xaml.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AuthPage.xaml.cs",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\AuthPage.xaml.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AuthPage.xaml.cs",
+              "RelativeToolTip": "Horus\\Presentation\\View\\AuthPage.xaml.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAB8AAAABAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-02T07:08:12.112Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "AuthPage.xaml",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AuthPage.xaml",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\AuthPage.xaml",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AuthPage.xaml",
+              "RelativeToolTip": "Horus\\Presentation\\View\\AuthPage.xaml",
+              "ViewState": "AgIAANwAAAAAAAAAAAAAAAUBAAA2AAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2026-04-02T07:05:37.239Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "MainViewModel.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\ViewModels\\MainViewModel.cs",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\ViewModels\\MainViewModel.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\ViewModels\\MainViewModel.cs",
+              "RelativeToolTip": "Horus\\Presentation\\ViewModels\\MainViewModel.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAuwAsAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T15:14:40.379Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "AppShell.xaml.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AppShell.xaml.cs",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\AppShell.xaml.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AppShell.xaml.cs",
+              "RelativeToolTip": "Horus\\Presentation\\View\\AppShell.xaml.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T14:54:41.191Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "MainPage.xaml.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\MainPage.xaml.cs",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\MainPage.xaml.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\MainPage.xaml.cs",
+              "RelativeToolTip": "Horus\\Presentation\\View\\MainPage.xaml.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAsAAAAwAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T14:54:37.448Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 8,
+              "Title": "SettingsPage.xaml.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\SettingsPage.xaml.cs",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\SettingsPage.xaml.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\SettingsPage.xaml.cs",
+              "RelativeToolTip": "Horus\\Presentation\\View\\SettingsPage.xaml.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAMAAAACAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T14:54:28.861Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 10,
+              "Title": "SettingsPage.xaml",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\SettingsPage.xaml",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\SettingsPage.xaml",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\SettingsPage.xaml",
+              "RelativeToolTip": "Horus\\Presentation\\View\\SettingsPage.xaml",
+              "ViewState": "AgIAAMwBAAAAAAAAAAAAAAMAAAAbAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2026-04-01T14:51:31.292Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 9,
+              "Title": "AppShell.xaml",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AppShell.xaml",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\AppShell.xaml",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\AppShell.xaml",
+              "RelativeToolTip": "Horus\\Presentation\\View\\AppShell.xaml",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAACYAAAANAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2026-04-01T14:45:52.997Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 11,
+              "Title": "App.xaml",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\App.xaml",
+              "RelativeDocumentMoniker": "Horus\\Presentation\\View\\App.xaml",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Presentation\\View\\App.xaml",
+              "RelativeToolTip": "Horus\\Presentation\\View\\App.xaml",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAALEAAAAcAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2026-04-01T14:45:46.072Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "Hysteria2Protocol.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Protocols\\Hysteria2Protocol.cs",
+              "RelativeDocumentMoniker": "Horus\\Protocols\\Hysteria2Protocol.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Protocols\\Hysteria2Protocol.cs",
+              "RelativeToolTip": "Horus\\Protocols\\Hysteria2Protocol.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAoAAAAKAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T14:13:55.329Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 13,
+              "Title": "ProtocolFactory.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Protocols\\ProtocolFactory.cs",
+              "RelativeDocumentMoniker": "Horus\\Protocols\\ProtocolFactory.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Protocols\\ProtocolFactory.cs",
+              "RelativeToolTip": "Horus\\Protocols\\ProtocolFactory.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAAAnAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T14:11:44.692Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "SubscriptionService.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Application\\SubscriptionService.cs",
+              "RelativeDocumentMoniker": "Horus\\Application\\SubscriptionService.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Application\\SubscriptionService.cs",
+              "RelativeToolTip": "Horus\\Application\\SubscriptionService.cs",
+              "ViewState": "AgIAAAYAAAAAAAAAAAAAAAYAAAArAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-01T14:07:35.23Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 12,
+              "Title": "VpnManager.cs",
+              "DocumentMoniker": "D:\\GitHub\\Horus\\Horus\\Application\\VpnManager.cs",
+              "RelativeDocumentMoniker": "Horus\\Application\\VpnManager.cs",
+              "ToolTip": "D:\\GitHub\\Horus\\Horus\\Application\\VpnManager.cs",
+              "RelativeToolTip": "Horus\\Application\\VpnManager.cs",
+              "ViewState": "AgIAAAQAAAAAAAAAAAAAABcAAAAYAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-03-31T20:25:17.837Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

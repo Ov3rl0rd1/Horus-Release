@@ -1,0 +1,179 @@
+﻿<?xml version = "1.0" encoding = "UTF-8" ?>
+<Application xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:Horus"
+             x:Class="Horus.App">
+    <Application.Resources>
+        <ResourceDictionary>
+
+            <!-- ═══════════════════════════════════════════ -->
+            <!--                COLOR PALETTE                -->
+            <!-- ═══════════════════════════════════════════ -->
+
+            <!-- Base Purples -->
+            <Color x:Key="DeepVoid">#0D0617</Color>
+            <Color x:Key="NightPurple">#1A0C26</Color>
+            <Color x:Key="CryptPurple">#2E123B</Color>
+            <Color x:Key="MidPurple">#3D1850</Color>
+            <Color x:Key="RaisedPurple">#4A2060</Color>
+            <Color x:Key="GlassPurple">#5C2A78</Color>
+
+            <!-- Neon Accents -->
+            <Color x:Key="NeonCyan">#00E5FF</Color>
+            <Color x:Key="NeonCyanDim">#0099AA</Color>
+            <Color x:Key="NeonViolet">#BF5FFF</Color>
+            <Color x:Key="NeonVioletDim">#7A3BAA</Color>
+            <Color x:Key="NeonGreen">#39FF9F</Color>
+            <Color x:Key="NeonGreenDim">#1A8050</Color>
+
+            <!-- Status Colors -->
+            <Color x:Key="StatusConnected">#39FF9F</Color>
+            <Color x:Key="StatusDisconnected">#FF4466</Color>
+            <Color x:Key="StatusConnecting">#FFB300</Color>
+
+            <!-- Text -->
+            <Color x:Key="TextPrimary">#F0E8FF</Color>
+            <Color x:Key="TextSecondary">#9B80B8</Color>
+            <Color x:Key="TextMuted">#5C4475</Color>
+            <Color x:Key="TextAccent">#00E5FF</Color>
+
+            <!-- Transparent overlays -->
+            <Color x:Key="OverlayLight">#1AFFFFFF</Color>
+            <Color x:Key="OverlayMedium">#33FFFFFF</Color>
+            <Color x:Key="OverlayBorder">#2600E5FF</Color>
+            <Color x:Key="CardBackground">#222E123B</Color>
+
+            <!-- ═══════════════════════════════════════════ -->
+            <!--               TYPOGRAPHY                    -->
+            <!-- ═══════════════════════════════════════════ -->
+
+            <x:Double x:Key="FontSizeXS">11</x:Double>
+            <x:Double x:Key="FontSizeSM">13</x:Double>
+            <x:Double x:Key="FontSizeMD">15</x:Double>
+            <x:Double x:Key="FontSizeLG">18</x:Double>
+            <x:Double x:Key="FontSizeXL">24</x:Double>
+            <x:Double x:Key="FontSizeXXL">32</x:Double>
+            <x:Double x:Key="FontSizeHero">48</x:Double>
+
+            <!-- ═══════════════════════════════════════════ -->
+            <!--                SPACING                      -->
+            <!-- ═══════════════════════════════════════════ -->
+
+            <x:Double x:Key="SpaceXS">4</x:Double>
+            <x:Double x:Key="SpaceSM">8</x:Double>
+            <x:Double x:Key="SpaceMD">16</x:Double>
+            <x:Double x:Key="SpaceLG">24</x:Double>
+            <x:Double x:Key="SpaceXL">32</x:Double>
+            <x:Double x:Key="SpaceXXL">48</x:Double>
+
+            <!-- ═══════════════════════════════════════════ -->
+            <!--           CORNER RADII                      -->
+            <!-- ═══════════════════════════════════════════ -->
+
+            <x:Double x:Key="RadiusSM">8</x:Double>
+            <x:Double x:Key="RadiusMD">14</x:Double>
+            <x:Double x:Key="RadiusLG">20</x:Double>
+            <x:Double x:Key="RadiusXL">28</x:Double>
+            <x:Double x:Key="RadiusFull">999</x:Double>
+
+            <!-- ═══════════════════════════════════════════ -->
+            <!--            GLOBAL STYLES                    -->
+            <!-- ═══════════════════════════════════════════ -->
+
+            <!-- Page Background -->
+            <Style TargetType="ContentPage">
+                <Setter Property="BackgroundColor" Value="{StaticResource DeepVoid}" />
+            </Style>
+
+            <!-- Primary Label -->
+            <Style x:Key="LabelPrimary" TargetType="Label">
+                <Setter Property="TextColor" Value="{StaticResource TextPrimary}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeMD}" />
+                <Setter Property="FontFamily" Value="OpenSansRegular" />
+            </Style>
+
+            <!-- Secondary Label -->
+            <Style x:Key="LabelSecondary" TargetType="Label">
+                <Setter Property="TextColor" Value="{StaticResource TextSecondary}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeSM}" />
+                <Setter Property="FontFamily" Value="OpenSansRegular" />
+            </Style>
+
+            <!-- Muted/Caption Label -->
+            <Style x:Key="LabelCaption" TargetType="Label">
+                <Setter Property="TextColor" Value="{StaticResource TextMuted}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeXS}" />
+                <Setter Property="CharacterSpacing" Value="1.5" />
+                <Setter Property="TextTransform" Value="Uppercase" />
+            </Style>
+
+            <!-- Headline Bold -->
+            <Style x:Key="LabelHeadline" TargetType="Label">
+                <Setter Property="TextColor" Value="{StaticResource TextPrimary}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeXL}" />
+                <Setter Property="FontAttributes" Value="Bold" />
+                <Setter Property="CharacterSpacing" Value="0.5" />
+            </Style>
+
+            <!-- Accent Label -->
+            <Style x:Key="LabelAccent" TargetType="Label">
+                <Setter Property="TextColor" Value="{StaticResource NeonCyan}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeSM}" />
+                <Setter Property="CharacterSpacing" Value="2" />
+                <Setter Property="TextTransform" Value="Uppercase" />
+            </Style>
+
+            <!-- Glass Card Frame -->
+            <Style x:Key="CardFrame" TargetType="Frame">
+                <Setter Property="BackgroundColor" Value="{StaticResource MidPurple}" />
+                <Setter Property="BorderColor" Value="{StaticResource OverlayBorder}" />
+                <Setter Property="CornerRadius" Value="20" />
+                <Setter Property="HasShadow" Value="False" />
+                <Setter Property="Padding" Value="20" />
+            </Style>
+
+            <!-- Primary CTA Button -->
+            <Style x:Key="ButtonPrimary" TargetType="Button">
+                <Setter Property="BackgroundColor" Value="{StaticResource NeonCyan}" />
+                <Setter Property="TextColor" Value="{StaticResource DeepVoid}" />
+                <Setter Property="FontAttributes" Value="Bold" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeMD}" />
+                <Setter Property="CharacterSpacing" Value="1.5" />
+                <Setter Property="CornerRadius" Value="14" />
+                <Setter Property="Padding">
+                    <Thickness Left="24" Top="14" Right="24" Bottom="14" />
+                </Setter>
+            </Style>
+
+            <!-- Ghost / Secondary Button -->
+            <Style x:Key="ButtonGhost" TargetType="Button">
+                <Setter Property="BackgroundColor" Value="Transparent" />
+                <Setter Property="TextColor" Value="{StaticResource NeonCyan}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeSM}" />
+                <Setter Property="CharacterSpacing" Value="1.5" />
+                <Setter Property="BorderColor" Value="{StaticResource NeonCyan}" />
+                <Setter Property="BorderWidth" Value="1" />
+                <Setter Property="CornerRadius" Value="14" />
+                <Setter Property="Padding">
+                    <Thickness Left="20" Top="10" Right="20" Bottom="10" />
+                </Setter>
+            </Style>
+
+            <!-- Entry Field -->
+            <Style x:Key="EntryField" TargetType="Entry">
+                <Setter Property="BackgroundColor" Value="{StaticResource NightPurple}" />
+                <Setter Property="TextColor" Value="{StaticResource TextPrimary}" />
+                <Setter Property="PlaceholderColor" Value="{StaticResource TextMuted}" />
+                <Setter Property="FontSize" Value="{StaticResource FontSizeMD}" />
+            </Style>
+
+            <!-- Divider Box -->
+            <Style x:Key="Divider" TargetType="BoxView">
+                <Setter Property="Color" Value="{StaticResource MidPurple}" />
+                <Setter Property="HeightRequest" Value="1" />
+                <Setter Property="HorizontalOptions" Value="Fill" />
+            </Style>
+
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

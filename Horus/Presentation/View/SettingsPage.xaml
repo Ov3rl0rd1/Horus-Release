@@ -1,0 +1,500 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="Horus.SettingsPage"
+             Title=""
+             NavigationPage.HasNavigationBar="False">
+
+    <!-- ════════════════════════════════════════════════════════ -->
+    <!--                    SETTINGS PAGE                          -->
+    <!-- ════════════════════════════════════════════════════════ -->
+
+    <Grid RowDefinitions="Auto,*,Auto"
+          BackgroundColor="{StaticResource DeepVoid}">
+
+        <!-- ── Ambient glow ── -->
+        <AbsoluteLayout Grid.RowSpan="3">
+            <Ellipse AbsoluteLayout.LayoutBounds="1.1, -0.05, 300, 300"
+                     AbsoluteLayout.LayoutFlags="XProportional,YProportional"
+                     WidthRequest="300" HeightRequest="300">
+                <Ellipse.Fill>
+                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                        <GradientStop Color="#3300E5FF" Offset="0" />
+                        <GradientStop Color="Transparent" Offset="1" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+        </AbsoluteLayout>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!--                      TOP BAR                             -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <Grid Grid.Row="0"
+              ColumnDefinitions="44,*,44"
+              Padding="16,52,16,16">
+
+            <Label Grid.Column="0"
+                   Text="‹"
+                   FontSize="28"
+                   TextColor="{StaticResource TextPrimary}"
+                   VerticalOptions="Center"
+                   HorizontalOptions="Center">
+                <Label.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnBackTapped" />
+                </Label.GestureRecognizers>
+            </Label>
+
+            <VerticalStackLayout Grid.Column="1"
+                                 HorizontalOptions="Center"
+                                 VerticalOptions="Center"
+                                 Spacing="1">
+                <Label Text="SETTINGS"
+                       Style="{StaticResource LabelCaption}"
+                       HorizontalOptions="Center" />
+            </VerticalStackLayout>
+
+        </Grid>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <!--                  SCROLLABLE SETTINGS                     -->
+        <!-- ════════════════════════════════════════════════════════ -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Spacing="8" Padding="16,0,16,16">
+
+                <!-- ─────────────────────────────────────── -->
+                <!--         ACCOUNT INFO CARD               -->
+                <!-- ─────────────────────────────────────── -->
+                <Frame BackgroundColor="{StaticResource MidPurple}"
+                       BorderColor="Transparent"
+                       CornerRadius="20"
+                       Padding="16"
+                       HasShadow="False"
+                       Margin="0,0,0,8">
+                    <Frame.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#4A2060" Offset="0" />
+                            <GradientStop Color="#2E123B" Offset="1" />
+                        </LinearGradientBrush>
+                    </Frame.Background>
+                    <Grid ColumnDefinitions="56,*,Auto">
+
+                        <!-- Avatar -->
+                        <Frame Grid.Column="0"
+                               WidthRequest="52"
+                               HeightRequest="52"
+                               CornerRadius="16"
+                               Padding="0"
+                               BackgroundColor="{StaticResource RaisedPurple}"
+                               BorderColor="{StaticResource NeonCyan}"
+                               HasShadow="False">
+                            <Label Text="🔮"
+                                   FontSize="26"
+                                   HorizontalOptions="Center"
+                                   VerticalOptions="Center" />
+                        </Frame>
+
+                        <!-- User info -->
+                        <VerticalStackLayout Grid.Column="1"
+                                             Margin="12,0"
+                                             VerticalOptions="Center"
+                                             Spacing="3">
+                            <Label Text="ghost@proton.me"
+                                   TextColor="{StaticResource TextPrimary}"
+                                   FontSize="14"
+                                   FontAttributes="Bold" />
+                            <HorizontalStackLayout Spacing="6">
+                                <Frame Padding="7,3"
+                                       CornerRadius="4"
+                                       HasShadow="False"
+                                       BackgroundColor="#21A0E5"
+                                       BorderColor="#3300E5FF">
+                                    <Label Text="PRO PLAN"
+                                           TextColor="{StaticResource NeonCyan}"
+                                           FontSize="10"
+                                           CharacterSpacing="1.2" />
+                                </Frame>
+                                <Label Text="Renews Apr 2026"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="11"
+                                       VerticalOptions="Center" />
+                            </HorizontalStackLayout>
+                        </VerticalStackLayout>
+
+                        <!-- Arrow -->
+                        <Label Grid.Column="2"
+                               Text="›"
+                               FontSize="24"
+                               TextColor="{StaticResource TextMuted}"
+                               VerticalOptions="Center" />
+
+                    </Grid>
+                </Frame>
+
+                <!-- ─────────────────────────────────────── -->
+                <!--         SECTION: CONNECTION             -->
+                <!-- ─────────────────────────────────────── -->
+                <Label Text="CONNECTION"
+                       Style="{StaticResource LabelCaption}"
+                       Margin="4,8,0,4" />
+
+                <Frame Style="{StaticResource CardFrame}" Padding="0">
+                    <VerticalStackLayout>
+
+                        <!-- Auto-connect toggle -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Auto-Connect"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="Connect when app launches"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Switch Grid.Column="1"
+                                    IsToggled="True"
+                                    OnColor="{StaticResource NeonCyan}"
+                                    ThumbColor="White"
+                                    VerticalOptions="Center" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <!-- Kill Switch -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <HorizontalStackLayout Spacing="8">
+                                    <Label Text="Kill Switch"
+                                           TextColor="{StaticResource TextPrimary}"
+                                           FontSize="14" />
+                                    <Frame Padding="5,2"
+                                           CornerRadius="4"
+                                           HasShadow="False"
+                                           BackgroundColor="#22FF4466"
+                                           BorderColor="#33FF4466">
+                                        <Label Text="CRITICAL"
+                                               TextColor="#FF4466"
+                                               FontSize="9"
+                                               CharacterSpacing="1" />
+                                    </Frame>
+                                </HorizontalStackLayout>
+                                <Label Text="Block traffic if VPN drops"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Switch Grid.Column="1"
+                                    IsToggled="True"
+                                    OnColor="{StaticResource NeonCyan}"
+                                    ThumbColor="White"
+                                    VerticalOptions="Center" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <!-- DNS -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Custom DNS"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="1.1.1.1, 8.8.8.8"
+                                       TextColor="{StaticResource NeonCyan}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Label Grid.Column="1"
+                                   Text="›"
+                                   FontSize="24"
+                                   TextColor="{StaticResource TextMuted}"
+                                   VerticalOptions="Center">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnDnsTapped" />
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Frame>
+
+                <!-- ─────────────────────────────────────── -->
+                <!--      SECTION: HYSTERIA2 PROTOCOL        -->
+                <!-- ─────────────────────────────────────── -->
+                <Label Text="HYSTERIA2 PROTOCOL"
+                       Style="{StaticResource LabelCaption}"
+                       Margin="4,12,0,4" />
+
+                <Frame Style="{StaticResource CardFrame}" Padding="0">
+                    <VerticalStackLayout>
+
+                        <!-- Upload Mbps -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Upload Speed (Mbps)"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="Hint to server for bandwidth"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Entry Grid.Column="1"
+                                   Text="100"
+                                   TextColor="{StaticResource NeonCyan}"
+                                   BackgroundColor="Transparent"
+                                   FontSize="14"
+                                   FontAttributes="Bold"
+                                   WidthRequest="60"
+                                   HorizontalTextAlignment="End"
+                                   Keyboard="Numeric"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <!-- Download Mbps -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Download Speed (Mbps)"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="Hint to server for bandwidth"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Entry Grid.Column="1"
+                                   Text="500"
+                                   TextColor="{StaticResource NeonCyan}"
+                                   BackgroundColor="Transparent"
+                                   FontSize="14"
+                                   FontAttributes="Bold"
+                                   WidthRequest="60"
+                                   HorizontalTextAlignment="End"
+                                   Keyboard="Numeric"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <!-- Obfuscation type -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Obfuscation"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="Disguise traffic fingerprint"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <HorizontalStackLayout Grid.Column="1" Spacing="6">
+                                <Label Text="salamander"
+                                       TextColor="{StaticResource NeonCyan}"
+                                       FontSize="13"
+                                       VerticalOptions="Center" />
+                                <Label Text="›"
+                                       FontSize="24"
+                                       TextColor="{StaticResource TextMuted}"
+                                       VerticalOptions="Center" />
+                            </HorizontalStackLayout>
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <!-- Lazy start toggle -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Lazy TLS Handshake"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="Defer TLS until first data packet"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Switch Grid.Column="1"
+                                    IsToggled="False"
+                                    OnColor="{StaticResource NeonCyan}"
+                                    ThumbColor="White"
+                                    VerticalOptions="Center" />
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Frame>
+
+                <!-- ─────────────────────────────────────── -->
+                <!--        SECTION: SPLIT TUNNELING         -->
+                <!-- ─────────────────────────────────────── -->
+                <Label Text="SPLIT TUNNELING"
+                       Style="{StaticResource LabelCaption}"
+                       Margin="4,12,0,4" />
+
+                <Frame Style="{StaticResource CardFrame}" Padding="0">
+                    <VerticalStackLayout>
+
+                        <!-- Enable split tunneling -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Split Tunneling"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="Route specific apps outside VPN"
+                                       Style="{StaticResource LabelSecondary}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Switch Grid.Column="1"
+                                    x:Name="SplitTunnelSwitch"
+                                    IsToggled="False"
+                                    OnColor="{StaticResource NeonCyan}"
+                                    ThumbColor="White"
+                                    VerticalOptions="Center"
+                                    Toggled="OnSplitTunnelToggled" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <!-- Excluded apps -->
+                        <Grid ColumnDefinitions="*,Auto"
+                              Padding="16,14"
+                              Opacity="0.5"
+                              x:Name="ExcludedAppsRow">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2">
+                                <Label Text="Excluded Apps"
+                                       TextColor="{StaticResource TextPrimary}"
+                                       FontSize="14" />
+                                <Label Text="3 apps bypassing tunnel"
+                                       TextColor="{StaticResource NeonCyan}"
+                                       FontSize="12" />
+                            </VerticalStackLayout>
+                            <Label Grid.Column="1"
+                                   Text="›"
+                                   FontSize="24"
+                                   TextColor="{StaticResource TextMuted}"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Frame>
+
+                <!-- ─────────────────────────────────────── -->
+                <!--         SECTION: APPEARANCE             -->
+                <!-- ─────────────────────────────────────── -->
+                <Label Text="APPEARANCE"
+                       Style="{StaticResource LabelCaption}"
+                       Margin="4,12,0,4" />
+
+                <Frame Style="{StaticResource CardFrame}" Padding="16">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <VerticalStackLayout Grid.Column="0" Spacing="2">
+                            <Label Text="Theme"
+                                   TextColor="{StaticResource TextPrimary}"
+                                   FontSize="14" />
+                            <Label Text="Dark Abyss"
+                                   TextColor="{StaticResource NeonCyan}"
+                                   FontSize="12" />
+                        </VerticalStackLayout>
+                        <!-- Theme preview swatches -->
+                        <HorizontalStackLayout Grid.Column="1" Spacing="6" VerticalOptions="Center">
+                            <!-- Active swatch -->
+                            <Frame WidthRequest="24" HeightRequest="24"
+                                   CornerRadius="6" Padding="0" HasShadow="False"
+                                   BorderColor="{StaticResource NeonCyan}">
+                                <Frame.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#2E123B" Offset="0" />
+                                        <GradientStop Color="#00E5FF" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Frame.Background>
+                            </Frame>
+                            <Frame WidthRequest="24" HeightRequest="24"
+                                   CornerRadius="6" Padding="0" HasShadow="False"
+                                   BorderColor="{StaticResource RaisedPurple}">
+                                <Frame.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#0F1923" Offset="0" />
+                                        <GradientStop Color="#39FF9F" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Frame.Background>
+                            </Frame>
+                            <Frame WidthRequest="24" HeightRequest="24"
+                                   CornerRadius="6" Padding="0" HasShadow="False"
+                                   BorderColor="{StaticResource RaisedPurple}">
+                                <Frame.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#1A0A00" Offset="0" />
+                                        <GradientStop Color="#FF6600" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Frame.Background>
+                            </Frame>
+                        </HorizontalStackLayout>
+                    </Grid>
+                </Frame>
+
+                <!-- ─────────────────────────────────────── -->
+                <!--         SECTION: ABOUT & SUPPORT        -->
+                <!-- ─────────────────────────────────────── -->
+                <Label Text="ABOUT"
+                       Style="{StaticResource LabelCaption}"
+                       Margin="4,12,0,4" />
+
+                <Frame Style="{StaticResource CardFrame}" Padding="0">
+                    <VerticalStackLayout>
+
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <Label Grid.Column="0"
+                                   Text="Version"
+                                   TextColor="{StaticResource TextPrimary}"
+                                   FontSize="14" />
+                            <Label Grid.Column="1"
+                                   Text="2.6.1 (Build 412)"
+                                   Style="{StaticResource LabelSecondary}"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <Label Grid.Column="0"
+                                   Text="Privacy Policy"
+                                   TextColor="{StaticResource TextPrimary}"
+                                   FontSize="14" />
+                            <Label Grid.Column="1"
+                                   Text="›"
+                                   FontSize="24"
+                                   TextColor="{StaticResource TextMuted}"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                        <BoxView Style="{StaticResource Divider}" Margin="16,0" />
+
+                        <Grid ColumnDefinitions="*,Auto" Padding="16,14">
+                            <Label Grid.Column="0"
+                                   Text="Open Source Licenses"
+                                   TextColor="{StaticResource TextPrimary}"
+                                   FontSize="14" />
+                            <Label Grid.Column="1"
+                                   Text="›"
+                                   FontSize="24"
+                                   TextColor="{StaticResource TextMuted}"
+                                   VerticalOptions="Center" />
+                        </Grid>
+
+                    </VerticalStackLayout>
+                </Frame>
+
+                <!-- ─────────────────────────────────────── -->
+                <!--         SIGN OUT BUTTON                 -->
+                <!-- ─────────────────────────────────────── -->
+                <Button Text="SIGN OUT"
+                        Margin="0,12,0,0"
+                        BackgroundColor="Transparent"
+                        TextColor="#FF4466"
+                        FontSize="13"
+                        FontAttributes="Bold"
+                        CharacterSpacing="2"
+                        BorderColor="#33FF4466"
+                        BorderWidth="1"
+                        CornerRadius="14"
+                        Padding="0,14"
+                        Clicked="OnSignOutTapped" />
+
+                <BoxView HeightRequest="16" Color="Transparent" />
+
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentPage>
