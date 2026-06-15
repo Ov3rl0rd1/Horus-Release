@@ -7,6 +7,11 @@ namespace Horus.Protocols
     {
         private readonly IServiceProvider _sp;
 
+        public ProtocolFactory(IServiceProvider sp)
+        {
+            _sp = sp;
+        }
+
         public IVpnProtocol Create(ProtocolType type) => type switch
         {
             ProtocolType.Hysteria2 => _sp.GetRequiredService<Hysteria2Protocol>(),

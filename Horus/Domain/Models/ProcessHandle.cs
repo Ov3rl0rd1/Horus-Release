@@ -1,7 +1,8 @@
-﻿namespace Horus.Domain.Models
+namespace Horus.Domain.Models
 {
     public class ProcessHandle
     {
-        public int Handle { get; set; }
+        public int Pid { get; init; }
+        internal System.Diagnostics.Process? ProcessRef { get; init; }
     }
 }

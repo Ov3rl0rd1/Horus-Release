@@ -2,5 +2,11 @@
 {
     public enum TunnelState
     {
+        Unknown,
+        Starting,
+        Started,
+        Stopping,
+        Stopped,
+        Error
     }
 }

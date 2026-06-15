@@ -13,6 +13,7 @@ namespace Horus.Domain.Interfaces
         Task StopTunnelAsync();
         Task ApplyRoutingRulesAsync(IEnumerable<RoutingRule> rules);
         Task SetDnsAsync(string[] dnsServers);
+        long[] GetTunnelStats();
 
         event EventHandler<TunnelStateChangedEventArgs> TunnelStateChanged;
     }

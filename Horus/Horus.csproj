@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFrameworks>net10.0-android</TargetFrameworks>
@@ -66,13 +66,32 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <None Remove="Platforms\Android\lib\arm64-v8a\libhev_socks.so" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\hysteria.so" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libhev_socks.so" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\armeabi-v7a\hysteria.so" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\armeabi-v7a\libhev_socks.so" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\hysteria.so" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libhev_socks.so" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="appsettings.json" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
 		<PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.17.0" />
 	</ItemGroup>
 
 	<ItemGroup>
 	  <Folder Include="Geo\" />
+	  <Folder Include="Platforms\Android\Resources\raw\" />
 	  <Folder Include="Routing\" />
 	</ItemGroup>
 
@@ -87,5 +106,4 @@
 	    <Generator>MSBuild:Compile</Generator>
 	  </MauiXaml>
 	</ItemGroup>
-
 </Project>

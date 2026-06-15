@@ -6,6 +6,8 @@ namespace Horus.Domain.Models
 {
     public class Hysteria2Config : ProtocolConfig
     {
+        public string? RenderedConfig { get; set; }
+
         public string Server { get; set; }
         public string Auth { get; set; }
         public string Obfs { get; set; }   // salamander | null

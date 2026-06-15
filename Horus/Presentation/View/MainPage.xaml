@@ -45,7 +45,9 @@
         <!--                  SCROLLABLE BODY                         -->
         <!-- ════════════════════════════════════════════════════════ -->
         <ScrollView Grid.Row="1">
-            <VerticalStackLayout Spacing="20" Padding="20,4">
+            <VerticalStackLayout x:Name="ContentStack"
+                                 Spacing="20" Padding="20,4"
+                                 Opacity="0" TranslationY="40">
 
                 <!-- ─────────────────────────────────── -->
                 <!--   BIG CONNECT BUTTON + STATUS RING  -->
@@ -54,7 +56,8 @@
                   Margin="0,16,0,8">
 
                     <!-- Outer pulsing ring (decorative) -->
-                    <Ellipse WidthRequest="220"
+                    <Ellipse x:Name="OuterGlowRing"
+                         WidthRequest="220"
                          HeightRequest="220"
                          HorizontalOptions="Center"
                          VerticalOptions="Center">
@@ -67,7 +70,8 @@
                     </Ellipse>
 
                     <!-- Inner ring stroke -->
-                    <Ellipse WidthRequest="188"
+                    <Ellipse x:Name="StrokeRing"
+                         WidthRequest="188"
                          HeightRequest="188"
                          HorizontalOptions="Center"
                          VerticalOptions="Center"
@@ -259,7 +263,7 @@
                                    VerticalOptions="Center" />
                             </HorizontalStackLayout>
                             <Label x:Name="LblDownload"
-                               Text="0.0"
+                               Text="{Binding DownloadSpeed}"
                                TextColor="{StaticResource TextPrimary}"
                                FontSize="26"
                                FontAttributes="Bold" />
@@ -283,7 +287,7 @@
                                    VerticalOptions="Center" />
                             </HorizontalStackLayout>
                             <Label x:Name="LblUpload"
-                               Text="0.0"
+                               Text="{Binding UploadSpeed}"
                                TextColor="{StaticResource TextPrimary}"
                                FontSize="26"
                                FontAttributes="Bold" />
@@ -307,7 +311,7 @@
                                Style="{StaticResource LabelCaption}"
                                HorizontalOptions="Center" />
                             <Label x:Name="LblDuration"
-                               Text="00:00:00"
+                               Text="{Binding SessionDuration}"
                                TextColor="{StaticResource TextPrimary}"
                                FontSize="14"
                                FontAttributes="Bold"
@@ -324,7 +328,7 @@
                                Style="{StaticResource LabelCaption}"
                                HorizontalOptions="Center" />
                             <Label x:Name="LblTotalData"
-                               Text="0 MB"
+                               Text="{Binding TotalData}"
                                TextColor="{StaticResource TextPrimary}"
                                FontSize="14"
                                FontAttributes="Bold"

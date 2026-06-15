@@ -1,49 +1,61 @@
-﻿using Android.App;
-using Android.Net;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 
 namespace Horus.Platforms.Android
 {
-    [Service(Name = "com.app.vpn.VpnTunnelService", Permission = "android.permission.BIND_VPN_SERVICE")]
-    public class AndroidVpnService : VpnService, IVpnPlatformService
+    public class AndroidVpnService : IVpnPlatformService
     {
         public bool IsSupported => true;
 
-        public TunnelState CurrentState => throw new NotImplementedException();
+        public TunnelState CurrentState => HorusVpnTunnelService.CurrentState;
 
-        public event EventHandler<TunnelStateChangedEventArgs> TunnelStateChanged;
-
-        public Task ApplyRoutingRulesAsync(IEnumerable<RoutingRule> rules)
+        public event EventHandler<TunnelStateChangedEventArgs>? TunnelStateChanged
         {
-            throw new NotImplementedException();
+            add => HorusVpnTunnelService.TunnelStateChanged += value;
+            remove => HorusVpnTunnelService.TunnelStateChanged -= value;
         }
 
-        // StartTunnelAsync → Builder.Establish() → ParcelFileDescriptor (tun fd)
-        // После этого Hysteria2 пишет в socks5/http proxy, платформа пишет в tun fd
-        // ApplyRoutingRulesAsync → Builder.AddRoute() / Builder.ExcludeRoute() + AddDisallowedApplication()
-        // SetDnsAsync → Builder.AddDnsServer()
-        // Foreground service + Notification (required Android 8+)
-
-        public Task<bool> RequestPermissionsAsync()   // Activity.StartActivityForResult(Prepare())
+        public async Task<bool> RequestPermissionsAsync()
         {
-            throw new NotImplementedException();
+            var activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
+            if (activity == null) return false;
+
+            var intent = global::Android.Net.VpnService.Prepare(activity);
+            if (intent == null) return true;
+
+            var tcs = new TaskCompletionSource<bool>();
+            VpnPermissionBroker.PendingCallback = result => tcs.TrySetResult(result);
+            activity.StartActivityForResult(intent, VpnPermissionBroker.RequestCode);
+            return await tcs.Task;
         }
 
-        public Task SetDnsAsync(string[] dnsServers)
-        {
-            throw new NotImplementedException();
-        }
+        public Task StartTunnelAsync(TunnelOptions options, CancellationToken ct = default) =>
+            HorusVpnTunnelService.StartTunnelAsync(options);
 
-        public Task StartTunnelAsync(TunnelOptions options, CancellationToken ct = default)
-        {
-            throw new NotImplementedException();
-        }
+        public Task StopTunnelAsync() =>
+            HorusVpnTunnelService.StopTunnelAsync();
 
-        public Task StopTunnelAsync()
+        public Task ApplyRoutingRulesAsync(IEnumerable<RoutingRule> rules) =>
+            Task.CompletedTask;
+
+        public Task SetDnsAsync(string[] dnsServers) =>
+            Task.CompletedTask;
+
+        public long[] GetTunnelStats()
         {
-            throw new NotImplementedException();
+            var stats = HevSocksTunnel.GetTunnelStats();
+
+            if (stats == null)
+                return new long[4] { 0, 0, 0, 0 };
+
+            return stats;
         }
+    }
+
+    public static class VpnPermissionBroker
+    {
+        public const int RequestCode = 1001;
+        public static Action<bool>? PendingCallback;
     }
 }

@@ -31,7 +31,8 @@
         <!-- ════════════════════════════════════════════════════════ -->
         <Grid Grid.Row="0"
               ColumnDefinitions="44,*,44"
-              Padding="16,52,16,16">
+              Padding="16,16,16,16"
+              Background="{StaticResource DeepVoid}">
 
             <Label Grid.Column="0"
                    Text="‹"

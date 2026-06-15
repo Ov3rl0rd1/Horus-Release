@@ -3,8 +3,11 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="Horus.AuthPage"
              Title="Horus"
-             NavigationPage.HasNavigationBar="False">
-
+             NavigationPage.HasNavigationBar="False"
+             Shell.TabBarIsVisible="False">
+    <Shell.BackButtonBehavior>
+        <BackButtonBehavior IsVisible="False" IsEnabled="False" />
+    </Shell.BackButtonBehavior>
     <Grid RowDefinitions="Auto,*,Auto"
           BackgroundColor="{StaticResource DeepVoid}">
 
@@ -52,55 +55,6 @@
                 <VerticalStackLayout HorizontalOptions="Center"
                                      Spacing="8"
                                      Margin="0,56,0,40">
-
-                    <!-- Icon ring -->
-                    <Grid HorizontalOptions="Center">
-                        <Ellipse WidthRequest="96"
-                                 HeightRequest="96"
-                                 HorizontalOptions="Center"
-                                 VerticalOptions="Center">
-                            <Ellipse.Fill>
-                                <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
-                                    <GradientStop Color="#3300E5FF" Offset="0.0" />
-                                    <GradientStop Color="Transparent" Offset="1.0" />
-                                </RadialGradientBrush>
-                            </Ellipse.Fill>
-                        </Ellipse>
-
-                        <Ellipse WidthRequest="72"
-                                 HeightRequest="72"
-                                 HorizontalOptions="Center"
-                                 VerticalOptions="Center"
-                                 StrokeThickness="1">
-                            <Ellipse.Stroke>
-                                <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                    <GradientStop Color="#6600E5FF" Offset="0" />
-                                    <GradientStop Color="#33BF5FFF" Offset="1" />
-                                </LinearGradientBrush>
-                            </Ellipse.Stroke>
-                        </Ellipse>
-
-                        <Frame WidthRequest="72"
-                               HeightRequest="72"
-                               CornerRadius="36"
-                               Padding="0"
-                               HorizontalOptions="Center"
-                               VerticalOptions="Center"
-                               HasShadow="False"
-                               BorderColor="Transparent">
-                            <Frame.Background>
-                                <RadialGradientBrush>
-                                    <GradientStop Color="#4A2060" Offset="0" />
-                                    <GradientStop Color="#2E123BCC" Offset="1" />
-                                </RadialGradientBrush>
-                            </Frame.Background>
-                            <Label Text="🔐"
-                                   FontSize="28"
-                                   HorizontalOptions="Center"
-                                   VerticalOptions="Center" />
-                        </Frame>
-                    </Grid>
-
                     <!-- App name -->
                     <Label Text="HORUS"
                            Style="{StaticResource LabelHeadline}"
@@ -118,7 +72,7 @@
                 <!--           AUTH CARD                  -->
                 <!-- ─────────────────────────────────── -->
                 <Frame Style="{StaticResource CardFrame}" Padding="24">
-                    <VerticalStackLayout Spacing="20">
+                    <VerticalStackLayout Spacing="10">
 
                         <!-- Card heading -->
                         <VerticalStackLayout Spacing="4">
@@ -148,6 +102,7 @@
                                        Keyboard="Text"
                                        ReturnType="Next"
                                        HeightRequest="46"
+                                       Text="{Binding Login}"
                                        BackgroundColor="Transparent" />
                             </Frame>
                         </VerticalStackLayout>
@@ -182,6 +137,7 @@
                                            IsPassword="True"
                                            ReturnType="Done"
                                            HeightRequest="46"
+                                           Text="{Binding Password}"
                                            BackgroundColor="Transparent"
                                            ReturnCommand="{Binding LoginCommand}" />
                                     <!-- Show/hide password toggle -->
@@ -222,6 +178,7 @@
                         <!-- Primary login button -->
                         <Button x:Name="BtnLogin"
                                 Text="SIGN IN"
+                                Margin="0, 16, 0, 0"
                                 Style="{StaticResource ButtonPrimary}"
                                 HorizontalOptions="Fill"
                                 Command="{Binding LoginCommand}">
