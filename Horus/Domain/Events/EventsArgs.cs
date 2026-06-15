@@ -13,4 +13,7 @@ namespace Horus.Domain.Events
     public record SubscriptionChangedEventArgs(SubscriptionInfo? Info, bool IsExpired);
     public record GeoDataUpdatedEventArgs(string Type, DateTime UpdatedAt);
     public record ServerChangedEventArgs(ServerInfo? Previous, ServerInfo Current);
+    public record ProtocolFallbackEventArgs(string FromProtocol, string ToProtocol, string Reason);
+    public record BinaryUpdateEventArgs(string BinaryName, string FromVersion, string ToVersion);
+    public record ErrorReportSentEventArgs(bool Success, string? FailureReason);
 }

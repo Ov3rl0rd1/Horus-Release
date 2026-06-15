@@ -2,7 +2,7 @@
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              Title="Horus"
-             x:Class="Horus.MainPage"
+             x:Class="Horus.Presentation.View.MainPage"
              Shell.BackgroundColor="#4A2060"
              NavigationPage.HasNavigationBar="False">
 

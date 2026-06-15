@@ -1,6 +1,6 @@
 using Horus.Presentation.ViewModels;
 
-namespace Horus
+namespace Horus.Presentation.View
 {
     public partial class AuthPage : ContentPage
     {
@@ -67,7 +67,7 @@ namespace Horus
 
         private async void OnRegisterTapped(object sender, TappedEventArgs e)
         {
-            await DisplayAlertAsync("Register", "Registration coming soon.", "OK");
+            await Shell.Current.GoToAsync("RegisterPage");
         }
     }
 }

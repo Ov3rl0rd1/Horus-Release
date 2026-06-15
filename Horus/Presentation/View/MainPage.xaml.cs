@@ -1,7 +1,7 @@
 using Horus.Domain.Models;
 using Horus.Presentation.ViewModels;
 
-namespace Horus
+namespace Horus.Presentation.View
 {
     public partial class MainPage : ContentPage
     {

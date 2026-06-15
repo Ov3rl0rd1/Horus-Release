@@ -17,5 +17,7 @@ namespace Horus.Domain.Interfaces
         event EventHandler<VpnStatusChangedEventArgs> StatusChanged;
         event EventHandler<TrafficStatisticsEventArgs> StatisticsUpdated;
         event EventHandler<ProtocolErrorEventArgs> ErrorOccurred;
+        /// <summary>Fires for every stdout/stderr line from the underlying binary.</summary>
+        event EventHandler<string>? OutputReceived;
     }
 }

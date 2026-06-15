@@ -1,40 +1,72 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
 namespace Horus.Domain.Models
 {
     public class Hysteria2Config : ProtocolConfig
     {
+        public override ProtocolType ProtocolType => ProtocolType.Hysteria2;
+
+        /// <summary>When set, ToConfig() returns this verbatim (server-rendered YAML).</summary>
         public string? RenderedConfig { get; set; }
 
-        public string Server { get; set; }
-        public string Auth { get; set; }
-        public string Obfs { get; set; }   // salamander | null
-        public string ObfsPassword { get; set; }
-        public string PortsRange { get; set; }
-        public int HopInterval { get; set; }
-        public string Socks5Address { get; set; }   // 127.0.0.1:1080
+        public string Server { get; set; } = string.Empty;
+        public string Auth { get; set; } = string.Empty;
+        public string? Obfs { get; set; }           // salamander | null
+        public string? ObfsPassword { get; set; }
+        public string? PortsRange { get; set; }
+        public int HopInterval { get; set; } = 30;
+        public string Socks5Address { get; set; } = "127.0.0.1:1080";
+        public bool LazyTls { get; set; }
 
-        public override string ToConfig() 
+        public override string ToConfig()
         {
-            return $"""
-server: {Server}{(String.IsNullOrEmpty(PortsRange) ? "" : $",{PortsRange}")}
+            if (RenderedConfig != null) return RenderedConfig;
 
-auth: {Auth}
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"server: {Server}{(string.IsNullOrEmpty(PortsRange) ? "" : $",{PortsRange}")}");
+            sb.AppendLine();
+            sb.AppendLine($"auth: {Auth}");
+            sb.AppendLine();
 
-{(String.IsNullOrEmpty(Socks5Address) ? "" : $"socks5:\n  listen: {Socks5Address}")}
+            if (!string.IsNullOrEmpty(Socks5Address))
+            {
+                sb.AppendLine("socks5:");
+                sb.AppendLine($"  listen: {Socks5Address}");
+                sb.AppendLine();
+            }
 
-fastOpen: true
+            sb.AppendLine("fastOpen: true");
+            sb.AppendLine();
+            sb.AppendLine("quic:");
+            sb.AppendLine("  maxIdleTimeout: 30s");
+            sb.AppendLine("  keepAlivePeriod: 20s");
 
-quic:
-  maxIdleTimeout: 30s 
-  keepAlivePeriod: 20s
+            if (!string.IsNullOrEmpty(PortsRange))
+            {
+                sb.AppendLine();
+                sb.AppendLine("transport:");
+                sb.AppendLine("  udp:");
+                sb.AppendLine($"    hopInterval: {HopInterval}s");
+            }
 
-{(String.IsNullOrEmpty(PortsRange) ? "" : $"transport:\n  udp:\n  hopInterval: {HopInterval}s")}
+            if (!string.IsNullOrEmpty(Obfs))
+            {
+                sb.AppendLine();
+                sb.AppendLine("obfs:");
+                sb.AppendLine($"  type: {Obfs}");
+                if (Obfs == "salamander" && !string.IsNullOrEmpty(ObfsPassword))
+                {
+                    sb.AppendLine("  salamander:");
+                    sb.AppendLine($"    password: {ObfsPassword}");
+                }
+            }
 
-{(String.IsNullOrEmpty(Obfs) ? "" : $"obfs:\n  type: salamander \n  salamander:\n    password: {ObfsPassword}")}
-""";
+            if (LazyTls)
+            {
+                sb.AppendLine();
+                sb.AppendLine("tls:");
+                sb.AppendLine("  insecure: true");
+            }
+
+            return sb.ToString();
         }
     }
 }

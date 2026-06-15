@@ -4,6 +4,7 @@ using Android.Net;
 using Android.OS;
 using Horus.Domain.Events;
 using Horus.Domain.Models;
+using SplitTunnelingMode = Horus.Domain.Models.SplitTunnelingMode;
 
 namespace Horus.Platforms.Android
 {
@@ -25,6 +26,10 @@ namespace Horus.Platforms.Android
 
         public static TunnelState CurrentState { get; private set; } = TunnelState.Unknown;
         public static event EventHandler<TunnelStateChangedEventArgs>? TunnelStateChanged;
+
+        // Split tunneling state (set by AndroidSplitTunnelingService)
+        public static SplitTunnelingMode SplitTunnelingMode { get; set; } = SplitTunnelingMode.Disabled;
+        public static string[] SelectedApps { get; set; } = [];
 
         internal static Task StartTunnelAsync(TunnelOptions options)
         {
@@ -88,10 +93,35 @@ namespace Horus.Platforms.Android
                 if (options.AllTraffic)
                     builder.AddRoute("0.0.0.0", 0);
 
-                foreach (var pkg in options.BypassApps ?? [])
+                // Apply split tunneling
+                switch (SplitTunnelingMode)
                 {
-                    try { builder.AddDisallowedApplication(pkg); }
-                    catch { /* ignore unknown packages */ }
+                    case SplitTunnelingMode.Blacklist:
+                        // Listed apps bypass VPN; all others go through it
+                        foreach (var pkg in SelectedApps)
+                        {
+                            try { builder.AddDisallowedApplication(pkg); }
+                            catch { /* ignore unknown packages */ }
+                        }
+                        break;
+
+                    case SplitTunnelingMode.Whitelist:
+                        // Only listed apps go through VPN; all others bypass
+                        foreach (var pkg in SelectedApps)
+                        {
+                            try { builder.AddAllowedApplication(pkg); }
+                            catch { /* ignore unknown packages */ }
+                        }
+                        break;
+
+                    default:
+                        // options.BypassApps from connection config (legacy)
+                        foreach (var pkg in options.BypassApps ?? [])
+                        {
+                            try { builder.AddDisallowedApplication(pkg); }
+                            catch { }
+                        }
+                        break;
                 }
 
                 _tunFd = builder.Establish()

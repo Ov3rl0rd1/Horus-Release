@@ -1,41 +1,43 @@
-using Horus.Domain.Interfaces;
+using Horus.Domain.Models;
+using Horus.Presentation.ViewModels;
 
-namespace Horus
+namespace Horus.Presentation.View
 {
     public partial class SettingsPage : ContentPage
     {
-        private readonly IAuthService? _auth;
+        private readonly SettingsViewModel _vm;
 
-        public SettingsPage(IAuthService auth)
+        public SettingsPage(SettingsViewModel vm)
         {
-            _auth = auth;
             InitializeComponent();
+            _vm = vm;
+            BindingContext = vm;
         }
 
-        private async void OnBackTapped(object sender, TappedEventArgs e)
+        protected override async void OnAppearing()
         {
-            await Shell.Current.GoToAsync("..");
+            base.OnAppearing();
+            await _vm.InitializeAsync();
+
+            // Sync mode picker to current setting
+            SplitModePicker.SelectedIndex = (int)_vm.SplitTunnelingMode;
         }
 
-        private async void OnDnsTapped(object sender, TappedEventArgs e)
+        private void OnSplitModeChanged(object? sender, EventArgs e)
         {
-            await DisplayAlert("Custom DNS", "DNS configuration coming soon.", "OK");
+            if (sender is Picker picker)
+                _vm.SplitTunnelingMode = (SplitTunnelingMode)picker.SelectedIndex;
         }
 
-        private void OnSplitTunnelToggled(object sender, ToggledEventArgs e)
+        private async void OnLoadAppsClicked(object? sender, EventArgs e)
         {
-            // Split tunneling toggle — placeholder
+            await _vm.LoadAppsCommand.ExecuteAsync(null);
         }
 
-        private async void OnSignOutTapped(object? sender, EventArgs e)
+        private async void OnAppCheckChanged(object? sender, CheckedChangedEventArgs e)
         {
-            bool confirm = await DisplayAlertAsync("Sign Out", "Sign out of Horus VPN?", "Sign Out", "Cancel");
-            if (!confirm) return;
-
-            if (_auth != null)
-                await _auth.LogoutAsync();
-
-            await Shell.Current.GoToAsync(nameof(AuthPage));
+            if (sender is CheckBox cb && cb.BindingContext is AppOrProcessEntry entry)
+                await _vm.ToggleAppCommand.ExecuteAsync(entry);
         }
     }
 }

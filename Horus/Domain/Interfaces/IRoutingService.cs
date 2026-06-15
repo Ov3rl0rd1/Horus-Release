@@ -11,5 +11,6 @@ namespace Horus.Domain.Interfaces
         Task ReorderRulesAsync(IEnumerable<string> orderedIds);
         Task SetBypassListAsync(string[] ips, string[] domains);
         Task ApplyAsync();
+        Task RefreshFromServerAsync(CancellationToken ct = default);
     }
 }

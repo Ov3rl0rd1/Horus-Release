@@ -1,4 +1,4 @@
-﻿using Horus.Domain.Interfaces;
+using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 
 namespace Horus.Protocols
@@ -15,8 +15,15 @@ namespace Horus.Protocols
         public IVpnProtocol Create(ProtocolType type) => type switch
         {
             ProtocolType.Hysteria2 => _sp.GetRequiredService<Hysteria2Protocol>(),
-            //ProtocolType.DTLS => _sp.GetRequiredService<DTLSProtocol>(),
-            _ => throw new NotSupportedException(type.ToString())
+            ProtocolType.OlcRtc => _sp.GetRequiredService<OlcRtcProtocol>(),
+            _ => throw new NotSupportedException($"Protocol {type} is not supported.")
+        };
+
+        public ProtocolConfig CreateDefaultConfig(ProtocolType type) => type switch
+        {
+            ProtocolType.Hysteria2 => new Hysteria2Config(),
+            ProtocolType.OlcRtc => new OlcRtcConfig(),
+            _ => throw new NotSupportedException($"Protocol {type} is not supported.")
         };
     }
 }
