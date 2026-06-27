@@ -26,6 +26,11 @@ namespace Horus.Application
 
         public string? LastReportArchivePath { get; private set; }
 
+        public bool HasPendingReports
+        {
+            get { lock (_lock) return _entries.Count > 0; }
+        }
+
         public ErrorReportingService(IApiService api)
         {
             _api = api;

@@ -40,14 +40,14 @@ namespace Horus.Presentation.Converters
             {
                 return state switch
                 {
-                    Domain.Models.VpnState.Connected => Color.FromArgb("#39FF9F"),
-                    Domain.Models.VpnState.Connecting => Color.FromArgb("#FFB300"),
-                    Domain.Models.VpnState.Reconnecting => Color.FromArgb("#FFB300"),
-                    Domain.Models.VpnState.Error => Color.FromArgb("#FF4466"),
-                    _ => Color.FromArgb("#FF4466")
+                    Domain.Models.VpnState.Connected => Color.FromArgb("#57CC97"),
+                    Domain.Models.VpnState.Connecting => Color.FromArgb("#E0A52E"),
+                    Domain.Models.VpnState.Reconnecting => Color.FromArgb("#E0A52E"),
+                    Domain.Models.VpnState.Error => Color.FromArgb("#E15668"),
+                    _ => Color.FromArgb("#E15668")
                 };
             }
-            return Color.FromArgb("#FF4466");
+            return Color.FromArgb("#E15668");
         }
 
         public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>

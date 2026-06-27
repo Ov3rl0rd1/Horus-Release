@@ -11,23 +11,28 @@
     BackgroundColor="{StaticResource DeepVoid}">
 
     <ScrollView>
-        <VerticalStackLayout Padding="20" Spacing="16">
+        <VerticalStackLayout Padding="20" Spacing="18">
 
             <!-- ── Header ─────────────────────────────────────────────────── -->
-            <Label
-                Text="⚠ ADMIN MODE"
-                Style="{StaticResource LabelHeadline}"
-                TextColor="{StaticResource NeonViolet}"
-                HorizontalOptions="Center" />
+            <HorizontalStackLayout Spacing="8" HorizontalOptions="Center" Margin="0,8,0,0">
+                <Label Text="⚙" FontSize="18" TextColor="{StaticResource NeonViolet}" VerticalOptions="Center" />
+                <Label
+                    Text="ADMIN MODE"
+                    Style="{StaticResource LabelAccent}"
+                    TextColor="{StaticResource NeonViolet}"
+                    FontSize="{StaticResource FontSizeMD}"
+                    VerticalOptions="Center" />
+            </HorizontalStackLayout>
 
             <!-- ── Local mode banner ──────────────────────────────────────── -->
             <Frame
                 BackgroundColor="{Binding IsLocalMode, Converter={StaticResource LocalModeBannerBg}}"
-                CornerRadius="12"
-                Padding="16,10"
+                BorderColor="{StaticResource OverlayBorder}"
+                CornerRadius="16"
+                Padding="16,12"
                 HasShadow="False">
-                <Grid ColumnDefinitions="*,Auto">
-                    <VerticalStackLayout Grid.Column="0" Spacing="2">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
                         <Label
                             Text="{Binding LocalModeLabel}"
                             FontAttributes="Bold"
@@ -38,12 +43,12 @@
                             Style="{StaticResource LabelSecondary}"
                             IsVisible="{Binding ApiStatusLabel, Converter={StaticResource StringToBoolConverter}}" />
                     </VerticalStackLayout>
-                    <HorizontalStackLayout Grid.Column="1" Spacing="8">
+                    <HorizontalStackLayout Grid.Column="1" Spacing="8" VerticalOptions="Center">
                         <Button
-                            Text="Probe API"
+                            Text="Probe"
                             Style="{StaticResource ButtonGhost}"
                             FontSize="11"
-                            Padding="8,4"
+                            Padding="12,6"
                             Command="{Binding ProbeApiCommand}"
                             IsEnabled="{Binding IsBusy, Converter={StaticResource InvertBoolConverter}}" />
                         <!--
@@ -63,7 +68,7 @@
             <!-- ── Local server list ───────────────────────────────────────── -->
             <Label Text="Local Servers" Style="{StaticResource LabelCaption}" />
             <Frame Style="{StaticResource CardFrame}">
-                <VerticalStackLayout Spacing="10">
+                <VerticalStackLayout Spacing="12">
 
                     <Button
                         Text="+ Add Server"
@@ -77,43 +82,47 @@
                             <DataTemplate x:DataType="models:LocalServerEntry">
                                 <Frame
                                     BackgroundColor="{StaticResource NightPurple}"
-                                    CornerRadius="10"
+                                    BorderColor="Transparent"
+                                    CornerRadius="12"
                                     Margin="0,4"
-                                    Padding="12,10"
+                                    Padding="14,12"
                                     HasShadow="False">
-                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="6">
-                                        <VerticalStackLayout Grid.Column="0">
+                                    <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
+                                        <VerticalStackLayout Grid.Row="0" Spacing="2">
                                             <Label Text="{Binding Name}" Style="{StaticResource LabelPrimary}" FontAttributes="Bold" />
                                             <Label Text="{Binding DisplayText}" Style="{StaticResource LabelSecondary}" />
                                             <Label Text="{Binding Protocol}" Style="{StaticResource LabelCaption}" />
                                         </VerticalStackLayout>
-                                        <Button
-                                            Grid.Column="1"
-                                            Text="★"
-                                            FontSize="14"
-                                            BackgroundColor="Transparent"
-                                            TextColor="{StaticResource NeonCyan}"
-                                            Padding="4"
-                                            Command="{Binding Source={RelativeSource AncestorType={x:Type vm:AdminViewModel}}, Path=SetDefaultServerCommand}"
-                                            CommandParameter="{Binding .}" />
-                                        <Button
-                                            Grid.Column="2"
-                                            Text="✎"
-                                            FontSize="14"
-                                            BackgroundColor="Transparent"
-                                            TextColor="{StaticResource NeonViolet}"
-                                            Padding="4"
-                                            Command="{Binding Source={RelativeSource AncestorType={x:Type vm:AdminViewModel}}, Path=EditServerCommand}"
-                                            CommandParameter="{Binding .}" />
-                                        <Button
-                                            Grid.Column="3"
-                                            Text="⏎"
-                                            FontSize="14"
-                                            BackgroundColor="Transparent"
-                                            TextColor="{StaticResource NeonGreen}"
-                                            Padding="4"
-                                            Command="{Binding Source={RelativeSource AncestorType={x:Type vm:AdminViewModel}}, Path=ConnectLocalServerCommand}"
-                                            CommandParameter="{Binding .}" />
+
+                                        <HorizontalStackLayout Grid.Row="1" Spacing="8" HorizontalOptions="End">
+                                            <Button
+                                                Text="★ Default"
+                                                Style="{StaticResource ButtonGhost}"
+                                                FontSize="11"
+                                                Padding="12,6"
+                                                TextColor="{StaticResource NeonCyan}"
+                                                BorderColor="{StaticResource NeonCyan}"
+                                                Command="{Binding Source={RelativeSource AncestorType={x:Type vm:AdminViewModel}}, Path=SetDefaultServerCommand}"
+                                                CommandParameter="{Binding .}" />
+                                            <Button
+                                                Text="✎ Edit"
+                                                Style="{StaticResource ButtonGhost}"
+                                                FontSize="11"
+                                                Padding="12,6"
+                                                TextColor="{StaticResource NeonViolet}"
+                                                BorderColor="{StaticResource NeonViolet}"
+                                                Command="{Binding Source={RelativeSource AncestorType={x:Type vm:AdminViewModel}}, Path=EditServerCommand}"
+                                                CommandParameter="{Binding .}" />
+                                            <Button
+                                                Text="⏎ Connect"
+                                                Style="{StaticResource ButtonGhost}"
+                                                FontSize="11"
+                                                Padding="12,6"
+                                                TextColor="{StaticResource NeonGreen}"
+                                                BorderColor="{StaticResource NeonGreen}"
+                                                Command="{Binding Source={RelativeSource AncestorType={x:Type vm:AdminViewModel}}, Path=ConnectLocalServerCommand}"
+                                                CommandParameter="{Binding .}" />
+                                        </HorizontalStackLayout>
                                     </Grid>
                                 </Frame>
                             </DataTemplate>
@@ -123,7 +132,8 @@
                     <!-- Edit form (shown when IsEditing = true) -->
                     <Frame
                         IsVisible="{Binding IsEditing}"
-                        BackgroundColor="{StaticResource CryptPurple}"
+                        BackgroundColor="{StaticResource NightPurple}"
+                        BorderColor="{StaticResource OverlayBorder}"
                         CornerRadius="12"
                         Padding="14"
                         HasShadow="False">
@@ -154,7 +164,7 @@
                                 HorizontalOptions="Fill" />
                             <Editor
                                 Text="{Binding EditRawConfig}"
-                                BackgroundColor="{StaticResource NightPurple}"
+                                BackgroundColor="{StaticResource DeepVoid}"
                                 TextColor="{StaticResource TextPrimary}"
                                 FontFamily="Courier"
                                 FontSize="11"
@@ -253,16 +263,16 @@
 
             <!-- ── Log viewer ────────────────────────────────────────────────── -->
             <Label Text="Protocol Log" Style="{StaticResource LabelCaption}" />
-            <Frame Style="{StaticResource CardFrame}" Padding="12">
-                <VerticalStackLayout Spacing="8">
+            <Frame Style="{StaticResource CardFrame}" Padding="14">
+                <VerticalStackLayout Spacing="10">
                     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                         <Label Grid.Column="0" Text="Live output" Style="{StaticResource LabelSecondary}" VerticalOptions="Center" />
-                        <Button Grid.Column="1" Text="Clear" Style="{StaticResource ButtonGhost}" Command="{Binding ClearLogsCommand}" />
-                        <Button Grid.Column="2" Text="Export" Style="{StaticResource ButtonGhost}" Command="{Binding ExportLogsCommand}" />
+                        <Button Grid.Column="1" Text="Clear" Style="{StaticResource ButtonGhost}" FontSize="11" Padding="12,6" Command="{Binding ClearLogsCommand}" />
+                        <Button Grid.Column="2" Text="Export" Style="{StaticResource ButtonGhost}" FontSize="11" Padding="12,6" Command="{Binding ExportLogsCommand}" />
                     </Grid>
                     <Editor
                         Text="{Binding LogText}"
-                        BackgroundColor="{StaticResource NightPurple}"
+                        BackgroundColor="{StaticResource DeepVoid}"
                         TextColor="{StaticResource NeonGreen}"
                         FontFamily="Courier"
                         FontSize="11"
@@ -272,7 +282,7 @@
                 </VerticalStackLayout>
             </Frame>
 
-            <BoxView HeightRequest="32" Color="Transparent" />
+            <BoxView HeightRequest="24" Color="Transparent" />
 
         </VerticalStackLayout>
     </ScrollView>

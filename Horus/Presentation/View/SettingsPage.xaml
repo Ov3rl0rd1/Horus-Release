@@ -70,13 +70,6 @@
                         <Switch Grid.Column="1" IsToggled="{Binding KillSwitch}" ThumbColor="{StaticResource NeonCyan}" />
                     </Grid>
 
-                    <BoxView Style="{StaticResource Divider}" />
-
-                    <VerticalStackLayout Spacing="4">
-                        <Label Text="Custom DNS" Style="{StaticResource LabelCaption}" />
-                        <Entry Text="{Binding CustomDns}" Style="{StaticResource EntryField}" Placeholder="1.1.1.1, 8.8.8.8" />
-                    </VerticalStackLayout>
-
                 </VerticalStackLayout>
             </Frame>
 
@@ -84,13 +77,6 @@
             <Label Text="Geo Routing" Style="{StaticResource LabelCaption}" />
             <Frame Style="{StaticResource CardFrame}">
                 <VerticalStackLayout Spacing="14">
-
-                    <Grid ColumnDefinitions="*,Auto">
-                        <Label Grid.Column="0" Text="Bypass Russian IPs (Direct)" Style="{StaticResource LabelPrimary}" VerticalOptions="Center" />
-                        <Switch Grid.Column="1" IsToggled="{Binding RuBypassEnabled}" ThumbColor="{StaticResource NeonCyan}" />
-                    </Grid>
-
-                    <BoxView Style="{StaticResource Divider}" />
 
                     <Grid ColumnDefinitions="*,Auto">
                         <VerticalStackLayout Grid.Column="0">
@@ -201,33 +187,9 @@
                 </VerticalStackLayout>
             </Frame>
 
-            <!-- ── Protocol Binary ────────────────────────────────────── -->
-            <Label Text="Protocol Binary" Style="{StaticResource LabelCaption}" />
-            <Frame Style="{StaticResource CardFrame}">
-                <VerticalStackLayout Spacing="14">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <VerticalStackLayout Grid.Column="0">
-                            <Label Text="Hysteria2" Style="{StaticResource LabelPrimary}" />
-                            <Label Text="{Binding Hysteria2Version}" Style="{StaticResource LabelSecondary}" />
-                        </VerticalStackLayout>
-                        <Button
-                            Grid.Column="1"
-                            Text="Check Update"
-                            Style="{StaticResource ButtonGhost}"
-                            Command="{Binding UpdateHysteria2Command}"
-                            IsEnabled="{Binding IsUpdatingBinary, Converter={StaticResource InvertBoolConverter}}" />
-                    </Grid>
-                    <ActivityIndicator
-                        IsVisible="{Binding IsUpdatingBinary}"
-                        IsRunning="{Binding IsUpdatingBinary}"
-                        Color="{StaticResource NeonCyan}"
-                        HorizontalOptions="Start" />
-                </VerticalStackLayout>
-            </Frame>
-
-            <!-- ── Diagnostics ────────────────────────────────────────── -->
-            <Label Text="Diagnostics" Style="{StaticResource LabelCaption}" />
-            <Frame Style="{StaticResource CardFrame}">
+            <!-- ── Diagnostics (hidden unless errors have been recorded) ── -->
+            <Label Text="Diagnostics" Style="{StaticResource LabelCaption}" IsVisible="{Binding HasDiagnostics}" />
+            <Frame Style="{StaticResource CardFrame}" IsVisible="{Binding HasDiagnostics}">
                 <VerticalStackLayout Spacing="12">
                     <Label
                         Text="Send anonymized error logs to support. No personal data (IPs, tokens) is included."

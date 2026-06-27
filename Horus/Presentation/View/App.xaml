@@ -20,9 +20,9 @@
                 TrueText="ADD SERVER" FalseText="EDIT SERVER" />
             <!-- Admin panel: local mode banner colors -->
             <conv:BoolToColorConverter x:Key="LocalModeBannerBg"
-                TrueColor="#33BF5FFF" FalseColor="#1100E5FF" />
+                TrueColor="#22A074C9" FalseColor="#143FBCCB" />
             <conv:BoolToColorConverter x:Key="LocalModeLabelColor"
-                TrueColor="#BF5FFF" FalseColor="#00E5FF" />
+                TrueColor="#A074C9" FalseColor="#3FBCCB" />
 
             <!-- ═══════════════════════════════════════════ -->
             <!--                COLOR PALETTE                -->
@@ -36,29 +36,29 @@
             <Color x:Key="RaisedPurple">#4A2060</Color>
             <Color x:Key="GlassPurple">#5C2A78</Color>
 
-            <!-- Neon Accents -->
-            <Color x:Key="NeonCyan">#00E5FF</Color>
-            <Color x:Key="NeonCyanDim">#0099AA</Color>
-            <Color x:Key="NeonViolet">#BF5FFF</Color>
-            <Color x:Key="NeonVioletDim">#7A3BAA</Color>
-            <Color x:Key="NeonGreen">#39FF9F</Color>
+            <!-- Accents (softened — natural, less saturated) -->
+            <Color x:Key="NeonCyan">#3FBCCB</Color>
+            <Color x:Key="NeonCyanDim">#2E8794</Color>
+            <Color x:Key="NeonViolet">#A074C9</Color>
+            <Color x:Key="NeonVioletDim">#6B4F90</Color>
+            <Color x:Key="NeonGreen">#57CC97</Color>
             <Color x:Key="NeonGreenDim">#1A8050</Color>
 
             <!-- Status Colors -->
-            <Color x:Key="StatusConnected">#39FF9F</Color>
-            <Color x:Key="StatusDisconnected">#FF4466</Color>
-            <Color x:Key="StatusConnecting">#FFB300</Color>
+            <Color x:Key="StatusConnected">#57CC97</Color>
+            <Color x:Key="StatusDisconnected">#E15668</Color>
+            <Color x:Key="StatusConnecting">#E0A52E</Color>
 
             <!-- Text -->
-            <Color x:Key="TextPrimary">#F0E8FF</Color>
-            <Color x:Key="TextSecondary">#9B80B8</Color>
-            <Color x:Key="TextMuted">#5C4475</Color>
-            <Color x:Key="TextAccent">#00E5FF</Color>
+            <Color x:Key="TextPrimary">#ECE6F5</Color>
+            <Color x:Key="TextSecondary">#9B89B0</Color>
+            <Color x:Key="TextMuted">#5C4D70</Color>
+            <Color x:Key="TextAccent">#3FBCCB</Color>
 
             <!-- Transparent overlays -->
             <Color x:Key="OverlayLight">#1AFFFFFF</Color>
             <Color x:Key="OverlayMedium">#33FFFFFF</Color>
-            <Color x:Key="OverlayBorder">#2600E5FF</Color>
+            <Color x:Key="OverlayBorder">#1FFFFFFF</Color>
             <Color x:Key="CardBackground">#222E123B</Color>
 
             <!-- ═══════════════════════════════════════════ -->
@@ -143,11 +143,11 @@
 
             <!-- Glass Card Frame -->
             <Style x:Key="CardFrame" TargetType="Frame">
-                <Setter Property="BackgroundColor" Value="{StaticResource MidPurple}" />
+                <Setter Property="BackgroundColor" Value="{StaticResource CryptPurple}" />
                 <Setter Property="BorderColor" Value="{StaticResource OverlayBorder}" />
-                <Setter Property="CornerRadius" Value="20" />
+                <Setter Property="CornerRadius" Value="16" />
                 <Setter Property="HasShadow" Value="False" />
-                <Setter Property="Padding" Value="20" />
+                <Setter Property="Padding" Value="18" />
             </Style>
 
             <!-- Primary CTA Button -->

@@ -1,111 +1,140 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+<?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              Title="Horus"
              x:Class="Horus.Presentation.View.MainPage"
-             Shell.BackgroundColor="#4A2060"
+             Shell.BackgroundColor="{StaticResource NightPurple}"
              NavigationPage.HasNavigationBar="False">
 
-    <Grid RowDefinitions="Auto,*,Auto"
-      BackgroundColor="{StaticResource DeepVoid}">
+    <Grid RowDefinitions="*"
+          BackgroundColor="{StaticResource DeepVoid}">
 
-        <!-- ── DECORATIVE BACKGROUND GLOW ── -->
-        <AbsoluteLayout Grid.RowSpan="3">
-
-            <!-- Top purple radial glow -->
-            <Ellipse AbsoluteLayout.LayoutBounds="0.5, -0.05, 420, 420"
-                 AbsoluteLayout.LayoutFlags="XProportional,YProportional"
-                 WidthRequest="420"
-                 HeightRequest="420">
-                <Ellipse.Fill>
-                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
-                        <GradientStop Color="#554A2060" Offset="0.0" />
-                        <GradientStop Color="#003D1850" Offset="0.6" />
-                        <GradientStop Color="Transparent" Offset="1.0" />
-                    </RadialGradientBrush>
-                </Ellipse.Fill>
-            </Ellipse>
-
-            <!-- Bottom cyan glow hint -->
-            <Ellipse AbsoluteLayout.LayoutBounds="0.5, 1.1, 300, 300"
-                 AbsoluteLayout.LayoutFlags="XProportional,YProportional"
-                 WidthRequest="300"
-                 HeightRequest="300">
-                <Ellipse.Fill>
-                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
-                        <GradientStop Color="#1A00E5FF" Offset="0.0" />
-                        <GradientStop Color="Transparent" Offset="1.0" />
-                    </RadialGradientBrush>
-                </Ellipse.Fill>
-            </Ellipse>
-
-        </AbsoluteLayout>
+        <!-- ── SUBTLE BACKGROUND GLOW (single, soft) ── -->
+        <Ellipse InputTransparent="True"
+                 WidthRequest="460"
+                 HeightRequest="460"
+                 HorizontalOptions="Center"
+                 VerticalOptions="Start"
+                 Margin="0,-120,0,0">
+            <Ellipse.Fill>
+                <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                    <GradientStop Color="#33322445" Offset="0.0" />
+                    <GradientStop Color="Transparent" Offset="1.0" />
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+        </Ellipse>
 
         <!-- ════════════════════════════════════════════════════════ -->
         <!--                  SCROLLABLE BODY                         -->
         <!-- ════════════════════════════════════════════════════════ -->
-        <ScrollView Grid.Row="1">
+        <ScrollView>
             <VerticalStackLayout x:Name="ContentStack"
-                                 Spacing="20" Padding="20,4"
+                                 Spacing="28" Padding="24,24"
                                  Opacity="0" TranslationY="40">
+
+                <!-- ─────────────────────────────────── -->
+                <!--         STATUS INDICATOR ROW        -->
+                <!-- ─────────────────────────────────── -->
+                <HorizontalStackLayout HorizontalOptions="Center"
+                                   Spacing="8"
+                                   Margin="0,12,0,0">
+                    <Ellipse x:Name="StatusDot"
+                         WidthRequest="9"
+                         HeightRequest="9"
+                         Fill="{StaticResource StatusDisconnected}"
+                         VerticalOptions="Center">
+                        <Ellipse.Triggers>
+                            <DataTrigger TargetType="Ellipse"
+                                Binding="{Binding ConnectionStatus}"
+                                Value="Connected">
+                                <Setter Property="Fill" Value="{StaticResource StatusConnected}" />
+                            </DataTrigger>
+                            <DataTrigger TargetType="Ellipse"
+                                Binding="{Binding ConnectionStatus}"
+                                Value="Disconnected">
+                                <Setter Property="Fill" Value="{StaticResource StatusDisconnected}" />
+                            </DataTrigger>
+                            <DataTrigger TargetType="Ellipse"
+                                Binding="{Binding ConnectionStatus}"
+                                Value="Connecting">
+                                <Setter Property="Fill" Value="{StaticResource StatusConnecting}" />
+                            </DataTrigger>
+                        </Ellipse.Triggers>
+                    </Ellipse>
+                    <Label x:Name="LblStatusText"
+                       Text="Disconnected"
+                       TextColor="{StaticResource StatusDisconnected}"
+                       FontSize="14"
+                       CharacterSpacing="0.5"
+                       VerticalOptions="Center">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label"
+                                Binding="{Binding ConnectionStatus}"
+                                Value="Connected">
+                                <Setter Property="TextColor" Value="{StaticResource StatusConnected}" />
+                                <Setter Property="Text" Value="Connected"/>
+                            </DataTrigger>
+                            <DataTrigger TargetType="Label"
+                                Binding="{Binding ConnectionStatus}"
+                                Value="Disconnected">
+                                <Setter Property="TextColor" Value="{StaticResource StatusDisconnected}" />
+                                <Setter Property="Text" Value="Disconnected"/>
+                            </DataTrigger>
+                            <DataTrigger TargetType="Label"
+                                Binding="{Binding ConnectionStatus}"
+                                Value="Connecting">
+                                <Setter Property="TextColor" Value="{StaticResource StatusConnecting}" />
+                                <Setter Property="Text" Value="Connecting..."/>
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
+                </HorizontalStackLayout>
 
                 <!-- ─────────────────────────────────── -->
                 <!--   BIG CONNECT BUTTON + STATUS RING  -->
                 <!-- ─────────────────────────────────── -->
                 <Grid HorizontalOptions="Center"
-                  Margin="0,16,0,8">
+                  Margin="0,4,0,4">
 
-                    <!-- Outer pulsing ring (decorative) -->
+                    <!-- Outer pulsing glow (decorative, animated in code-behind) -->
                     <Ellipse x:Name="OuterGlowRing"
-                         WidthRequest="220"
-                         HeightRequest="220"
+                         WidthRequest="240"
+                         HeightRequest="240"
                          HorizontalOptions="Center"
                          VerticalOptions="Center">
                         <Ellipse.Fill>
                             <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
-                                <GradientStop Color="#1A00E5FF" Offset="0.65" />
+                                <GradientStop Color="#223FBCCB" Offset="0.62" />
                                 <GradientStop Color="Transparent" Offset="1.0" />
                             </RadialGradientBrush>
                         </Ellipse.Fill>
                     </Ellipse>
 
-                    <!-- Inner ring stroke -->
+                    <!-- Thin ring stroke (spins while connecting) -->
                     <Ellipse x:Name="StrokeRing"
-                         WidthRequest="188"
-                         HeightRequest="188"
+                         WidthRequest="196"
+                         HeightRequest="196"
                          HorizontalOptions="Center"
                          VerticalOptions="Center"
-                         StrokeThickness="1.5">
-                        <Ellipse.Stroke>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                                <GradientStop Color="#4400E5FF" Offset="0" />
-                                <GradientStop Color="#22BF5FFF" Offset="1" />
-                            </LinearGradientBrush>
-                        </Ellipse.Stroke>
-                    </Ellipse>
+                         Stroke="{StaticResource OverlayBorder}"
+                         StrokeThickness="1.5" />
 
                     <!-- Connect button circle -->
-                    <Frame WidthRequest="188"
-                        HeightRequest="188"
-                        CornerRadius="99"
+                    <Frame WidthRequest="186"
+                        HeightRequest="186"
+                        CornerRadius="93"
                         Padding="0"
                         HorizontalOptions="Center"
                         VerticalOptions="Center"
                         HasShadow="False"
-                        BorderColor="Transparent">
-                        <Frame.Background>
-                            <RadialGradientBrush>
-                                <GradientStop Color="#4A2060" Offset="0" />
-                                <GradientStop Color="#2E123BAA" Offset="1" />
-                            </RadialGradientBrush>
-                        </Frame.Background>
+                        BorderColor="Transparent"
+                        BackgroundColor="{StaticResource CryptPurple}">
                         <Grid>
-                            <!-- Tap area -->
                             <VerticalStackLayout HorizontalOptions="Center"
                              VerticalOptions="Center"
-                             Spacing="4">
-                                <Label Text="🔗"
-                                   FontSize="44"
+                             Spacing="6">
+                                <Label Text="🛡"
+                                   FontSize="46"
                                    TextColor="{StaticResource NeonCyan}"
                                    HorizontalOptions="Center" />
                                 <Label x:Name="LblConnectStatus"
@@ -116,18 +145,18 @@
                                    TextColor="{StaticResource NeonCyan}"
                                    HorizontalOptions="Center">
                                     <Label.Triggers>
-                                        <DataTrigger TargetType="Label" 
-                                            Binding="{Binding ConnectionStatus}" 
+                                        <DataTrigger TargetType="Label"
+                                            Binding="{Binding ConnectionStatus}"
                                             Value="Connected">
                                             <Setter Property="Text" Value="DISCONNECT"/>
                                         </DataTrigger>
-                                        <DataTrigger TargetType="Label" 
-                                            Binding="{Binding ConnectionStatus}" 
+                                        <DataTrigger TargetType="Label"
+                                            Binding="{Binding ConnectionStatus}"
                                             Value="Disconnected">
                                             <Setter Property="Text" Value="CONNECT"/>
                                         </DataTrigger>
-                                        <DataTrigger TargetType="Label" 
-                                            Binding="{Binding ConnectionStatus}" 
+                                        <DataTrigger TargetType="Label"
+                                            Binding="{Binding ConnectionStatus}"
                                             Value="Connecting">
                                             <Setter Property="Text" Value="CONNECTING"/>
                                         </DataTrigger>
@@ -141,64 +170,6 @@
                     </Frame>
 
                 </Grid>
-
-                <!-- ─────────────────────────────────── -->
-                <!--         STATUS INDICATOR ROW        -->
-                <!-- ─────────────────────────────────── -->
-                <HorizontalStackLayout HorizontalOptions="Center"
-                                   Spacing="8"
-                                   Margin="0,0,0,8">
-                    <Ellipse x:Name="StatusDot"
-                         WidthRequest="8"
-                         HeightRequest="8"
-                         Fill="{StaticResource StatusDisconnected}"
-                         VerticalOptions="Center">
-                        <Ellipse.Triggers>
-                            <DataTrigger TargetType="Ellipse" 
-                                Binding="{Binding ConnectionStatus}" 
-                                Value="Connected">
-                                <Setter Property="Fill" Value="{StaticResource StatusConnected}" />
-                            </DataTrigger>
-                            <DataTrigger TargetType="Ellipse" 
-                                Binding="{Binding ConnectionStatus}" 
-                                Value="Disconnected">
-                                <Setter Property="Fill" Value="{StaticResource StatusDisconnected}" />
-                            </DataTrigger>
-                            <DataTrigger TargetType="Ellipse" 
-                                Binding="{Binding ConnectionStatus}" 
-                                Value="Connecting">
-                                <Setter Property="Fill" Value="{StaticResource StatusConnecting}" />
-                            </DataTrigger>
-                        </Ellipse.Triggers>
-                    </Ellipse>
-                    <Label x:Name="LblStatusText"
-                       Text="Disconnected"
-                       TextColor="{StaticResource StatusDisconnected}"
-                       FontSize="13"
-                       CharacterSpacing="0.8"
-                       VerticalOptions="Center">
-                        <Label.Triggers>
-                            <DataTrigger TargetType="Label" 
-                                Binding="{Binding ConnectionStatus}" 
-                                Value="Connected">
-                                <Setter Property="TextColor" Value="{StaticResource StatusConnected}" />
-                                <Setter Property="Text" Value="Connected"/>
-                            </DataTrigger>
-                            <DataTrigger TargetType="Label" 
-                                Binding="{Binding ConnectionStatus}" 
-                                Value="Disconnected">
-                                <Setter Property="TextColor" Value="{StaticResource StatusDisconnected}" />
-                                <Setter Property="Text" Value="Disconnected"/>
-                            </DataTrigger>
-                            <DataTrigger TargetType="Label" 
-                                Binding="{Binding ConnectionStatus}" 
-                                Value="Connecting">
-                                <Setter Property="TextColor" Value="{StaticResource StatusConnecting}" />
-                                <Setter Property="Text" Value="Connecting..."/>
-                            </DataTrigger>
-                        </Label.Triggers>
-                    </Label>
-                </HorizontalStackLayout>
 
                 <!-- ─────────────────────────────────── -->
                 <!--         SELECTED SERVER CARD        -->
@@ -241,63 +212,14 @@
                             </HorizontalStackLayout>
                         </VerticalStackLayout>
 
+                        <Label Grid.Column="2"
+                               Text="›"
+                               TextColor="{StaticResource TextSecondary}"
+                               FontSize="26"
+                               VerticalOptions="Center" />
+
                     </Grid>
                 </Frame>
-
-                <!-- ─────────────────────────────────── -->
-                <!--          TRAFFIC STATS ROW          -->
-                <!-- ─────────────────────────────────── -->
-                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-
-                    <!-- Download -->
-                    <Frame Grid.Column="0" Style="{StaticResource CardFrame}" Padding="16">
-                        <VerticalStackLayout Spacing="6">
-                            <HorizontalStackLayout Spacing="6">
-                                <Label Text="↓"
-                                   TextColor="{StaticResource NeonCyan}"
-                                   FontSize="16"
-                                   FontAttributes="Bold"
-                                   VerticalOptions="Center" />
-                                <Label Text="DOWNLOAD"
-                                   Style="{StaticResource LabelCaption}"
-                                   VerticalOptions="Center" />
-                            </HorizontalStackLayout>
-                            <Label x:Name="LblDownload"
-                               Text="{Binding DownloadSpeed}"
-                               TextColor="{StaticResource TextPrimary}"
-                               FontSize="26"
-                               FontAttributes="Bold" />
-                            <Label Text="MB/s"
-                               Style="{StaticResource LabelSecondary}"
-                               FontSize="11" />
-                        </VerticalStackLayout>
-                    </Frame>
-
-                    <!-- Upload -->
-                    <Frame Grid.Column="1" Style="{StaticResource CardFrame}" Padding="16">
-                        <VerticalStackLayout Spacing="6">
-                            <HorizontalStackLayout Spacing="6">
-                                <Label Text="↑"
-                                   TextColor="{StaticResource NeonViolet}"
-                                   FontSize="16"
-                                   FontAttributes="Bold"
-                                   VerticalOptions="Center" />
-                                <Label Text="UPLOAD"
-                                   Style="{StaticResource LabelCaption}"
-                                   VerticalOptions="Center" />
-                            </HorizontalStackLayout>
-                            <Label x:Name="LblUpload"
-                               Text="{Binding UploadSpeed}"
-                               TextColor="{StaticResource TextPrimary}"
-                               FontSize="26"
-                               FontAttributes="Bold" />
-                            <Label Text="MB/s"
-                               Style="{StaticResource LabelSecondary}"
-                               FontSize="11" />
-                        </VerticalStackLayout>
-                    </Frame>
-
-                </Grid>
 
                 <!-- ─────────────────────────────────── -->
                 <!--         SESSION STATS ROW           -->
@@ -355,64 +277,8 @@
                     </Grid>
                 </Frame>
 
-                <!-- ─────────────────────────────────── -->
-                <!--         PROTOCOL DETAILS CARD       -->
-                <!-- ─────────────────────────────────── -->
-                <Frame Style="{StaticResource CardFrame}" Padding="16">
-                    <VerticalStackLayout Spacing="12">
-
-                        <Label Text="PROTOCOL DETAILS"
-                           Style="{StaticResource LabelCaption}" />
-
-                        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" RowSpacing="10">
-
-                            <!-- Protocol -->
-                            <VerticalStackLayout Grid.Row="0" Grid.Column="0" Spacing="2">
-                                <Label Text="PROTOCOL"
-                                   Style="{StaticResource LabelCaption}"
-                                   FontSize="10" />
-                                <Label Text="Hysteria2 / QUIC"
-                                   TextColor="{StaticResource TextPrimary}"
-                                   FontSize="13" />
-                            </VerticalStackLayout>
-
-                            <!-- Cipher -->
-                            <VerticalStackLayout Grid.Row="0" Grid.Column="1" Spacing="2">
-                                <Label Text="CIPHER"
-                                   Style="{StaticResource LabelCaption}"
-                                   FontSize="10" />
-                                <Label Text="AES-256-GCM"
-                                   TextColor="{StaticResource TextPrimary}"
-                                   FontSize="13" />
-                            </VerticalStackLayout>
-
-                            <!-- Obfuscation -->
-                            <VerticalStackLayout Grid.Row="1" Grid.Column="0" Spacing="2">
-                                <Label Text="OBFUSCATION"
-                                   Style="{StaticResource LabelCaption}"
-                                   FontSize="10" />
-                                <Label Text="salamander"
-                                   TextColor="{StaticResource NeonCyan}"
-                                   FontSize="13" />
-                            </VerticalStackLayout>
-
-                            <!-- BBR -->
-                            <VerticalStackLayout Grid.Row="1" Grid.Column="1" Spacing="2">
-                                <Label Text="CC ALGORITHM"
-                                   Style="{StaticResource LabelCaption}"
-                                   FontSize="10" />
-                                <Label Text="BBR v2"
-                                   TextColor="{StaticResource NeonGreen}"
-                                   FontSize="13" />
-                            </VerticalStackLayout>
-
-                        </Grid>
-
-                    </VerticalStackLayout>
-                </Frame>
-
                 <!-- Bottom spacer -->
-                <BoxView HeightRequest="12" Color="Transparent" />
+                <BoxView HeightRequest="8" Color="Transparent" />
 
             </VerticalStackLayout>
         </ScrollView>

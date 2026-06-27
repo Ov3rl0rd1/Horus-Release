@@ -21,5 +21,8 @@ namespace Horus.Domain.Interfaces
 
         /// <summary>Path to the latest report archive (if flush was called but send failed).</summary>
         string? LastReportArchivePath { get; }
+
+        /// <summary>True when errors have been recorded that have not yet been successfully sent.</summary>
+        bool HasPendingReports { get; }
     }
 }
