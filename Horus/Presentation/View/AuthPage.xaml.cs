@@ -67,7 +67,7 @@ namespace Horus.Presentation.View
 
         private async void OnRegisterTapped(object sender, TappedEventArgs e)
         {
-            await Shell.Current.GoToAsync("RegisterPage");
+            await Shell.Current.GoToAsync("//RegisterPage");
         }
     }
 }

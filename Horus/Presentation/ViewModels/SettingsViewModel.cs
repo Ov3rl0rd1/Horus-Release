@@ -43,11 +43,6 @@ namespace Horus.Presentation.ViewModels
         [ObservableProperty] private string _hysteria2Version = "Bundled";
         [ObservableProperty] private bool _isUpdatingBinary;
 
-        // ── Diagnostics ───────────────────────────────────────────────────────
-        // Diagnostics card is only surfaced when the error reporting service has
-        // recorded something worth sending.
-        [ObservableProperty] private bool _hasDiagnostics;
-
         // ── Status ────────────────────────────────────────────────────────────
         [ObservableProperty] private bool _isBusy;
         [ObservableProperty] private string _statusMessage = string.Empty;
@@ -75,8 +70,8 @@ namespace Horus.Presentation.ViewModels
             // Account info
             if (_auth.CurrentUser != null)
             {
-                Username = _auth.CurrentUser.Login;
-                RenewalDate = _auth.CurrentUser.ValidUntil.ToLocalTime().ToString("d MMM yyyy");
+                Username = _auth.CurrentUser.username;
+                RenewalDate = _auth.CurrentUser.expiresAt.HasValue ? _auth.CurrentUser.expiresAt.Value.ToLocalTime().ToString("d MMM yyyy") : "None";
             }
 
             // GeoIP status
@@ -88,9 +83,6 @@ namespace Horus.Presentation.ViewModels
             // Hysteria2 version
             var installed = _updater.GetInstalledBinaryPath("hysteria2");
             Hysteria2Version = string.IsNullOrEmpty(installed) ? "Bundled" : "Updated";
-
-            // Only show diagnostics when there's something recorded to report.
-            HasDiagnostics = _errorReporting.HasPendingReports;
 
             await Task.CompletedTask;
         }

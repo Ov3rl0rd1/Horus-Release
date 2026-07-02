@@ -1,7 +1,6 @@
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,6 +10,7 @@ namespace Horus.Application
     public class ApiService : IApiService
     {
         private readonly HttpClient _httpClient;
+        private readonly HttpAuthHandler _httpAuthHandler;
         private readonly string _baseUrl;
         private readonly IStorageService _storage;
         private readonly ILocalModeService _localMode;
@@ -31,24 +31,15 @@ namespace Horus.Application
             _localConfig = localConfig;
             _baseUrl = AppConfiguration.ApiBaseUrl.TrimEnd('/');
 
-#if DEBUG
-            var handler = new HttpClientHandler
-            {
-                ServerCertificateCustomValidationCallback = (_, _, _, _) => true
-            };
-            _httpClient = new HttpClient(handler);
-#else
-            _httpClient = new HttpClient();
+            _httpAuthHandler = new HttpAuthHandler(storage
+#if DEBUG 
+                , verifyServerCertificate: false
 #endif
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
-        }
+                );
 
-        private void SetAuthHeader()
-        {
-            var token = _storage.Token();
-            _httpClient.DefaultRequestHeaders.Authorization = !string.IsNullOrEmpty(token)
-                ? new AuthenticationHeaderValue("Bearer", token)
-                : null;
+            _httpClient = new HttpClient(_httpAuthHandler);
+
+            _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
         // ── Auth ─────────────────────────────────────────────────────────────
@@ -61,7 +52,7 @@ namespace Horus.Application
 
             try
             {
-                var body = new { username, password, session = session ?? string.Empty };
+                var body = new { username, password };
                 using var content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
                 using var response = await _httpClient.PostAsync($"{_baseUrl}/auth/login", content);
 
@@ -73,18 +64,12 @@ namespace Horus.Application
                 var result = await DeserializeAsync<LoginResponse>(response)
                     ?? throw new InvalidOperationException("Empty login response.");
 
-                ApplyToken(result.Token);
+                await _httpAuthHandler.UpdateSession(result.session);
 
                 return new AuthResult
                 {
                     Success = true,
-                    Token = result.Token,
-                    User = new UserInfo
-                    {
-                        Login = result.Username,
-                        Session = result.Session,
-                        ValidUntil = result.ExpiresAt
-                    },
+                    Response = result,
                     Message = "OK"
                 };
             }
@@ -126,18 +111,12 @@ namespace Horus.Application
                 var result = await DeserializeAsync<LoginResponse>(response)
                     ?? throw new InvalidOperationException("Empty register response.");
 
-                ApplyToken(result.Token);
+                await _httpAuthHandler.UpdateSession(result.session);
 
                 return new AuthResult
                 {
                     Success = true,
-                    Token = result.Token,
-                    User = new UserInfo
-                    {
-                        Login = result.Username,
-                        Session = result.Session,
-                        ValidUntil = result.ExpiresAt
-                    },
+                    Response = result,
                     Message = "Registration successful"
                 };
             }
@@ -158,7 +137,9 @@ namespace Horus.Application
             if (_localMode.IsLocalMode)
                 return _localConfig.Config.Servers.Select(s => s.ToServerInfo()).ToList();
 
-            SetAuthHeader();
+            if(_httpAuthHandler.HasSession() == false)
+                throw new InvalidOperationException("No valid session. Please log in first.");
+
             try
             {
                 using var response = await _httpClient.GetAsync($"{_baseUrl}/servers/");
@@ -178,7 +159,9 @@ namespace Horus.Application
             if (_localMode.IsLocalMode)
                 return BuildLocalConfig(serverId);
 
-            SetAuthHeader();
+            if (_httpAuthHandler.HasSession() == false)
+                throw new InvalidOperationException("No valid session. Please log in first.");
+
             try
             {
                 using var response = await _httpClient.GetAsync($"{_baseUrl}/servers/{serverId}/connect");
@@ -236,7 +219,9 @@ namespace Horus.Application
             if (_localMode.IsLocalMode)
                 return _localConfig.Config.RoutingRules ?? new RoutingRulesFile();
 
-            SetAuthHeader();
+            if (_httpAuthHandler.HasSession() == false)
+                throw new InvalidOperationException("No valid session. Please log in first.");
+
             try
             {
                 using var response = await _httpClient.GetAsync($"{_baseUrl}/routing-rules", ct);
@@ -272,14 +257,8 @@ namespace Horus.Application
         private static AuthResult LocalAuthResult(string username) => new()
         {
             Success = true,
-            Token = "local-mode-token",
             Message = "Local mode — no auth required",
-            User = new UserInfo
-            {
-                Login = string.IsNullOrEmpty(username) ? "admin" : username,
-                Session = "local",
-                ValidUntil = DateTime.UtcNow.AddYears(10)
-            }
+            Response = new LoginResponse("local", DateTime.UtcNow.AddYears(10))
         };
 
         private string BuildLocalConfig(int serverId)
@@ -312,12 +291,6 @@ namespace Horus.Application
                 Socks5Address = entry.Socks5Address
             };
             return cfg.ToConfig();
-        }
-
-        private void ApplyToken(string token)
-        {
-            _httpClient.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", token);
         }
 
         private static async Task<T?> DeserializeAsync<T>(HttpResponseMessage response)

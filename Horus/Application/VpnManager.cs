@@ -70,9 +70,6 @@ namespace Horus.Application
 
             try
             {
-                if (_auth.IsAuthenticated)
-                    await _auth.RefreshTokenAsync();
-
                 var yamlConfig = await _api.GetServerConfigAsync(server.Id);
 
                 bool granted = await _platform.RequestPermissionsAsync();

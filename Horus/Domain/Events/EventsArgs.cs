@@ -9,7 +9,7 @@ namespace Horus.Domain.Events
     public record TrafficStatisticsEventArgs(long UpBps, long DownBps, long TotalUp, long TotalDown);
     public record ProtocolErrorEventArgs(string Code, string Message, bool IsFatal);
     public record ConnectionErrorEventArgs(string Protocol, string Error, bool WillRetry);
-    public record AuthStateChangedEventArgs(bool IsAuthenticated, UserInfo? User);
+    public record AuthStateChangedEventArgs(bool IsAuthenticated, User? User);
     public record SubscriptionChangedEventArgs(SubscriptionInfo? Info, bool IsExpired);
     public record GeoDataUpdatedEventArgs(string Type, DateTime UpdatedAt);
     public record ServerChangedEventArgs(ServerInfo? Previous, ServerInfo Current);

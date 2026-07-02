@@ -6,8 +6,8 @@ namespace Horus.Presentation.View
         {
             InitializeComponent();
 
-            Routing.RegisterRoute("AuthPage", typeof(AuthPage));
-            Routing.RegisterRoute("RegisterPage", typeof(RegisterPage));
+            //Routing.RegisterRoute("AuthPage", typeof(AuthPage));
+            //Routing.RegisterRoute("RegisterPage", typeof(RegisterPage));
 
 #if ADMIN_MODE
             Routing.RegisterRoute("AdminPage", typeof(AdminPage));

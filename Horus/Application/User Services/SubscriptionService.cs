@@ -26,7 +26,7 @@ namespace Horus.Application
             var expiry = _storage.Subscription();
             _current = new SubscriptionInfo
             {
-                APIKey = _storage.Token() ?? string.Empty,
+                APIKey = _storage.Session() ?? string.Empty,
                 ExpireAt = expiry ?? DateTime.MinValue
             };
 

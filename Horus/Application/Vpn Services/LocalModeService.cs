@@ -25,7 +25,7 @@ namespace Horus.Application
 
             var uri = new Uri(AppConfiguration.ApiBaseUrl);
             var host = uri.Host;
-            var port = uri.Port > 0 ? uri.Port : (uri.Scheme == "https" ? 443 : 80);
+            var port = uri.Port > 0 ? uri.Port : (uri.Scheme == "https" ? 443 : 8080);
 
             bool reachable = await TcpProbeAsync(host, port, ct);
             SetMode(!reachable);

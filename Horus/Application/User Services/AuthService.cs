@@ -10,7 +10,7 @@ namespace Horus.Application
         private readonly IStorageService _storage;
         private readonly ILocalModeService _localMode;
 
-        private UserInfo? _currentUser;
+        private User? _currentUser;
 
         public AuthService(IApiService api, IStorageService storage, ILocalModeService localMode)
         {
@@ -22,19 +22,21 @@ namespace Horus.Application
             _localMode.LocalModeChanged += OnLocalModeChanged;
         }
 
-        public UserInfo? CurrentUser => _currentUser;
+        public User? CurrentUser => _currentUser;
 
         public bool IsAuthenticated =>
-            _currentUser != null && _currentUser.ValidUntil > DateTime.UtcNow;
+            _currentUser != null && _currentUser.expiresAt > DateTime.UtcNow;
 
         public event EventHandler<AuthStateChangedEventArgs>? AuthStateChanged;
 
         public async Task<AuthResult> LoginAsync(string username, string password)
         {
             var result = await _api.LoginAsync(username, password);
-            if (!result.Success) return result;
 
-            _currentUser = result.User;
+            if (!result.Success) 
+                return result;
+
+            _currentUser = new User(username, result.Response.expiresAt);
             await PersistUserAsync(result);
 
             AuthStateChanged?.Invoke(this, new AuthStateChangedEventArgs(true, _currentUser));
@@ -44,31 +46,13 @@ namespace Horus.Application
         public async Task<AuthResult> RegisterAsync(string username, string email, string password)
         {
             var result = await _api.RegisterAsync(username, email, password);
-            if (!result.Success) return result;
 
-            _currentUser = result.User;
+            if (!result.Success) 
+                return result;
+
+            _currentUser = new User(username, result.Response.expiresAt);
             await PersistUserAsync(result);
 
-            AuthStateChanged?.Invoke(this, new AuthStateChangedEventArgs(true, _currentUser));
-            return result;
-        }
-
-        public async Task<AuthResult> RefreshTokenAsync()
-        {
-            // In local mode, refresh is a no-op — token is synthetic
-            if (_localMode.IsLocalMode)
-                return new AuthResult { Success = true, Token = "local-mode-token", User = _currentUser, Message = "Local mode" };
-
-            var username = _storage.Username();
-            var session = _storage.Session();
-            if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(session))
-                return new AuthResult { Success = false, Message = "No stored session." };
-
-            var result = await _api.LoginAsync(username, string.Empty, session);
-            if (!result.Success) return result;
-
-            _currentUser = result.User;
-            await _storage.UpdateTokenAsync(result.Token);
             AuthStateChanged?.Invoke(this, new AuthStateChangedEventArgs(true, _currentUser));
             return result;
         }
@@ -86,10 +70,8 @@ namespace Horus.Application
         {
             await _storage.Initialization;
 
-            // First, probe the API to determine mode
             await _localMode.ProbeApiAsync();
 
-            // In local mode, bypass auth entirely
             if (_localMode.IsLocalMode)
             {
                 _currentUser = LocalUser();
@@ -103,32 +85,9 @@ namespace Horus.Application
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(session))
                 return false;
 
-            // Optimistically restore so UI shows previous user immediately
             var sub = _storage.Subscription();
-            _currentUser = new UserInfo
-            {
-                Login = username,
-                Session = session,
-                ValidUntil = sub ?? DateTime.UtcNow.AddMinutes(5)
-            };
+            _currentUser = new User(username, sub);
 
-            var result = await _api.LoginAsync(username, string.Empty, session);
-
-            // ApiService may have switched to local mode during this call
-            if (_localMode.IsLocalMode)
-            {
-                _currentUser = LocalUser(username);
-                return true;
-            }
-
-            if (!result.Success)
-            {
-                _currentUser = null;
-                return false;
-            }
-
-            _currentUser = result.User;
-            await _storage.UpdateTokenAsync(result.Token);
             return true;
         }
 
@@ -143,21 +102,19 @@ namespace Horus.Application
             }
         }
 
-        private static UserInfo LocalUser(string? name = null) => new()
-        {
-            Login = name ?? "admin",
-            Session = "local",
-            ValidUntil = DateTime.UtcNow.AddYears(10)
-        };
+        private static User LocalUser(string? name = null) => new(name ?? "admin", DateTime.UtcNow.AddYears(10));
 
         private async Task PersistUserAsync(AuthResult result)
         {
-            if (result.User == null || string.IsNullOrEmpty(result.Token)) return;
+            if (result.Success == false || result.Response == null 
+                || string.IsNullOrEmpty(result.Response.session)
+                || _currentUser == null) 
+                return;
+
             await _storage.UpdateAsync(
-                result.Token,
-                result.User.Session,
-                result.User.Login,
-                result.User.ValidUntil);
+                result.Response.session,
+                _currentUser.username,
+                result.Response.expiresAt);
         }
     }
 }

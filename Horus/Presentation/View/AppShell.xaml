@@ -7,6 +7,15 @@
     xmlns:views="clr-namespace:Horus.Presentation.View"
     Title="Horus">
 
+    <ShellContent
+        Title="Login"
+        ContentTemplate="{DataTemplate views:AuthPage}"
+        Route="AuthPage" />
+    <ShellContent
+        Title="Register"
+        ContentTemplate="{DataTemplate views:RegisterPage}"
+        Route="RegisterPage" />
+    
     <TabBar
         Shell.BackgroundColor="{StaticResource NightPurple}"
         Shell.TabBarTitleColor="{StaticResource TextAccent}"
