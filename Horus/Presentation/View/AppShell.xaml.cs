@@ -10,8 +10,6 @@ namespace Horus.Presentation.View
             //Routing.RegisterRoute("RegisterPage", typeof(RegisterPage));
 
 #if ADMIN_MODE
-            Routing.RegisterRoute("AdminPage", typeof(AdminPage));
-
             // Dynamically inject the Admin tab into the existing TabBar
             var adminTab = new Tab { Title = "ADMIN" };
             adminTab.Icon = new FontImageSource

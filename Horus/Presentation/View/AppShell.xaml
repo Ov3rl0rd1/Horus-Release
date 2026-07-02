@@ -15,6 +15,10 @@
         Title="Register"
         ContentTemplate="{DataTemplate views:RegisterPage}"
         Route="RegisterPage" />
+    <ShellContent
+        Title="Admin"
+        ContentTemplate="{DataTemplate views:AdminPage}"
+        Route="Admin" />
     
     <TabBar
         Shell.BackgroundColor="{StaticResource NightPurple}"
@@ -31,6 +35,16 @@
                 Route="MainPage" />
         </Tab>
 
+        <Tab Title="ADMIN">
+            <Tab.Icon>
+                <FontImageSource Glyph="⚙" FontFamily="OpenSansRegular" Size="22" />
+            </Tab.Icon>
+            <ShellContent
+        Title="Admin"
+        ContentTemplate="{DataTemplate views:AdminPage}"
+        Route="AdminPage" />
+        </Tab>
+        
         <Tab Title="SETTINGS">
             <Tab.Icon>
                 <FontImageSource Glyph="⚙" FontFamily="OpenSansRegular" Size="22" />

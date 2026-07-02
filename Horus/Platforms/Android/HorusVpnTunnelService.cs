@@ -160,7 +160,9 @@ namespace Horus.Platforms.Android
 
         private void EnsureNotificationChannel()
         {
-            if (Build.VERSION.SdkInt < BuildVersionCodes.O) return;
+            if (Build.VERSION.SdkInt < BuildVersionCodes.O) 
+                return;
+
             var nm = (NotificationManager?)GetSystemService(NotificationService);
             if (nm?.GetNotificationChannel(ChannelId) == null)
             {
@@ -177,7 +179,7 @@ namespace Horus.Platforms.Android
             var builder = new Notification.Builder(this, ChannelId)
                 .SetContentTitle("Horus VPN")
                 .SetContentText(text)
-                .SetSmallIcon(Resource.Mipmap.appicon)
+                .SetSmallIcon(Resource.Drawable.appicon_notif)
                 .SetOngoing(true);
             return builder.Build();
         }
