@@ -107,8 +107,5 @@
 	  <Compile Update="Presentation\View\RegisterPage.xaml.cs">
 	    <DependentUpon>RegisterPage.xaml</DependentUpon>
 	  </Compile>
-	  <Compile Update="Presentation\View\AdminPage.xaml.cs">
-	    <DependentUpon>AdminPage.xaml</DependentUpon>
-	  </Compile>
 	</ItemGroup>
 </Project>

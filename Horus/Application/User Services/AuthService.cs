@@ -8,18 +8,13 @@ namespace Horus.Application
     {
         private readonly IApiService _api;
         private readonly IStorageService _storage;
-        private readonly ILocalModeService _localMode;
 
         private User? _currentUser;
 
-        public AuthService(IApiService api, IStorageService storage, ILocalModeService localMode)
+        public AuthService(IApiService api, IStorageService storage)
         {
             _api = api;
             _storage = storage;
-            _localMode = localMode;
-
-            // When local mode activates, synthesize an authenticated local user
-            _localMode.LocalModeChanged += OnLocalModeChanged;
         }
 
         public User? CurrentUser => _currentUser;
@@ -70,15 +65,6 @@ namespace Horus.Application
         {
             await _storage.Initialization;
 
-            await _localMode.ProbeApiAsync();
-
-            if (_localMode.IsLocalMode)
-            {
-                _currentUser = LocalUser();
-                AuthStateChanged?.Invoke(this, new AuthStateChangedEventArgs(true, _currentUser));
-                return true;
-            }
-
             var username = _storage.Username();
             var session = _storage.Session();
 
@@ -90,19 +76,6 @@ namespace Horus.Application
 
             return true;
         }
-
-        // ── Private ───────────────────────────────────────────────────────────
-
-        private void OnLocalModeChanged(object? sender, bool isLocalMode)
-        {
-            if (isLocalMode && _currentUser == null)
-            {
-                _currentUser = LocalUser();
-                AuthStateChanged?.Invoke(this, new AuthStateChangedEventArgs(true, _currentUser));
-            }
-        }
-
-        private static User LocalUser(string? name = null) => new(name ?? "admin", DateTime.UtcNow.AddYears(10));
 
         private async Task PersistUserAsync(AuthResult result)
         {

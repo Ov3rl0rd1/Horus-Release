@@ -13,8 +13,6 @@ namespace Horus.Application
         private readonly HttpAuthHandler _httpAuthHandler;
         private readonly string _baseUrl;
         private readonly IStorageService _storage;
-        private readonly ILocalModeService _localMode;
-        private readonly ILocalConfigService _localConfig;
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
@@ -22,13 +20,9 @@ namespace Horus.Application
         };
 
         public ApiService(
-            IStorageService storage,
-            ILocalModeService localMode,
-            ILocalConfigService localConfig)
+            IStorageService storage)
         {
             _storage = storage;
-            _localMode = localMode;
-            _localConfig = localConfig;
             _baseUrl = AppConfiguration.ApiBaseUrl.TrimEnd('/');
 
             _httpAuthHandler = new HttpAuthHandler(storage
@@ -46,10 +40,6 @@ namespace Horus.Application
 
         public async Task<AuthResult> LoginAsync(string username, string password, string? session = null)
         {
-            // In local mode, auth is completely bypassed
-            if (_localMode.IsLocalMode)
-                return LocalAuthResult(username);
-
             try
             {
                 var body = new { username, password };
@@ -73,11 +63,9 @@ namespace Horus.Application
                     Message = "OK"
                 };
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex)
             {
-                // Network failure during login → fall back to local mode
-                _localMode.SetLocalMode(true);
-                return LocalAuthResult(username);
+                return new AuthResult { Success = false, Message = $"Network error: {ex.Message}" };
             }
             catch (Exception ex)
             {
@@ -87,9 +75,6 @@ namespace Horus.Application
 
         public async Task<AuthResult> RegisterAsync(string username, string email, string password)
         {
-            if (_localMode.IsLocalMode)
-                return new AuthResult { Success = false, Message = "Registration not available in local mode." };
-
             try
             {
                 var body = new { username, email, password };
@@ -130,13 +115,10 @@ namespace Horus.Application
             }
         }
 
-        // ── Servers ──────────────────────────────────────────────────────────
+        // Servers
 
-        public async Task<IReadOnlyList<ServerInfo>> GetServersAsync()
+        public async Task<IReadOnlyList<ServerInfo>?> GetServersAsync()
         {
-            if (_localMode.IsLocalMode)
-                return _localConfig.Config.Servers.Select(s => s.ToServerInfo()).ToList();
-
             if(_httpAuthHandler.HasSession() == false)
                 throw new InvalidOperationException("No valid session. Please log in first.");
 
@@ -149,16 +131,12 @@ namespace Horus.Application
             }
             catch (HttpRequestException)
             {
-                _localMode.SetLocalMode(true);
-                return _localConfig.Config.Servers.Select(s => s.ToServerInfo()).ToList();
+                return null;
             }
         }
 
-        public async Task<string> GetServerConfigAsync(int serverId)
+        public async Task<string?> GetServerConfigAsync(int serverId)
         {
-            if (_localMode.IsLocalMode)
-                return BuildLocalConfig(serverId);
-
             if (_httpAuthHandler.HasSession() == false)
                 throw new InvalidOperationException("No valid session. Please log in first.");
 
@@ -172,8 +150,7 @@ namespace Horus.Application
             }
             catch (HttpRequestException)
             {
-                _localMode.SetLocalMode(true);
-                return BuildLocalConfig(serverId);
+                return null;
             }
         }
 
@@ -181,14 +158,6 @@ namespace Horus.Application
 
         public async Task<Stream> DownloadGeoDataAsync(CancellationToken ct = default)
         {
-            if (_localMode.IsLocalMode)
-            {
-                var path = _localConfig.Config.GeoDbPath;
-                if (!string.IsNullOrEmpty(path) && File.Exists(path))
-                    return File.OpenRead(path);
-                throw new InvalidOperationException("No local GeoIP database configured.");
-            }
-
             var url = $"{_baseUrl}/geo/country.mmdb";
             var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
             response.EnsureSuccessStatusCode();
@@ -197,9 +166,6 @@ namespace Horus.Application
 
         public async Task<GeoDataVersion> GetGeoDataVersionAsync()
         {
-            if (_localMode.IsLocalMode)
-                return new GeoDataVersion { Version = "local", UpdatedAt = DateTime.UtcNow };
-
             try
             {
                 using var response = await _httpClient.GetAsync($"{_baseUrl}/geo/version");
@@ -214,11 +180,8 @@ namespace Horus.Application
 
         // ── Routing rules ─────────────────────────────────────────────────────
 
-        public async Task<RoutingRulesFile> GetRoutingRulesAsync(CancellationToken ct = default)
+        public async Task<RoutingRulesFile?> GetRoutingRulesAsync(CancellationToken ct = default)
         {
-            if (_localMode.IsLocalMode)
-                return _localConfig.Config.RoutingRules ?? new RoutingRulesFile();
-
             if (_httpAuthHandler.HasSession() == false)
                 throw new InvalidOperationException("No valid session. Please log in first.");
 
@@ -230,15 +193,14 @@ namespace Horus.Application
             }
             catch (HttpRequestException)
             {
-                return _localConfig.Config.RoutingRules ?? new RoutingRulesFile();
+                return null;
             }
         }
 
-        // ── Error reporting ───────────────────────────────────────────────────
+        // Error reporting
 
         public async Task<bool> SendErrorReportAsync(ErrorReport report, CancellationToken ct = default)
         {
-            if (_localMode.IsLocalMode) return false;
             try
             {
                 using var content = new StringContent(
@@ -252,46 +214,7 @@ namespace Horus.Application
             }
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
-
-        private static AuthResult LocalAuthResult(string username) => new()
-        {
-            Success = true,
-            Message = "Local mode — no auth required",
-            Response = new LoginResponse("local", DateTime.UtcNow.AddYears(10))
-        };
-
-        private string BuildLocalConfig(int serverId)
-        {
-            // Try to find the server by id hash in local config
-            var idStr = serverId.ToString();
-            var entry = _localConfig.Config.Servers.FirstOrDefault(s =>
-                s.Id == idStr ||
-                Math.Abs(s.Id.GetHashCode() % 10000) == serverId) ??
-                _localConfig.Config.Servers.FirstOrDefault();
-
-            if (entry == null)
-                throw new InvalidOperationException(
-                    "No local server configurations found. Please add a server in Admin → Local Config.");
-
-            if (!string.IsNullOrEmpty(entry.RawConfig))
-                return entry.RawConfig;
-
-            // Build Hysteria2 YAML from the entry
-            var cfg = new Hysteria2Config
-            {
-                ServerId = entry.Id,
-                Name = entry.Name,
-                Server = $"{entry.Host}:{entry.Port}",
-                Auth = entry.AuthToken,
-                Obfs = entry.ObfsType,
-                ObfsPassword = entry.ObfsPassword ?? string.Empty,
-                PortsRange = entry.PortsRange,
-                LazyTls = entry.LazyTls,
-                Socks5Address = entry.Socks5Address
-            };
-            return cfg.ToConfig();
-        }
+        // Helpers
 
         private static async Task<T?> DeserializeAsync<T>(HttpResponseMessage response)
         {

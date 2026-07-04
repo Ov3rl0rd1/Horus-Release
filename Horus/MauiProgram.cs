@@ -38,9 +38,6 @@ namespace Horus
 
             // ── Core Application Services ────────────────────────────────────
             services
-                // Local mode must be registered before ApiService and AuthService
-                .AddSingleton<ILocalModeService, LocalModeService>()
-                .AddSingleton<ILocalConfigService, LocalConfigService>()
                 .AddSingleton<VpnManager>()
                 .AddSingleton<ProtocolFactory>()
                 .AddSingleton<Hysteria2Protocol>()
@@ -85,20 +82,12 @@ namespace Horus
                 .AddTransient<RegisterViewModel>()
                 .AddTransient<SettingsViewModel>();
 
-#if ADMIN_MODE
-            services.AddTransient<AdminViewModel>();
-#endif
-
             // ── Pages (transient) ────────────────────────────────────────────
             services
                 .AddTransient<MainPage>()
                 .AddTransient<AuthPage>()
                 .AddTransient<RegisterPage>()
                 .AddTransient<SettingsPage>();
-
-#if ADMIN_MODE
-            services.AddTransient<AdminPage>();
-#endif
 
 #if DEBUG
             builder.Logging.AddDebug();

@@ -23,8 +23,6 @@ namespace Horus.Application
         private readonly IAuthService _auth;
         private readonly IBinaryUpdaterService _updater;
         private readonly IErrorReportingService _errorReporting;
-        private readonly ILocalModeService _localMode;
-        private readonly ILocalConfigService _localConfig;
 
         // Protocol fallback order: try Hysteria2 first, then OlcRtc
         private static readonly ProtocolType[] FallbackOrder =
@@ -45,9 +43,7 @@ namespace Horus.Application
             IApiService api,
             IAuthService auth,
             IBinaryUpdaterService updater,
-            IErrorReportingService errorReporting,
-            ILocalModeService localMode,
-            ILocalConfigService localConfig)
+            IErrorReportingService errorReporting)
         {
             _platform = platform;
             _protocolFactory = protocolFactory;
@@ -57,8 +53,6 @@ namespace Horus.Application
             _auth = auth;
             _updater = updater;
             _errorReporting = errorReporting;
-            _localMode = localMode;
-            _localConfig = localConfig;
         }
 
         public async Task ConnectAsync(ServerInfo server, CancellationToken ct = default)
@@ -204,22 +198,6 @@ namespace Horus.Application
             await DisconnectAsync();
             if (server != null)
                 await ConnectAsync(server);
-        }
-
-        /// <summary>
-        /// In local mode: connect using the default server from local config.
-        /// Throws InvalidOperationException if no servers are configured.
-        /// </summary>
-        public async Task ConnectLocalAsync(string? serverId = null, CancellationToken ct = default)
-        {
-            var cfg = _localConfig.Config;
-            var id = serverId ?? cfg.DefaultServerId;
-            var entry = (id != null ? cfg.Servers.FirstOrDefault(s => s.Id == id) : null)
-                ?? cfg.Servers.FirstOrDefault()
-                ?? throw new InvalidOperationException(
-                    "No local server configurations found. Please add a server in Admin → Local Config.");
-
-            await ConnectAsync(entry.ToServerInfo(), ct);
         }
 
         /// <summary>
