@@ -11,6 +11,16 @@ namespace Horus.Domain.Models
         public List<ErrorEntry> Errors { get; set; } = [];
         public NetworkDiagnostics? NetworkDiagnostics { get; set; }
         public string? ProtocolLog { get; set; }
+
+        /// <summary>
+        /// Build/device/connection facts — core version, preflight IPs, the protocol that
+        /// was tried. Not sanitized: it identifies the build and the failure mode, not the
+        /// user, and stripping it is what made earlier reports unactionable.
+        /// </summary>
+        public Dictionary<string, string> Context { get; set; } = [];
+
+        /// <summary>Rolling log of the current session, newest last.</summary>
+        public IReadOnlyList<string> SessionLog { get; set; } = [];
     }
 
     public class ErrorEntry

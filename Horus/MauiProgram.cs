@@ -1,5 +1,6 @@
 using Horus.Application;
 using Horus.Domain.Interfaces;
+using Horus.Presentation.Navigation;
 using Horus.Presentation.View;
 using Horus.Presentation.ViewModels;
 using Horus.Protocols;
@@ -32,7 +33,40 @@ namespace Horus
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
+
+                    // v2 design system fonts. Drop these exact .ttf files into
+                    // Resources/Fonts/. Missing files fall back to the system font at
+                    // runtime (no build break), so the UI renders before they are added.
+                    //   Manrope-Regular.ttf, Manrope-SemiBold.ttf, Manrope-Bold.ttf
+                    //   Unbounded-Bold.ttf, Unbounded-ExtraBold.ttf
+                    fonts.AddFont("Manrope-Regular.ttf", "Manrope");
+                    fonts.AddFont("Manrope-SemiBold.ttf", "ManropeSemiBold");
+                    fonts.AddFont("Manrope-Bold.ttf", "ManropeBold");
+                    fonts.AddFont("Unbounded-Bold.ttf", "Unbounded");
+                    fonts.AddFont("Unbounded-ExtraBold.ttf", "UnboundedExtraBold");
                 });
+
+            // Strip the platform-default Entry chrome (WinUI focus underline / rounded
+            // border, Android bottom underline) so our own rounded Border shows cleanly.
+            Microsoft.Maui.Handlers.EntryHandler.Mapper.AppendToMapping("HzNoNativeFrame", (handler, view) =>
+            {
+#if ANDROID
+                handler.PlatformView.BackgroundTintList =
+                    Android.Content.Res.ColorStateList.ValueOf(Android.Graphics.Color.Transparent);
+                handler.PlatformView.SetPadding(0, 0, 0, 0);
+#elif WINDOWS
+                var tb = handler.PlatformView;
+                var zero = new Microsoft.UI.Xaml.Thickness(0);
+                tb.BorderThickness = zero;
+                tb.Resources["TextControlBorderThemeThickness"] = zero;
+                tb.Resources["TextControlBorderThemeThicknessFocused"] = zero;
+                var transparent = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                tb.Resources["TextControlBackground"] = transparent;
+                tb.Resources["TextControlBackgroundPointerOver"] = transparent;
+                tb.Resources["TextControlBackgroundFocused"] = transparent;
+                tb.Resources["TextControlBackgroundDisabled"] = transparent;
+#endif
+            });
 
             var services = builder.Services;
 
@@ -40,8 +74,7 @@ namespace Horus
             services
                 .AddSingleton<VpnManager>()
                 .AddSingleton<ProtocolFactory>()
-                .AddSingleton<Hysteria2Protocol>()
-                .AddSingleton<OlcRtcProtocol>()
+                .AddSingleton<XrayProtocol>()
                 .AddSingleton<IStorageService, StorageService>()
                 .AddSingleton<IApiService, ApiService>()
                 .AddSingleton<IAuthService, AuthService>()
@@ -49,45 +82,45 @@ namespace Horus
                 .AddSingleton<ITrafficMonitorService, TrafficMonitorService>()
                 .AddSingleton<IRoutingService, RoutingService>()
                 .AddSingleton<IGeoDataService, GeoDataService>()
-                .AddSingleton<IBinaryUpdaterService, BinaryUpdaterService>()
                 .AddSingleton<IErrorReportingService, ErrorReportingService>();
 
             // ── Platform Services ────────────────────────────────────────────
 #if ANDROID
             services
                 .AddSingleton<IVpnPlatformService, AndroidVpnService>()
-                .AddSingleton<IProcessRunner, AndroidProcessRunner>()
                 .AddSingleton<ISplitTunnelingService, AndroidSplitTunnelingService>();
 #elif WINDOWS
             services
                 .AddSingleton<IVpnPlatformService, WindowsVpnService>()
-                .AddSingleton<IProcessRunner, WindowsProcessRunner>()
                 .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>();
 #elif IOS || MACCATALYST
             services
                 .AddSingleton<IVpnPlatformService, iOSVpnService>()
-                .AddSingleton<IProcessRunner, iOSProcessRunner>()
                 .AddSingleton<ISplitTunnelingService, StubSplitTunnelingService>();
 #else
             services
                 .AddSingleton<IVpnPlatformService, StubVpnPlatformService>()
-                .AddSingleton<IProcessRunner, StubProcessRunner>()
                 .AddSingleton<ISplitTunnelingService, StubSplitTunnelingService>();
 #endif
 
-            // ── ViewModels (transient) ───────────────────────────────────────
+            // ── Navigation + shared UI state (v2 custom root, no Shell) ──────
             services
-                .AddTransient<MainViewModel>()
-                .AddTransient<AuthViewModel>()
-                .AddTransient<RegisterViewModel>()
-                .AddTransient<SettingsViewModel>();
+                .AddSingleton<Navigator>()
+                .AddSingleton<AppSession>();
 
-            // ── Pages (transient) ────────────────────────────────────────────
+            // ── ViewModels ───────────────────────────────────────────────────
+            // Singletons: the shell holds them and screens are reused (e.g. Settings
+            // drives both the Settings and Split screens), so state must be shared.
             services
-                .AddTransient<MainPage>()
-                .AddTransient<AuthPage>()
-                .AddTransient<RegisterPage>()
-                .AddTransient<SettingsPage>();
+                .AddSingleton<ShellViewModel>()
+                .AddSingleton<MainViewModel>()
+                .AddSingleton<ServersViewModel>()
+                .AddSingleton<SettingsViewModel>()
+                .AddSingleton<AuthFlowViewModel>()
+                .AddSingleton<PaymentViewModel>();
+
+            // ── Root page ────────────────────────────────────────────────────
+            services.AddSingleton<RootPage>();
 
 #if DEBUG
             builder.Logging.AddDebug();
@@ -112,6 +145,9 @@ namespace Horus
 
                 if (root.TryGetProperty("SupportEmail", out var email))
                     AppConfiguration.SupportEmail = email.GetString() ?? AppConfiguration.SupportEmail;
+
+                if (root.TryGetProperty("SupportHandle", out var handle))
+                    AppConfiguration.SupportHandle = handle.GetString() ?? AppConfiguration.SupportHandle;
             }
             catch { /* appsettings parse failure is non-fatal */ }
         }

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             xmlns:controls="clr-namespace:Horus.Presentation.View.Controls"
+             x:DataType="vm:ServersViewModel"
+             x:Name="ServersRoot"
+             x:Class="Horus.Presentation.View.Screens.ServersView">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="{OnIdiom Phone='18,16,18,22', Default='30,20,34,24'}" Spacing="12"
+                             MaximumWidthRequest="{OnIdiom Phone=660, Default=100000}"
+                             HorizontalOptions="{OnIdiom Phone=Center, Default=Fill}">
+
+            <HorizontalStackLayout Spacing="10" VerticalOptions="End">
+                <Label Text="Серверы" Style="{StaticResource HzDisplay}" FontSize="20" />
+                <Label Text="{Binding LocationCountText}" Style="{StaticResource HzDim}" FontSize="12" VerticalOptions="End" />
+            </HorizontalStackLayout>
+
+            <!-- Search -->
+            <Border Style="{StaticResource HzInputBorder}" Padding="14,0" HeightRequest="46">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                    <controls:IconView Grid.Column="0" Kind="Search" IconSize="17" StrokeWidth="2"
+                        Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                    <Entry Grid.Column="1" Style="{StaticResource HzEntry}" HeightRequest="46"
+                           Placeholder="Поиск страны или города" Text="{Binding SearchQuery}" />
+                </Grid>
+            </Border>
+
+            <!-- Auto select -->
+            <Border Padding="14,13" BackgroundColor="{StaticResource HzSurface}"
+                    Stroke="{Binding IsAutoSelected, Converter={StaticResource SelectionRingColor}}">
+                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Command="{Binding SelectAutoCommand}" />
+                </Border.GestureRecognizers>
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" VerticalOptions="Center">
+                    <Border Grid.Column="0" WidthRequest="38" HeightRequest="38"
+                            BackgroundColor="{StaticResource HzGoldSoft}" Stroke="{StaticResource HzGoldBorder}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                        <controls:IconView Kind="Auto" IconSize="17" Color="{StaticResource HzGold}"
+                            HorizontalOptions="Center" VerticalOptions="Center" />
+                    </Border>
+                    <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                        <Label Text="Автовыбор" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                        <Label Text="Сам найдёт самый быстрый сервер" Style="{StaticResource HzDim}" FontSize="12" />
+                    </VerticalStackLayout>
+                    <Grid Grid.Column="2" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                        <Ellipse Stroke="{Binding IsAutoSelected, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                        <Ellipse WidthRequest="10" HeightRequest="10"
+                                 Fill="{Binding IsAutoSelected, Converter={StaticResource SelectionDotColor}}" />
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- Recommended -->
+            <VerticalStackLayout Spacing="6" IsVisible="{Binding HasRecommended}">
+                <Label Text="РЕКОМЕНДУЕМЫЕ" Style="{StaticResource HzEyebrow}" FontSize="10"
+                       TextColor="{StaticResource HzGoldLight}" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Recommended}" Spacing="0">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ServerRow">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="11" Padding="14,10" MinimumHeightRequest="58">
+                                    <Grid.GestureRecognizers>
+                                        <TapGestureRecognizer
+                                            Command="{Binding Source={x:Reference ServersRoot}, Path=BindingContext.SelectServerCommand}"
+                                            CommandParameter="{Binding .}" />
+                                    </Grid.GestureRecognizers>
+                                    <Border Grid.Column="0" WidthRequest="36" HeightRequest="36"
+                                            BackgroundColor="{StaticResource HzSurface3}" Stroke="{StaticResource HzBorderStrong}">
+                                        <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                                        <Label Text="{Binding Code}" TextColor="{StaticResource HzGoldLight}" FontSize="10"
+                                               FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
+                                               FontFamily="{StaticResource FontBody}" />
+                                    </Border>
+                                    <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                        <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                        <Label Text="{Binding SubText}" Style="{StaticResource HzDim}" FontSize="12" />
+                                    </VerticalStackLayout>
+                                    <HorizontalStackLayout Grid.Column="2" Spacing="6" VerticalOptions="Center" IsVisible="{Binding HasPing}">
+                                        <Ellipse WidthRequest="7" HeightRequest="7" Fill="{Binding PingColor}" VerticalOptions="Center" />
+                                        <Label Text="{Binding PingText}" FontSize="12" FontAttributes="Bold"
+                                               TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBold}" />
+                                    </HorizontalStackLayout>
+                                    <Grid Grid.Column="3" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                                        <Ellipse Stroke="{Binding IsSelected, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                        <Ellipse WidthRequest="10" HeightRequest="10"
+                                                 Fill="{Binding IsSelected, Converter={StaticResource SelectionDotColor}}" />
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <!-- All servers -->
+            <VerticalStackLayout Spacing="6" IsVisible="{Binding HasAll}">
+                <Label Text="ВСЕ СЕРВЕРЫ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding AllServers}" Spacing="0">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:ServerRow">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="11" Padding="14,10" MinimumHeightRequest="58">
+                                    <Grid.GestureRecognizers>
+                                        <TapGestureRecognizer
+                                            Command="{Binding Source={x:Reference ServersRoot}, Path=BindingContext.SelectServerCommand}"
+                                            CommandParameter="{Binding .}" />
+                                    </Grid.GestureRecognizers>
+                                    <Border Grid.Column="0" WidthRequest="36" HeightRequest="36"
+                                            BackgroundColor="{StaticResource HzSurface3}" Stroke="{StaticResource HzBorderStrong}">
+                                        <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                                        <Label Text="{Binding Code}" TextColor="{StaticResource HzGoldLight}" FontSize="10"
+                                               FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
+                                               FontFamily="{StaticResource FontBody}" />
+                                    </Border>
+                                    <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                        <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                        <Label Text="{Binding SubText}" Style="{StaticResource HzDim}" FontSize="12" />
+                                    </VerticalStackLayout>
+                                    <HorizontalStackLayout Grid.Column="2" Spacing="6" VerticalOptions="Center" IsVisible="{Binding HasPing}">
+                                        <Ellipse WidthRequest="7" HeightRequest="7" Fill="{Binding PingColor}" VerticalOptions="Center" />
+                                        <Label Text="{Binding PingText}" FontSize="12" FontAttributes="Bold"
+                                               TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBold}" />
+                                    </HorizontalStackLayout>
+                                    <Grid Grid.Column="3" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                                        <Ellipse Stroke="{Binding IsSelected, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                        <Ellipse WidthRequest="10" HeightRequest="10"
+                                                 Fill="{Binding IsSelected, Converter={StaticResource SelectionDotColor}}" />
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <ActivityIndicator IsVisible="{Binding IsLoading}" IsRunning="{Binding IsLoading}"
+                               Color="{StaticResource HzGold}" Margin="0,10,0,0" />
+            <Label IsVisible="{Binding NoResults}" Text="Ничего не найдено. Попробуйте другой запрос."
+                   Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,20,0,0" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentView>

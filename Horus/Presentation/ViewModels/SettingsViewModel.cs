@@ -1,7 +1,10 @@
+using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
+using Horus.Presentation.Navigation;
+using Horus.Protocols;
 
 namespace Horus.Presentation.ViewModels
 {
@@ -11,13 +14,33 @@ namespace Horus.Presentation.ViewModels
         private readonly IGeoDataService _geo;
         private readonly IRoutingService _routing;
         private readonly ISplitTunnelingService _splitTunneling;
-        private readonly IBinaryUpdaterService _updater;
         private readonly IErrorReportingService _errorReporting;
+        private readonly Navigator _nav;
+        private readonly AuthFlowViewModel _authFlow;
+        private readonly PaymentViewModel _payment;
 
         // ── Account ──────────────────────────────────────────────────────────
         [ObservableProperty] private string _username = string.Empty;
         [ObservableProperty] private string _planBadge = "Free";
         [ObservableProperty] private string _renewalDate = "—";
+        [ObservableProperty] private string _accountEmail = "—";
+        [ObservableProperty] private string _subscriptionValue = "не активна";
+
+        // ── About ─────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Display version plus build number. The build number is what makes a bug report
+        /// traceable — without it "are you on the latest build?" is unanswerable and you
+        /// end up chasing an already-fixed bug.
+        /// </summary>
+        public string AppVersion => $"{AppInfo.Current.VersionString} ({AppInfo.Current.BuildString})";
+
+        public string SupportHandle => AppConfiguration.SupportHandle;
+
+        // ── Connection toggles (placeholders — not yet enforced) ──
+        [ObservableProperty] private bool _autoStart = true;
+        public string SplitTunnelingValue =>
+            SplitTunnelingMode == SplitTunnelingMode.Disabled ? "выкл" : "включён";
 
         // ── GeoIP ────────────────────────────────────────────────────────────
         [ObservableProperty] private string _geoDbStatus = "Not loaded";
@@ -34,14 +57,24 @@ namespace Horus.Presentation.ViewModels
         [ObservableProperty] private IReadOnlyList<AppOrProcessEntry> _availableApps = [];
         [ObservableProperty] private bool _isLoadingApps;
 
+        /// <summary>Observable rows for the Split tunneling screen.</summary>
+        public ObservableCollection<SplitAppRow> SplitApps { get; } = new();
+
+        // "Все — через VPN" == Disabled; "Выбранные — напрямую" == Blacklist (selected bypass).
+        public bool IsModeAll => SplitTunnelingMode == SplitTunnelingMode.Disabled;
+        public bool IsModeCustom => !IsModeAll;
+        public double AppsOpacity => IsModeCustom ? 1.0 : 0.4;
+
+        [RelayCommand] private void SetModeAll() => SplitTunnelingMode = SplitTunnelingMode.Disabled;
+        [RelayCommand] private void SetModeCustom() => SplitTunnelingMode = SplitTunnelingMode.Blacklist;
+
         // ── Connection ────────────────────────────────────────────────────────
         [ObservableProperty] private bool _autoConnect;
         [ObservableProperty] private bool _killSwitch;
         [ObservableProperty] private string _customDns = "1.1.1.1, 8.8.8.8";
 
-        // ── Binary update ─────────────────────────────────────────────────────
-        [ObservableProperty] private string _hysteria2Version = "Bundled";
-        [ObservableProperty] private bool _isUpdatingBinary;
+        // ── VPN core (xray) ───────────────────────────────────────────────────
+        [ObservableProperty] private string _coreVersion = "—";
 
         // ── Status ────────────────────────────────────────────────────────────
         [ObservableProperty] private bool _isBusy;
@@ -52,15 +85,19 @@ namespace Horus.Presentation.ViewModels
             IGeoDataService geo,
             IRoutingService routing,
             ISplitTunnelingService splitTunneling,
-            IBinaryUpdaterService updater,
-            IErrorReportingService errorReporting)
+            IErrorReportingService errorReporting,
+            Navigator nav,
+            AuthFlowViewModel authFlow,
+            PaymentViewModel payment)
         {
             _auth = auth;
             _geo = geo;
             _routing = routing;
             _splitTunneling = splitTunneling;
-            _updater = updater;
             _errorReporting = errorReporting;
+            _nav = nav;
+            _authFlow = authFlow;
+            _payment = payment;
 
             SplitTunnelingSupported = splitTunneling.IsSupported;
         }
@@ -71,7 +108,11 @@ namespace Horus.Presentation.ViewModels
             if (_auth.CurrentUser != null)
             {
                 Username = _auth.CurrentUser.username;
+                AccountEmail = _auth.CurrentUser.username;
                 RenewalDate = _auth.CurrentUser.expiresAt.HasValue ? _auth.CurrentUser.expiresAt.Value.ToLocalTime().ToString("d MMM yyyy") : "None";
+                SubscriptionValue = _auth.CurrentUser.expiresAt.HasValue
+                    ? $"до {_auth.CurrentUser.expiresAt.Value.ToLocalTime():d MMM}"
+                    : "не активна";
             }
 
             // GeoIP status
@@ -80,9 +121,9 @@ namespace Horus.Presentation.ViewModels
             // Split tunneling
             SplitTunnelingMode = _splitTunneling.Mode;
 
-            // Hysteria2 version
-            var installed = _updater.GetInstalledBinaryPath("hysteria2");
-            Hysteria2Version = string.IsNullOrEmpty(installed) ? "Bundled" : "Updated";
+            // Version string straight from the linked core. This one value separates
+            // "library missing from the package" from "library present but failing".
+            CoreVersion = XrayProtocol.CoreVersion;
 
             await Task.CompletedTask;
         }
@@ -135,6 +176,9 @@ namespace Horus.Presentation.ViewModels
 
         // ── Split tunneling ───────────────────────────────────────────────────
 
+        private static readonly string[] ChipPalette =
+            { "#5B8DEF", "#E05656", "#4CAF7D", "#4E9EC9", "#7B61C9", "#D98E3E" };
+
         [RelayCommand]
         async Task LoadAppsAsync()
         {
@@ -143,6 +187,15 @@ namespace Horus.Presentation.ViewModels
             try
             {
                 AvailableApps = await _splitTunneling.GetAvailableEntriesAsync();
+                SplitApps.Clear();
+                int i = 0;
+                foreach (var app in AvailableApps)
+                {
+                    SplitApps.Add(new SplitAppRow(app.Id, app.DisplayName,
+                        Color.FromArgb(ChipPalette[i % ChipPalette.Length]),
+                        IsAppSelected(app.Id)));
+                    i++;
+                }
             }
             finally
             {
@@ -150,14 +203,17 @@ namespace Horus.Presentation.ViewModels
             }
         }
 
+        /// <summary>
+        /// Persists a single app's direct/VPN choice. The row's <c>IsDirect</c> is
+        /// already flipped by the two-way Switch binding; here we sync the service.
+        /// </summary>
         [RelayCommand]
-        async Task ToggleAppAsync(AppOrProcessEntry entry)
+        async Task ApplyApp(SplitAppRow? row)
         {
+            if (row is null) return;
             var current = _splitTunneling.SelectedEntries.ToHashSet();
-            if (current.Contains(entry.Id))
-                current.Remove(entry.Id);
-            else
-                current.Add(entry.Id);
+            if (row.IsDirect) current.Add(row.Id);
+            else current.Remove(row.Id);
 
             await _splitTunneling.SetSelectedEntriesAsync(current);
             await _splitTunneling.ApplyAsync();
@@ -166,58 +222,47 @@ namespace Horus.Presentation.ViewModels
         partial void OnSplitTunnelingModeChanged(SplitTunnelingMode value)
         {
             _splitTunneling.Mode = value;
+            OnPropertyChanged(nameof(SplitTunnelingValue));
+            OnPropertyChanged(nameof(IsModeAll));
+            OnPropertyChanged(nameof(IsModeCustom));
+            OnPropertyChanged(nameof(AppsOpacity));
         }
 
-        // ── Binary update ─────────────────────────────────────────────────────
-
-        [RelayCommand]
-        async Task UpdateHysteria2Async()
-        {
-            if (IsUpdatingBinary) return;
-            IsUpdatingBinary = true;
-            try
-            {
-                var info = await _updater.CheckForUpdateAsync("hysteria2");
-                if (!info.UpdateAvailable)
-                {
-                    ShowStatus($"Already up to date ({info.LatestVersion}).");
-                    return;
-                }
-
-                ShowStatus($"Downloading {info.LatestVersion}...");
-                await _updater.DownloadAndInstallAsync(info,
-                    new Progress<double>(p => ShowStatus($"Downloading… {p:P0}")));
-                Hysteria2Version = info.LatestVersion;
-                ShowStatus($"Updated to {info.LatestVersion}.");
-            }
-            catch (Exception ex)
-            {
-                ShowStatus($"Update failed: {ex.Message}");
-            }
-            finally
-            {
-                IsUpdatingBinary = false;
-            }
-        }
+        // ── Navigation (custom root, no Shell) ──
+        [RelayCommand] private void GoSplit() => _nav.Go(AppScreen.Split);
+        [RelayCommand] private void BackToSettings() => _nav.Go(AppScreen.Settings);
+        [RelayCommand] private void OpenPay() => _payment.Open();
 
         // ── Error reporting ───────────────────────────────────────────────────
 
+        /// <summary>
+        /// Builds the diagnostics archive and hands it straight to the user — share sheet
+        /// on Android, Explorer on Windows. Nothing is uploaded; the API has no ingest
+        /// endpoint, so the archive only helps if the user can actually send it.
+        /// </summary>
         [RelayCommand]
-        async Task SendDiagnosticsAsync()
+        async Task CollectLogsAsync()
         {
+            if (IsBusy) return;
             IsBusy = true;
             try
             {
-                var sent = await _errorReporting.FlushAsync();
-                if (sent)
+                ShowStatus("Собираем логи…");
+                var path = await _errorReporting.BuildArchiveAsync();
+
+                if (await _errorReporting.ShareArchiveAsync(path))
                 {
-                    ShowStatus("Diagnostics sent successfully.");
+                    ShowStatus($"Архив готов: {Path.GetFileName(path)}");
                 }
                 else
                 {
-                    var emailUri = _errorReporting.BuildSupportEmailUri();
-                    await Launcher.OpenAsync(emailUri);
+                    await Dialog.Alert("Архив сохранён",
+                        $"Не удалось открыть меню отправки. Файл лежит здесь:\n\n{path}");
                 }
+            }
+            catch (Exception ex)
+            {
+                await Dialog.Alert("Не удалось собрать логи", ex.Message);
             }
             finally
             {
@@ -225,17 +270,52 @@ namespace Horus.Presentation.ViewModels
             }
         }
 
+        /// <summary>Rolling connection log, for testers who would rather paste text than
+        /// wrestle with a file picker.</summary>
+        public string SessionLogText
+        {
+            get
+            {
+                var lines = _errorReporting.SessionLog;
+                return lines.Count == 0
+                    ? "Журнал пуст — подключитесь, чтобы он заполнился."
+                    : string.Join(Environment.NewLine, lines);
+            }
+        }
+
+        /// <summary>
+        /// Shows the tail of the connection log with a one-tap copy. Testers who won't
+        /// wrestle with a file picker will paste text into a chat, so this is the path
+        /// that actually produces diagnostics for most of them.
+        /// </summary>
+        [RelayCommand]
+        private async Task ShowSessionLogAsync()
+        {
+            OnPropertyChanged(nameof(SessionLogText));
+
+            var full = SessionLogText;
+            var tail = string.Join(Environment.NewLine,
+                full.Split(Environment.NewLine).TakeLast(25));
+
+            var copy = await Dialog.Confirm("Журнал подключения", tail, "Копировать", "Закрыть");
+            if (!copy) return;
+
+            await Clipboard.Default.SetTextAsync(full);
+            ShowStatus("Журнал скопирован.");
+        }
+
         // ── Account ───────────────────────────────────────────────────────────
 
         [RelayCommand]
         async Task SignOutAsync()
         {
-            var confirm = await Shell.Current.DisplayAlertAsync(
-                "Sign Out", "Are you sure you want to sign out?", "Sign Out", "Cancel");
+            var confirm = await Dialog.Confirm(
+                "Выйти из аккаунта", "Вы уверены, что хотите выйти?", "Выйти", "Отмена");
             if (!confirm) return;
 
             await _auth.LogoutAsync();
-            await Shell.Current.GoToAsync("//AuthPage");
+            _authFlow.Reset();
+            _nav.Reset(AppScreen.Login);
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────
@@ -260,5 +340,30 @@ namespace Horus.Presentation.ViewModels
 
         public bool IsAppSelected(string appId) =>
             _splitTunneling.SelectedEntries.Contains(appId);
+    }
+
+    /// <summary>Display row for one app in the Split tunneling screen.</summary>
+    public partial class SplitAppRow : ObservableObject
+    {
+        [ObservableProperty] private bool _isDirect;
+
+        public string Id { get; }
+        public string Name { get; }
+        public Color ChipColor { get; }
+        public string Letter => string.IsNullOrEmpty(Name) ? "?" : Name[..1].ToUpperInvariant();
+
+        public SplitAppRow(string id, string name, Color chip, bool isDirect)
+        {
+            Id = id; Name = name; ChipColor = chip; _isDirect = isDirect;
+        }
+
+        public string StatusText => IsDirect ? "Напрямую, мимо VPN" : "Через VPN";
+        public Color StatusColor => IsDirect ? Color.FromArgb("#F3D48E") : Color.FromArgb("#73EFEAF6");
+
+        partial void OnIsDirectChanged(bool value)
+        {
+            OnPropertyChanged(nameof(StatusText));
+            OnPropertyChanged(nameof(StatusColor));
+        }
     }
 }

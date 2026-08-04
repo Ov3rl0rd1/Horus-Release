@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Horus.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <!--
+    Sources are LINKED rather than referenced.
+
+    The app is a MAUI head targeting net10.0-android / -ios / -maccatalyst / -windows, and a
+    plain net10.0 test project cannot ProjectReference any of those. Linking the pure files
+    keeps the tests buildable today with zero risk to the app build. The tidy fix is to
+    extract Domain/ + Protocols/ into a net10.0 Horus.Core library and reference that; do it
+    once the connect path has stopped moving.
+
+    Only files with no MAUI or platform dependency belong here.
+  -->
+  <ItemGroup>
+    <Compile Include="..\Horus\Domain\Models\ProtocolType.cs" Link="Linked\ProtocolType.cs" />
+    <Compile Include="..\Horus\Domain\Models\ProtocolConfig.cs" Link="Linked\ProtocolConfig.cs" />
+    <Compile Include="..\Horus\Domain\Models\ShareLink.cs" Link="Linked\ShareLink.cs" />
+    <Compile Include="..\Horus\Domain\Models\XrayConfig.cs" Link="Linked\XrayConfig.cs" />
+    <Compile Include="..\Horus\Domain\Models\ServerConnection.cs" Link="Linked\ServerConnection.cs" />
+    <Compile Include="..\Horus\Domain\Models\ApiConsts.cs" Link="Linked\ApiConsts.cs" />
+    <Compile Include="..\Horus\Protocols\ShareLinkParser.cs" Link="Linked\ShareLinkParser.cs" />
+    <Compile Include="..\Horus\Protocols\XrayConfigBuilder.cs" Link="Linked\XrayConfigBuilder.cs" />
+  </ItemGroup>
+
+</Project>

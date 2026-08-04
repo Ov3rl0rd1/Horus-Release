@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             xmlns:controls="clr-namespace:Horus.Presentation.View.Controls"
+             x:DataType="vm:SettingsViewModel"
+             x:Class="Horus.Presentation.View.Screens.SplitTunnelingView">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="{OnIdiom Phone='18,14,18,22', Default='30,18,34,24'}" Spacing="12"
+                             MaximumWidthRequest="{OnIdiom Phone=640, Default=100000}"
+                             HorizontalOptions="{OnIdiom Phone=Center, Default=Fill}">
+
+            <Button Text="‹ Настройки" HorizontalOptions="Start" Padding="0"
+                    BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
+                    FontSize="13" FontAttributes="Bold" FontFamily="{StaticResource FontBody}"
+                    Command="{Binding BackToSettingsCommand}" />
+
+            <Label Text="Split tunneling" Style="{StaticResource HzDisplay}" FontSize="20" />
+            <Label Text="Выберите, какие приложения идут через VPN, а какие — напрямую."
+                   Style="{StaticResource HzDim}" />
+
+            <!-- Mode: all via VPN -->
+            <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
+                    Stroke="{Binding IsModeAll, Converter={StaticResource SelectionRingColor}}">
+                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Command="{Binding SetModeAllCommand}" />
+                </Border.GestureRecognizers>
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
+                    <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                        <Ellipse Stroke="{Binding IsModeAll, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                        <Ellipse WidthRequest="10" HeightRequest="10"
+                                 Fill="{Binding IsModeAll, Converter={StaticResource SelectionDotColor}}" />
+                    </Grid>
+                    <VerticalStackLayout Grid.Column="1" Spacing="1">
+                        <Label Text="Все приложения — через VPN" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                        <Label Text="Весь трафик устройства идёт через защищённый туннель" Style="{StaticResource HzDim}" FontSize="12" />
+                    </VerticalStackLayout>
+                </Grid>
+            </Border>
+
+            <!-- Mode: selected direct -->
+            <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
+                    Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}">
+                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Command="{Binding SetModeCustomCommand}" />
+                </Border.GestureRecognizers>
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
+                    <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                        <Ellipse Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                        <Ellipse WidthRequest="10" HeightRequest="10"
+                                 Fill="{Binding IsModeCustom, Converter={StaticResource SelectionDotColor}}" />
+                    </Grid>
+                    <VerticalStackLayout Grid.Column="1" Spacing="1">
+                        <Label Text="Выбранные — напрямую" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                        <Label Text="Отмеченные приложения работают мимо VPN — банк напрямую, YouTube через Хорус"
+                               Style="{StaticResource HzDim}" FontSize="12" />
+                    </VerticalStackLayout>
+                </Grid>
+            </Border>
+
+            <Label Text="ПРИЛОЖЕНИЯ · НАПРЯМУЮ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,4,0,0" />
+
+            <Border Style="{StaticResource HzListCard}" Opacity="{Binding AppsOpacity}">
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding SplitApps}" Spacing="0">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SplitAppRow">
+                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="13" Padding="14,9" MinimumHeightRequest="56">
+                                <Border Grid.Column="0" WidthRequest="34" HeightRequest="34" BackgroundColor="{Binding ChipColor}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                    <Label Text="{Binding Letter}" TextColor="{StaticResource HzText}" FontSize="14"
+                                           FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
+                                           FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                                <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                    <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                    <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="12"
+                                           FontFamily="{StaticResource FontBody}" />
+                                </VerticalStackLayout>
+                                <controls:PillToggle Grid.Column="2" VerticalOptions="Center"
+                                        IsToggled="{Binding IsDirect, Mode=TwoWay}" Toggled="OnAppToggled" />
+                            </Grid>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+            </Border>
+
+            <ActivityIndicator IsVisible="{Binding IsLoadingApps}" IsRunning="{Binding IsLoadingApps}"
+                               Color="{StaticResource HzGold}" Margin="0,8,0,0" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentView>

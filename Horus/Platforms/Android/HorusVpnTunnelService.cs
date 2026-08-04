@@ -9,14 +9,21 @@ using SplitTunnelingMode = Horus.Domain.Models.SplitTunnelingMode;
 namespace Horus.Platforms.Android
 {
     [Service(
-        Name = "com.horus_beta.vpn.HorusVpnTunnelService",
+        Name = PackageId + ".HorusVpnTunnelService",
         Permission = "android.permission.BIND_VPN_SERVICE",
         ForegroundServiceType = global::Android.Content.PM.ForegroundService.TypeSpecialUse)]
     public class HorusVpnTunnelService : VpnService
     {
+        /// <summary>
+        /// Must match <c>$(ApplicationId)</c> in Horus.csproj and the class name
+        /// libhev_socks.so binds its JNI entry points to. [Service(Name=…)] needs a
+        /// compile-time constant, so it cannot read the MSBuild property directly.
+        /// </summary>
+        internal const string PackageId = "com.horus.vpn";
+
         private const string ChannelId = "horus_vpn_channel";
         private const int NotificationId = 42;
-        private const string ActionStop = "com.horus_beta.vpn.STOP";
+        private const string ActionStop = PackageId + ".STOP";
 
         private static TaskCompletionSource<bool>? _startTcs;
         private static TaskCompletionSource<bool>? _stopTcs;
@@ -59,9 +66,19 @@ namespace Horus.Platforms.Android
             }
 
             EnsureNotificationChannel();
-            StartForeground(NotificationId, BuildNotification("Connecting..."));
+            StartForeground(NotificationId, BuildNotification("Подключение…"));
+
+            // A restarted service arrives with a null Intent and stale static state, so
+            // there is nothing useful to resume — Sticky would leave a permanent
+            // "Подключение…" notification attached to no tunnel.
+            if (_pendingOptions == null)
+            {
+                StopSelf();
+                return StartCommandResult.NotSticky;
+            }
+
             Task.Run(CreateTunnel);
-            return StartCommandResult.Sticky;
+            return StartCommandResult.NotSticky;
         }
 
         public override void OnRevoke()
@@ -82,6 +99,8 @@ namespace Horus.Platforms.Android
             SetState(TunnelState.Starting);
             try
             {
+                var self = PackageName!;
+
                 var builder = new Builder(this);
                 builder.AddAddress(options.TunAddress, options.TunPrefix);
                 builder.SetMtu(options.Mtu > 0 ? options.Mtu : 1500);
@@ -91,45 +110,25 @@ namespace Horus.Platforms.Android
                     builder.AddDnsServer(dns);
 
                 if (options.AllTraffic)
+                {
                     builder.AddRoute("0.0.0.0", 0);
 
-                // Apply split tunneling
-                switch (SplitTunnelingMode)
-                {
-                    case SplitTunnelingMode.Blacklist:
-                        // Listed apps bypass VPN; all others go through it
-                        foreach (var pkg in SelectedApps)
-                        {
-                            try { builder.AddDisallowedApplication(pkg); }
-                            catch { /* ignore unknown packages */ }
-                        }
-                        break;
-
-                    case SplitTunnelingMode.Whitelist:
-                        // Only listed apps go through VPN; all others bypass
-                        foreach (var pkg in SelectedApps)
-                        {
-                            try { builder.AddAllowedApplication(pkg); }
-                            catch { /* ignore unknown packages */ }
-                        }
-                        break;
-
-                    default:
-                        // options.BypassApps from connection config (legacy)
-                        foreach (var pkg in options.BypassApps ?? [])
-                        {
-                            try { builder.AddDisallowedApplication(pkg); }
-                            catch { }
-                        }
-                        break;
+                    // Capture IPv6 too. Without this every IPv6 connection on a dual-stack
+                    // network bypasses the tunnel with the device's real address — a leak
+                    // that is invisible until you look for it. The ULA matches the
+                    // `ipv6: fc00::1` hev-socks5-tunnel is already configured with.
+                    builder.AddAddress("fc00::1", 128);
+                    builder.AddRoute("::", 0);
                 }
+
+                ApplySplitTunneling(builder, options, self);
 
                 _tunFd = builder.Establish()
                     ?? throw new InvalidOperationException("VpnService.Builder.Establish() returned null.");
 
                 HevSocksTunnel.StartTunnel(_tunFd.Fd);
 
-                UpdateNotification("Connected");
+                UpdateNotification("Подключено");
                 SetState(TunnelState.Started);
                 _startTcs?.SetResult(true);
             }
@@ -137,6 +136,57 @@ namespace Horus.Platforms.Android
             {
                 SetState(TunnelState.Error);
                 _startTcs?.SetException(ex);
+            }
+        }
+
+        /// <summary>
+        /// Applies split tunneling, and — far more importantly — keeps this app's own UID
+        /// out of the tunnel.
+        ///
+        /// xray-core is linked into this process, so its outbound socket to the VPN node
+        /// runs under our UID. If that UID is routed into the TUN, the packet goes
+        /// TUN → hev-socks5-tunnel → 127.0.0.1:1080 → xray → TUN and the tunnel deadlocks
+        /// on itself. The upstream fix is a socket-protect callback, which this build of
+        /// the core does not expose; excluding the UID achieves the same thing from the
+        /// Android side.
+        ///
+        /// Consequence, and it is deliberate: the app's own API traffic bypasses the VPN.
+        /// That keeps the API reachable when the tunnel is down — but it also means
+        /// <c>GET /whoami</c> reports the device's real IP while connected, so it can
+        /// never be used to verify the tunnel.
+        /// </summary>
+        private static void ApplySplitTunneling(Builder builder, TunnelOptions options, string self)
+        {
+            // Whitelist mode excludes us by omission. Android throws
+            // UnsupportedOperationException if allowed and disallowed apps are mixed on
+            // one Builder, so this branch must never call AddDisallowedApplication.
+            if (SplitTunnelingMode == SplitTunnelingMode.Whitelist)
+            {
+                var allowed = SelectedApps.Where(p => p != self).ToArray();
+                if (allowed.Length == 0)
+                    throw new InvalidOperationException(
+                        "Выберите хотя бы одно приложение для режима «только выбранные».");
+
+                foreach (var pkg in allowed)
+                {
+                    try { builder.AddAllowedApplication(pkg); }
+                    catch (global::Android.Content.PM.PackageManager.NameNotFoundException) { }
+                }
+                return;
+            }
+
+            // Blacklist and Disabled: our own UID first and unconditionally.
+            builder.AddDisallowedApplication(self);
+
+            var bypass = SplitTunnelingMode == SplitTunnelingMode.Blacklist
+                ? SelectedApps
+                : options.BypassApps ?? [];
+
+            foreach (var pkg in bypass)
+            {
+                if (pkg == self) continue; // already excluded
+                try { builder.AddDisallowedApplication(pkg); }
+                catch (global::Android.Content.PM.PackageManager.NameNotFoundException) { }
             }
         }
 
@@ -160,9 +210,7 @@ namespace Horus.Platforms.Android
 
         private void EnsureNotificationChannel()
         {
-            if (Build.VERSION.SdkInt < BuildVersionCodes.O) 
-                return;
-
+            // minSdk is 26, so the channel API is always available here.
             var nm = (NotificationManager?)GetSystemService(NotificationService);
             if (nm?.GetNotificationChannel(ChannelId) == null)
             {

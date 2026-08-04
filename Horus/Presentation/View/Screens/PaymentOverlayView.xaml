@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             x:DataType="vm:PaymentViewModel"
+             x:Class="Horus.Presentation.View.Screens.PaymentOverlayView">
+
+    <Grid>
+        <!-- Dimmed backdrop — tap outside the card to dismiss -->
+        <Grid BackgroundColor="#DC080310">
+            <Grid.GestureRecognizers>
+                <TapGestureRecognizer Command="{Binding CloseCommand}" />
+            </Grid.GestureRecognizers>
+        </Grid>
+
+        <Border MaximumWidthRequest="480" MaximumHeightRequest="640" Margin="20"
+                HorizontalOptions="Center" VerticalOptions="Center"
+                Stroke="{StaticResource HzGoldBorder}" BackgroundColor="#221134" Padding="0">
+            <Border.StrokeShape><RoundRectangle CornerRadius="24" /></Border.StrokeShape>
+            <ScrollView Padding="26,24">
+                <Grid>
+                    <!-- PLANS -->
+                    <VerticalStackLayout IsVisible="{Binding IsPlansStep}" Spacing="0">
+                        <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,4,0,0" />
+                        <Label Text="Horus Premium" Style="{StaticResource HzDisplay}" FontSize="20"
+                               HorizontalTextAlignment="Center" Margin="0,10,0,2" />
+                        <Label Text="Единая подписка — все серверы и все функции" Style="{StaticResource HzDim}"
+                               HorizontalTextAlignment="Center" Margin="0,0,0,18" />
+
+                        <VerticalStackLayout Spacing="9" Margin="0,0,0,18">
+                            <HorizontalStackLayout Spacing="10">
+                                <Label Text="✓" TextColor="{StaticResource HzGold}" FontAttributes="Bold" />
+                                <Label Text="Все серверы и максимальная скорость" Style="{StaticResource HzBodyLabel}" FontSize="13" />
+                            </HorizontalStackLayout>
+                            <HorizontalStackLayout Spacing="10">
+                                <Label Text="✓" TextColor="{StaticResource HzGold}" FontAttributes="Bold" />
+                                <Label Text="До 5 устройств одновременно" Style="{StaticResource HzBodyLabel}" FontSize="13" />
+                            </HorizontalStackLayout>
+                            <HorizontalStackLayout Spacing="10">
+                                <Label Text="✓" TextColor="{StaticResource HzGold}" FontAttributes="Bold" />
+                                <Label Text="Kill Switch и Split tunneling" Style="{StaticResource HzBodyLabel}" FontSize="13" />
+                            </HorizontalStackLayout>
+                            <HorizontalStackLayout Spacing="10">
+                                <Label Text="✓" TextColor="{StaticResource HzGold}" FontAttributes="Bold" />
+                                <Label Text="Без логов — мы ничего не храним" Style="{StaticResource HzBodyLabel}" FontSize="13" />
+                            </HorizontalStackLayout>
+                        </VerticalStackLayout>
+
+                        <FlexLayout Direction="Row" Wrap="NoWrap" Margin="0,4,0,16"
+                                    BindableLayout.ItemsSource="{Binding Plans}" x:Name="PlansHost">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:PlanOption">
+                                    <Border Padding="10,15,10,12" Margin="4,0" FlexLayout.Grow="1" FlexLayout.Basis="0"
+                                            BackgroundColor="{StaticResource HzSurface}"
+                                            Stroke="{Binding IsSelected, Converter={StaticResource SelectionRingColor}}">
+                                        <Border.StrokeShape><RoundRectangle CornerRadius="14" /></Border.StrokeShape>
+                                        <Border.GestureRecognizers>
+                                            <TapGestureRecognizer
+                                                Command="{Binding Source={x:Reference PlansHost}, Path=BindingContext.SelectPlanCommand}"
+                                                CommandParameter="{Binding .}" />
+                                        </Border.GestureRecognizers>
+                                        <VerticalStackLayout Spacing="4" HorizontalOptions="Center">
+                                            <Label Text="{Binding Title}" Style="{StaticResource HzDim}" FontSize="11"
+                                                   HorizontalTextAlignment="Center" />
+                                            <Label Text="{Binding PriceText}" Style="{StaticResource HzDisplay}" FontSize="15"
+                                                   HorizontalTextAlignment="Center" />
+                                            <Label Text="{Binding Per}" Style="{StaticResource HzDim}" FontSize="10"
+                                                   HorizontalTextAlignment="Center" />
+                                            <Label Text="{Binding Badge}" IsVisible="{Binding HasBadge}"
+                                                   TextColor="{StaticResource HzGold}" FontSize="10" FontAttributes="Bold"
+                                                   HorizontalTextAlignment="Center" FontFamily="{StaticResource FontBody}" />
+                                        </VerticalStackLayout>
+                                    </Border>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </FlexLayout>
+
+                        <Button Text="{Binding ContinueLabel}" Style="{StaticResource HzPrimaryButton}"
+                                Command="{Binding GoFormCommand}" />
+                        <Label Text="Продление — максимум на 3 месяца вперёд · отмена в любой момент"
+                               Style="{StaticResource HzDim}" FontSize="11" HorizontalTextAlignment="Center" Margin="0,10,0,0" />
+                    </VerticalStackLayout>
+
+                    <!-- FORM -->
+                    <VerticalStackLayout IsVisible="{Binding IsFormStep}" Spacing="0">
+                        <Button Text="‹ Тарифы" HorizontalOptions="Start" Padding="0" BackgroundColor="Transparent"
+                                TextColor="{StaticResource HzTextDim}" FontSize="13" FontAttributes="Bold"
+                                FontFamily="{StaticResource FontBody}" Command="{Binding BackToPlansCommand}" />
+                        <Label Text="Оплата" Style="{StaticResource HzDisplay}" FontSize="20" Margin="0,8,0,14" />
+
+                        <Border BackgroundColor="{StaticResource HzGoldSoft}" Stroke="{StaticResource HzGoldBorder}"
+                                Padding="14,12" Margin="0,0,0,14">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                            <VerticalStackLayout Spacing="6">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Grid.Column="0" Text="Подписка" Style="{StaticResource HzDim}" FontSize="13" />
+                                    <Label Grid.Column="1" Text="{Binding PlanWord}" Style="{StaticResource HzBodyLabel}" FontSize="13" FontAttributes="Bold" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Grid.Column="0" Text="Действует до" Style="{StaticResource HzDim}" FontSize="13" />
+                                    <Label Grid.Column="1" Text="{Binding SubUntil}" Style="{StaticResource HzBodyLabel}" FontSize="13" FontAttributes="Bold" />
+                                </Grid>
+                                <BoxView HeightRequest="1" Color="{StaticResource HzGoldBorder}" Margin="0,5" />
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Grid.Column="0" Text="Итого" Style="{StaticResource HzDim}" FontSize="13" FontAttributes="Bold" />
+                                    <Label Grid.Column="1" Text="{Binding PriceString}" Style="{StaticResource HzDisplay}" FontSize="18" />
+                                </Grid>
+                            </VerticalStackLayout>
+                        </Border>
+
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="9" Margin="0,0,0,13">
+                            <Button Grid.Column="0" Text="Банковская карта" Command="{Binding UseCardCommand}"
+                                    FontSize="13" FontAttributes="Bold" HeightRequest="44" CornerRadius="12"
+                                    FontFamily="{StaticResource FontBody}"
+                                    BackgroundColor="{StaticResource HzSurface}"
+                                    TextColor="{Binding PayByCard, Converter={StaticResource ActiveTextColor}}"
+                                    BorderColor="{Binding PayByCard, Converter={StaticResource SelectionRingColor}}" BorderWidth="1" />
+                            <Button Grid.Column="1" Text="СБП" Command="{Binding UseSbpCommand}"
+                                    FontSize="13" FontAttributes="Bold" HeightRequest="44" CornerRadius="12"
+                                    FontFamily="{StaticResource FontBody}"
+                                    BackgroundColor="{StaticResource HzSurface}"
+                                    TextColor="{Binding PayBySbp, Converter={StaticResource ActiveTextColor}}"
+                                    BorderColor="{Binding PayBySbp, Converter={StaticResource SelectionRingColor}}" BorderWidth="1" />
+                        </Grid>
+
+                        <VerticalStackLayout IsVisible="{Binding PayByCard}" Spacing="10">
+                            <Border Style="{StaticResource HzInputBorder}">
+                                <Entry Style="{StaticResource HzEntry}" HeightRequest="50" Placeholder="Номер карты" Keyboard="Numeric" />
+                            </Border>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                                <Border Grid.Column="0" Style="{StaticResource HzInputBorder}">
+                                    <Entry Style="{StaticResource HzEntry}" HeightRequest="50" Placeholder="ММ/ГГ" />
+                                </Border>
+                                <Border Grid.Column="1" Style="{StaticResource HzInputBorder}">
+                                    <Entry Style="{StaticResource HzEntry}" HeightRequest="50" Placeholder="CVC" IsPassword="True" Keyboard="Numeric" />
+                                </Border>
+                            </Grid>
+                        </VerticalStackLayout>
+
+                        <HorizontalStackLayout IsVisible="{Binding PayBySbp}" Spacing="14">
+                            <Border WidthRequest="108" HeightRequest="108" BackgroundColor="{StaticResource HzSurface3}"
+                                    Stroke="{StaticResource HzBorderStrong}">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="14" /></Border.StrokeShape>
+                                <Image Source="logo_gold.png" HeightRequest="34" HorizontalOptions="Center" VerticalOptions="Center" />
+                            </Border>
+                            <Label Text="Отсканируйте QR-код в приложении банка. Подписка активируется автоматически."
+                                   Style="{StaticResource HzDim}" FontSize="12" VerticalOptions="Center" MaximumWidthRequest="220" />
+                        </HorizontalStackLayout>
+
+                        <Button Text="{Binding PayLabel}" Style="{StaticResource HzPrimaryButton}" Margin="0,16,0,0"
+                                Command="{Binding PayCommand}"
+                                Opacity="{Binding IsPaying, Converter={StaticResource DisabledOpacity}}" />
+                        <Label Text="Платёж защищён · данные карты не сохраняются" Style="{StaticResource HzDim}"
+                               FontSize="11" HorizontalTextAlignment="Center" Margin="0,10,0,0" />
+                    </VerticalStackLayout>
+
+                    <!-- DONE -->
+                    <VerticalStackLayout IsVisible="{Binding IsDoneStep}" Spacing="0" Padding="0,30">
+                        <Border WidthRequest="80" HeightRequest="80" HorizontalOptions="Center" Margin="0,0,0,18"
+                                BackgroundColor="{StaticResource HzGreenSoft}" Stroke="{StaticResource HzGreenBorder}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="40" /></Border.StrokeShape>
+                            <Label Text="✓" FontSize="34" TextColor="{StaticResource HzGreen}"
+                                   HorizontalOptions="Center" VerticalOptions="Center" />
+                        </Border>
+                        <Label Text="Оплачено" Style="{StaticResource HzDisplay}" FontSize="20" HorizontalTextAlignment="Center" />
+                        <Label Text="{Binding SubUntil, StringFormat='Подписка активна до {0}'}" Style="{StaticResource HzDim}"
+                               HorizontalTextAlignment="Center" Margin="0,6,0,20" />
+                        <Button Text="Готово" Style="{StaticResource HzPrimaryButton}" HorizontalOptions="Center"
+                                WidthRequest="160" Command="{Binding CloseCommand}" />
+                    </VerticalStackLayout>
+
+                    <!-- Close (last child → on top of the step content, so it stays clickable) -->
+                    <Button Text="✕" HorizontalOptions="End" VerticalOptions="Start" WidthRequest="38" HeightRequest="38"
+                            Padding="0" CornerRadius="10" BackgroundColor="{StaticResource HzSurface3}"
+                            TextColor="{StaticResource HzTextDim}" Command="{Binding CloseCommand}" />
+                </Grid>
+            </ScrollView>
+        </Border>
+    </Grid>
+</ContentView>

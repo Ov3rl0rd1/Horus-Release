@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             xmlns:controls="clr-namespace:Horus.Presentation.View.Controls"
+             x:DataType="vm:MainViewModel"
+             x:Class="Horus.Presentation.View.Screens.HomeView">
+
+    <!-- Fixed top bar (row 0) is independent of the scrolling content (row 1) -->
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- ── FIXED TOP BAR: logo pinned left, status pinned right ── -->
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Padding="18,14,18,6" VerticalOptions="Start">
+            <HorizontalStackLayout Grid.Column="0" Spacing="9" VerticalOptions="Center">
+                <Image Source="logo.png" HeightRequest="30" VerticalOptions="Center" />
+                <Label Text="HORUS" Style="{StaticResource HzDisplay}" FontSize="13"
+                       CharacterSpacing="1" VerticalOptions="Center" />
+            </HorizontalStackLayout>
+            <Border Grid.Column="2" BackgroundColor="{Binding PillBg}" Stroke="{Binding PillBorder}"
+                    Padding="12,6" VerticalOptions="Center" HorizontalOptions="End">
+                <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                <HorizontalStackLayout Spacing="7">
+                    <Ellipse WidthRequest="6" HeightRequest="6" Fill="{Binding StatusColor}" VerticalOptions="Center" />
+                    <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="11"
+                           FontAttributes="Bold" CharacterSpacing="0.5" FontFamily="{StaticResource FontBody}" />
+                </HorizontalStackLayout>
+            </Border>
+        </Grid>
+
+        <!-- ── SCROLLING CONTENT ── -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Padding="18,8,18,22" Spacing="14"
+                                 MaximumWidthRequest="560" HorizontalOptions="Center">
+
+                <!-- Renew banner (subscription expiring / inactive) -->
+                <Border IsVisible="{Binding ShowRenew}" BackgroundColor="{StaticResource HzGoldSoft}"
+                        Stroke="{StaticResource HzGoldBorder}" Padding="14,12">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding OpenPayCommand}" />
+                    </Border.GestureRecognizers>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Grid.Column="0" Spacing="1">
+                            <Label Text="{Binding RenewTitle}" TextColor="{StaticResource HzGoldLight}"
+                                   FontSize="13" FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
+                            <Label Text="{Binding RenewSub}" Style="{StaticResource HzDim}" FontSize="12" />
+                        </VerticalStackLayout>
+                        <Border Grid.Column="1" BackgroundColor="{StaticResource HzGold}" Padding="13,7" VerticalOptions="Center">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                            <Label Text="{Binding RenewLabel}" TextColor="{StaticResource HzOnGold}" FontSize="12"
+                                   FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Connect ring -->
+                <Grid HorizontalOptions="Center" WidthRequest="224" HeightRequest="224" Margin="0,8,0,0">
+                    <!-- Pulsing glow halo (only while connected; animated in code-behind) -->
+                    <Ellipse x:Name="GlowHalo" WidthRequest="224" HeightRequest="224" Opacity="0" InputTransparent="True">
+                        <Ellipse.Fill>
+                            <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                                <GradientStop Color="#66F0C46A" Offset="0.35" />
+                                <GradientStop Color="#00F0C46A" Offset="1.0" />
+                            </RadialGradientBrush>
+                        </Ellipse.Fill>
+                    </Ellipse>
+                    <Ellipse x:Name="GlowRing" WidthRequest="224" HeightRequest="224" StrokeThickness="1"
+                             Stroke="{StaticResource HzGoldBorder}" StrokeDashArray="2,4" StrokeDashOffset="0" />
+                    <Ellipse x:Name="SpinRing" WidthRequest="210" HeightRequest="210" StrokeThickness="2"
+                             Stroke="{StaticResource HzGold}" StrokeDashArray="18,60" Opacity="{Binding SpinOpacity}" />
+                    <Border WidthRequest="182" HeightRequest="182" Stroke="{Binding RingBorder}" StrokeThickness="1"
+                            HorizontalOptions="Center" VerticalOptions="Center">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="91" /></Border.StrokeShape>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="{StaticResource HzRingTop}" Offset="0.0" />
+                                <GradientStop Color="{StaticResource HzRingBottom}" Offset="1.0" />
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding ToggleConnectCommand}" />
+                        </Border.GestureRecognizers>
+                        <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center" Spacing="9">
+                            <Image Source="logo_gold.png" WidthRequest="74" Opacity="{Binding LogoOpacity}" HorizontalOptions="Center">
+                                <Image.Shadow>
+                                    <Shadow Brush="{StaticResource HzGold}" Radius="20" Opacity="0.5" Offset="0,2" />
+                                </Image.Shadow>
+                            </Image>
+                            <Label Text="{Binding BtnLabel}" TextColor="{Binding BtnWordColor}" FontSize="11"
+                                   FontAttributes="Bold" CharacterSpacing="2" FontFamily="{StaticResource FontBody}"
+                                   HorizontalOptions="Center" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <VerticalStackLayout Spacing="2" HorizontalOptions="Center">
+                    <Label Text="{Binding StatusSub}" Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" />
+                    <Label Text="{Binding SessionDuration}" IsVisible="{Binding ShowTimer}" FontSize="24"
+                           TextColor="{StaticResource HzGoldLight}" CharacterSpacing="1" HorizontalOptions="Center"
+                           FontFamily="{StaticResource FontBody}" />
+                </VerticalStackLayout>
+
+                <!-- Selected server card -->
+                <Border Style="{StaticResource HzCard}" Padding="14,12">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding GoServersCommand}" />
+                    </Border.GestureRecognizers>
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="12" VerticalOptions="Center">
+                        <Border Grid.Column="0" WidthRequest="38" HeightRequest="38"
+                                BackgroundColor="{StaticResource HzGoldSoft}" Stroke="{StaticResource HzGoldBorder}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                            <Label Text="{Binding CurCode}" TextColor="{StaticResource HzGoldLight}" FontSize="10"
+                                   FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
+                                   FontFamily="{StaticResource FontBold}" />
+                        </Border>
+                        <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                            <Label Text="{Binding CurName}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                            <Label Text="{Binding CurSub}" Style="{StaticResource HzDim}" FontSize="12" />
+                        </VerticalStackLayout>
+                        <Label Grid.Column="2" Text="{Binding CurPing}" IsVisible="{Binding ShowCurPing}"
+                               TextColor="{Binding CurPingColor}" FontSize="12" FontAttributes="Bold"
+                               FontFamily="{StaticResource FontBold}" VerticalOptions="Center" />
+                        <controls:IconView Grid.Column="3" Kind="ChevronRight" IconSize="16" StrokeWidth="2"
+                            Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                    </Grid>
+                </Border>
+
+                <!-- Speed + IP -->
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                    <Border Grid.Column="0" Style="{StaticResource HzCard}" Padding="14,13">
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="СКОРОСТЬ" Style="{StaticResource HzEyebrow}" FontSize="10" />
+                            <Label Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" Text="{Binding DownloadSpeed, StringFormat='↓ {0}'}" />
+                            <Label Style="{StaticResource HzDim}" FontSize="12" Text="{Binding UploadSpeed, StringFormat='↑ {0}'}" />
+                        </VerticalStackLayout>
+                    </Border>
+                    <Border Grid.Column="1" Style="{StaticResource HzCard}" Padding="14,13">
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="IP-АДРЕС" Style="{StaticResource HzEyebrow}" FontSize="10" />
+                            <Label Text="{Binding IpValue}" Style="{StaticResource HzBodyLabel}" FontSize="13" LineBreakMode="TailTruncation" />
+                            <Label Text="{Binding IpNote}" TextColor="{Binding IpColor}" FontSize="12"
+                                   FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentView>

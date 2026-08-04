@@ -140,22 +140,18 @@ namespace Horus.Platforms.Windows
 
         private void TunnelLoop(WinTunAdapter adapter, CancellationToken ct)
         {
-            // The packet loop reads packets from the WinTun ring buffer and
-            // forwards them to the Hysteria2/olcRTC SOCKS5 proxy via a raw socket.
-            // Traffic from the proxy is written back into the TUN adapter.
+            // The packet loop should read packets out of the WinTun ring buffer and
+            // forward them to xray's SOCKS5 inbound (127.0.0.1:1080), writing the
+            // replies back into the TUN adapter.
             //
-            // For production this requires a userspace TCP/IP stack (e.g. Tun2Socks / lwIP).
-            // The current implementation delegates to Hysteria2's built-in TUN mode
-            // (hysteria client --tun flag on Windows) which handles this internally.
-            // WinTun here provides the adapter that Hysteria2 will open by name.
+            // TODO: that bridge needs a userspace TCP/IP stack (tun2socks / lwIP), the
+            // Windows counterpart of hev-socks5-tunnel on Android. Until it exists this
+            // loop only keeps the adapter alive and tracks stats — xray runs and serves
+            // SOCKS5, but system-wide traffic is not captured on Windows.
             try
             {
                 while (!ct.IsCancellationRequested)
-                {
-                    // Hysteria2 on Windows uses --tun flag and opens WinTun directly.
-                    // We just keep the adapter alive and track stats.
                     Thread.Sleep(100);
-                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)

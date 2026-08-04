@@ -192,6 +192,186 @@
                 <Setter Property="HorizontalOptions" Value="Fill" />
             </Style>
 
+            <!-- ═══════════════════════════════════════════════════════════════ -->
+            <!--   HORUS DESIGN SYSTEM  (v2 — dark purple + gold, per handoff)   -->
+            <!-- ═══════════════════════════════════════════════════════════════ -->
+
+            <!-- Backgrounds -->
+            <Color x:Key="HzBg">#080310</Color>
+            <Color x:Key="HzBgAndroid">#0B0512</Color>
+            <Color x:Key="HzBgWindow">#0E0718</Color>
+
+            <!-- Surfaces / borders (white with alpha over dark) -->
+            <Color x:Key="HzSurface">#06FFFFFF</Color>
+            <Color x:Key="HzSurface2">#0BFFFFFF</Color>
+            <Color x:Key="HzSurface3">#12FFFFFF</Color>
+            <Color x:Key="HzBorder">#14FFFFFF</Color>
+            <Color x:Key="HzBorderStrong">#24FFFFFF</Color>
+            <Color x:Key="HzBorderFaint">#0FFFFFFF</Color>
+
+            <!-- Text -->
+            <Color x:Key="HzText">#EFEAF6</Color>
+            <Color x:Key="HzTextDim">#8CEFEAF6</Color>
+            <Color x:Key="HzTextMuted">#73EFEAF6</Color>
+            <Color x:Key="HzTextFaint">#66EFEAF6</Color>
+
+            <!-- Gold accent family -->
+            <Color x:Key="HzGold">#F0C46A</Color>
+            <Color x:Key="HzGoldLight">#F3D48E</Color>
+            <Color x:Key="HzGoldSoft">#14F0C46A</Color>
+            <Color x:Key="HzGoldSoftHover">#29F0C46A</Color>
+            <Color x:Key="HzGoldBorder">#4DF0C46A</Color>
+            <Color x:Key="HzOnGold">#1A0C26</Color>
+
+            <!-- Status -->
+            <Color x:Key="HzGreen">#7ED9A7</Color>
+            <Color x:Key="HzGreenSoft">#147ED9A7</Color>
+            <Color x:Key="HzGreenBorder">#4D7ED9A7</Color>
+            <Color x:Key="HzRed">#F2A6A0</Color>
+            <Color x:Key="HzAmber">#F3D48E</Color>
+
+            <!-- Purple accents / connect ring -->
+            <Color x:Key="HzPurple">#5C2A78</Color>
+            <Color x:Key="HzRingTop">#2A1540</Color>
+            <Color x:Key="HzRingBottom">#160A24</Color>
+            <Color x:Key="HzWinPanel">#12080B14</Color>
+
+            <SolidColorBrush x:Key="HzGoldBrush" Color="{StaticResource HzGold}" />
+            <SolidColorBrush x:Key="HzSurfaceBrush" Color="{StaticResource HzSurface}" />
+
+            <!-- Font families (register the .ttf files in MauiProgram) -->
+            <x:String x:Key="FontDisplay">Unbounded</x:String>
+            <x:String x:Key="FontDisplayXBold">UnboundedExtraBold</x:String>
+            <x:String x:Key="FontBody">Manrope</x:String>
+            <x:String x:Key="FontSemiBold">ManropeSemiBold</x:String>
+            <x:String x:Key="FontBold">ManropeBold</x:String>
+
+            <!-- Bool→Color converters for tab/selection highlighting -->
+            <conv:BoolToColorConverter x:Key="ActiveTextColor"
+                TrueColor="#F3D48E" FalseColor="#73EFEAF6" />
+            <conv:BoolToColorConverter x:Key="SelectionRingColor"
+                TrueColor="#F0C46A" FalseColor="#40FFFFFF" />
+            <conv:BoolToColorConverter x:Key="SelectionDotColor"
+                TrueColor="#F0C46A" FalseColor="#00FFFFFF" />
+            <conv:BoolToColorConverter x:Key="ActiveTabBg"
+                TrueColor="#14F0C46A" FalseColor="#00FFFFFF" />
+            <conv:BoolToOpacityConverter x:Key="DisabledOpacity" />
+
+            <!-- ── Cards (Border replaces deprecated Frame in v2 UI) ── -->
+            <Style x:Key="HzCard" TargetType="Border">
+                <Setter Property="BackgroundColor" Value="{StaticResource HzSurface}" />
+                <Setter Property="Stroke" Value="{StaticResource HzBorder}" />
+                <Setter Property="StrokeThickness" Value="1" />
+                <Setter Property="Padding" Value="18" />
+                <Setter Property="StrokeShape">
+                    <RoundRectangle CornerRadius="18" />
+                </Setter>
+            </Style>
+
+            <Style x:Key="HzListCard" TargetType="Border">
+                <Setter Property="BackgroundColor" Value="{StaticResource HzSurface}" />
+                <Setter Property="Stroke" Value="{StaticResource HzBorder}" />
+                <Setter Property="StrokeThickness" Value="1" />
+                <Setter Property="Padding" Value="0" />
+                <Setter Property="StrokeShape">
+                    <RoundRectangle CornerRadius="16" />
+                </Setter>
+            </Style>
+
+            <!-- Auth card (Login/Register/Confirm/Reset) — matches the mock's 392px card -->
+            <Style x:Key="HzAuthCard" TargetType="Border">
+                <Setter Property="BackgroundColor" Value="#08FFFFFF" />
+                <Setter Property="Stroke" Value="#17FFFFFF" />
+                <Setter Property="StrokeThickness" Value="1" />
+                <Setter Property="Padding" Value="30,30,30,26" />
+                <Setter Property="StrokeShape">
+                    <RoundRectangle CornerRadius="22" />
+                </Setter>
+            </Style>
+
+            <!-- ── Typography ──
+                 FontAttributes=Bold keeps weight visible with the fallback system font
+                 (before the Unbounded/Manrope .ttf files are added). -->
+            <Style x:Key="HzDisplay" TargetType="Label">
+                <Setter Property="FontFamily" Value="{StaticResource FontDisplay}" />
+                <Setter Property="TextColor" Value="{StaticResource HzText}" />
+                <Setter Property="FontSize" Value="21" />
+                <Setter Property="FontAttributes" Value="Bold" />
+            </Style>
+
+            <Style x:Key="HzBodyLabel" TargetType="Label">
+                <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+                <Setter Property="TextColor" Value="{StaticResource HzText}" />
+                <Setter Property="FontSize" Value="14" />
+            </Style>
+
+            <!-- Semibold body (design weight 600) -->
+            <Style x:Key="HzSemiBold" TargetType="Label">
+                <Setter Property="FontFamily" Value="{StaticResource FontSemiBold}" />
+                <Setter Property="TextColor" Value="{StaticResource HzText}" />
+                <Setter Property="FontSize" Value="14" />
+            </Style>
+
+            <Style x:Key="HzDim" TargetType="Label">
+                <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+                <Setter Property="TextColor" Value="{StaticResource HzTextDim}" />
+                <Setter Property="FontSize" Value="13" />
+            </Style>
+
+            <Style x:Key="HzEyebrow" TargetType="Label">
+                <Setter Property="FontFamily" Value="{StaticResource FontBold}" />
+                <Setter Property="TextColor" Value="{StaticResource HzTextMuted}" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="FontAttributes" Value="Bold" />
+                <Setter Property="CharacterSpacing" Value="2" />
+                <Setter Property="TextTransform" Value="Uppercase" />
+            </Style>
+
+            <!-- ── Inputs ── -->
+            <Style x:Key="HzEntry" TargetType="Entry">
+                <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+                <Setter Property="TextColor" Value="{StaticResource HzText}" />
+                <Setter Property="PlaceholderColor" Value="{StaticResource HzTextMuted}" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="BackgroundColor" Value="Transparent" />
+                <Setter Property="HeightRequest" Value="52" />
+            </Style>
+
+            <!-- Entry wrapper border -->
+            <Style x:Key="HzInputBorder" TargetType="Border">
+                <Setter Property="BackgroundColor" Value="{StaticResource HzSurface2}" />
+                <Setter Property="Stroke" Value="{StaticResource HzBorderStrong}" />
+                <Setter Property="StrokeThickness" Value="1" />
+                <Setter Property="Padding" Value="16,0" />
+                <Setter Property="StrokeShape">
+                    <RoundRectangle CornerRadius="14" />
+                </Setter>
+            </Style>
+
+            <!-- ── Buttons ── -->
+            <Style x:Key="HzPrimaryButton" TargetType="Button">
+                <Setter Property="FontFamily" Value="{StaticResource FontBold}" />
+                <Setter Property="BackgroundColor" Value="{StaticResource HzGold}" />
+                <Setter Property="TextColor" Value="{StaticResource HzOnGold}" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="FontAttributes" Value="Bold" />
+                <Setter Property="CornerRadius" Value="15" />
+                <Setter Property="HeightRequest" Value="54" />
+                <Setter Property="BorderWidth" Value="0" />
+            </Style>
+
+            <Style x:Key="HzSecondaryButton" TargetType="Button">
+                <Setter Property="FontFamily" Value="{StaticResource FontBold}" />
+                <Setter Property="BackgroundColor" Value="Transparent" />
+                <Setter Property="TextColor" Value="{StaticResource HzText}" />
+                <Setter Property="FontSize" Value="14" />
+                <Setter Property="FontAttributes" Value="Bold" />
+                <Setter Property="CornerRadius" Value="15" />
+                <Setter Property="HeightRequest" Value="50" />
+                <Setter Property="BorderColor" Value="{StaticResource HzBorderStrong}" />
+                <Setter Property="BorderWidth" Value="1" />
+            </Style>
+
         </ResourceDictionary>
     </Application.Resources>
 </Application>

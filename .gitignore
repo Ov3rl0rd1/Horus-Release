@@ -53,3 +53,17 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 /.vs
+
+# Machine-local MSBuild overrides (e.g. DebuggableRelease)
+*.local.props
+
+# Signing material must never be committed. The keystore lives outside the repo
+# (see Horus/Horus.signing.local.props.example); these patterns are belt-and-braces.
+*.keystore
+*.jks
+*.p12
+*.pfx
+
+# Upstream core drop — 110 MB of prebuilt binaries. The .so/.dll files the build
+# actually consumes are committed under Platforms/; the archive itself is not.
+libxray.zip

@@ -1,26 +1,28 @@
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 using System.IO.Compression;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 
 namespace Horus.Application
 {
     /// <summary>
-    /// Collects sanitized error information (no personal data) and sends it to
-    /// the backend on demand. Falls back to a local zip archive that the user
-    /// can email manually.
+    /// Collects sanitized diagnostics into a zip the user can hand back.
+    ///
+    /// There is no ingest endpoint on HorusAPI v1, so nothing is uploaded: the archive is
+    /// written to the cache directory — the only place on Android another app can be
+    /// granted access to — and delivered through the system share sheet, or Explorer on
+    /// Windows.
     /// </summary>
     public class ErrorReportingService : IErrorReportingService
     {
         private const int MaxEntries = 200;
-        private const string SupportEmail = "support@horus-vpn.app";
+        private const int MaxLogLines = 500;
 
-        private readonly IApiService _api;
         private readonly List<ErrorEntry> _entries = [];
+        private readonly Queue<string> _sessionLog = new();
+        private readonly Dictionary<string, string> _context = [];
         private readonly object _lock = new();
-        private readonly string _reportDir;
 
         private string? _lastProtocolLog;
 
@@ -31,13 +33,19 @@ namespace Horus.Application
             get { lock (_lock) return _entries.Count > 0; }
         }
 
-        public ErrorReportingService(IApiService api)
+        public IReadOnlyList<string> SessionLog
         {
-            _api = api;
-            _reportDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Horus", "reports");
-            Directory.CreateDirectory(_reportDir);
+            get { lock (_lock) return [.. _sessionLog]; }
+        }
+
+        private static string ReportDirectory
+        {
+            get
+            {
+                var dir = Path.Combine(FileSystem.CacheDirectory, "reports");
+                Directory.CreateDirectory(dir);
+                return dir;
+            }
         }
 
         public void RecordException(Exception ex, string context, Dictionary<string, string>? extra = null)
@@ -70,42 +78,72 @@ namespace Horus.Application
             if (!string.IsNullOrEmpty(protocolLog))
             {
                 lock (_lock)
-                    _lastProtocolLog = TruncateLog(protocolLog, maxLines: 200);
+                    _lastProtocolLog = TruncateLog(protocolLog, maxLines: MaxLogLines);
             }
         }
 
-        public async Task<bool> FlushAsync(CancellationToken ct = default)
+        public void AppendLog(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return;
+
+            lock (_lock)
+            {
+                _sessionLog.Enqueue($"{DateTime.UtcNow:HH:mm:ss.fff} {line}");
+                while (_sessionLog.Count > MaxLogLines) _sessionLog.Dequeue();
+            }
+        }
+
+        public void SetContext(string key, string? value)
+        {
+            lock (_lock)
+            {
+                if (value is null) _context.Remove(key);
+                else _context[key] = value;
+            }
+        }
+
+        public async Task<string> BuildArchiveAsync(CancellationToken ct = default)
         {
             var report = BuildReport();
-            var archivePath = BuildArchive(report);
-            LastReportArchivePath = archivePath;
+            var path = Path.Combine(ReportDirectory,
+                $"horus_{DateTime.Now:yyyyMMdd_HHmmss}.zip");
 
-            // Do not send if we know there's no internet
-            if (!await HasInternetAsync(ct))
-                return false;
+            await Task.Run(() => WriteArchive(path, report), ct);
 
-            var sent = await _api.SendErrorReportAsync(report, ct);
-            if (sent)
-            {
-                lock (_lock)
-                {
-                    _entries.Clear();
-                    _lastProtocolLog = null;
-                }
-            }
-            return sent;
+            LastReportArchivePath = path;
+            PruneOldArchives();
+            return path;
         }
 
-        public string BuildSupportEmailUri()
+        public async Task<bool> ShareArchiveAsync(string archivePath)
         {
-            var subject = Uri.EscapeDataString("Horus VPN — Error Report");
-            var body = Uri.EscapeDataString(
-                $"Please find the error report attached.\n\n" +
-                $"App version: {AppConfiguration.AppVersion}\n" +
-                $"Platform: {DeviceInfo.Platform}\n" +
-                $"Report file: {LastReportArchivePath ?? "not generated yet"}\n\n" +
-                "Please attach the file above to this email before sending.");
-            return $"mailto:{SupportEmail}?subject={subject}&body={body}";
+            if (string.IsNullOrEmpty(archivePath) || !File.Exists(archivePath))
+                return false;
+
+            try
+            {
+#if WINDOWS
+                // Explorer, with the archive preselected — the user attaches it themselves.
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{archivePath}\"",
+                    UseShellExecute = true
+                });
+                return true;
+#else
+                await Share.Default.RequestAsync(new ShareFileRequest
+                {
+                    Title = "Диагностика Horus",
+                    File = new ShareFile(archivePath)
+                });
+                return true;
+#endif
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         // ── Private helpers ──────────────────────────────────────────────────
@@ -114,11 +152,24 @@ namespace Horus.Application
         {
             List<ErrorEntry> snapshot;
             string? log;
+            Dictionary<string, string> context;
+
             lock (_lock)
             {
                 snapshot = [.. _entries];
                 log = _lastProtocolLog;
+                context = new Dictionary<string, string>(_context);
             }
+
+            // Device/build context is written unsanitized: it identifies the build, not
+            // the user, and stripping it is what made previous reports unactionable.
+            context["appVersion"] = AppConfiguration.AppVersion;
+            context["platform"] = DeviceInfo.Platform.ToString();
+            context["osVersion"] = DeviceInfo.VersionString;
+            context["model"] = $"{DeviceInfo.Manufacturer} {DeviceInfo.Model}";
+            context["idiom"] = DeviceInfo.Idiom.ToString();
+            context["connectivity"] = Connectivity.Current.NetworkAccess.ToString();
+            context["apiBaseUrl"] = AppConfiguration.ApiBaseUrl;
 
             return new ErrorReport
             {
@@ -128,60 +179,76 @@ namespace Horus.Application
                 OccurredAt = DateTime.UtcNow,
                 Errors = snapshot,
                 ProtocolLog = log,
-                NetworkDiagnostics = null // populated by FlushAsync caller if needed
+                Context = context,
+                SessionLog = SessionLog
             };
         }
 
-        private string BuildArchive(ErrorReport report)
+        private void WriteArchive(string path, ErrorReport report)
         {
-            var path = Path.Combine(_reportDir,
-                $"horus_report_{DateTime.UtcNow:yyyyMMdd_HHmmss}.zip");
-
             using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
 
-            // report.json
-            var json = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true });
-            var jsonEntry = zip.CreateEntry("report.json", CompressionLevel.Optimal);
-            using (var sw = new StreamWriter(jsonEntry.Open()))
-                sw.Write(json);
+            AddText(zip, "report.json",
+                JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
 
-            // protocol.log (if any)
+            if (report.SessionLog.Count > 0)
+                AddText(zip, "session.log", string.Join(Environment.NewLine, report.SessionLog));
+
             if (!string.IsNullOrEmpty(report.ProtocolLog))
-            {
-                var logEntry = zip.CreateEntry("protocol.log", CompressionLevel.Optimal);
-                using var sw = new StreamWriter(logEntry.Open());
-                sw.Write(report.ProtocolLog);
-            }
+                AddText(zip, "protocol.log", report.ProtocolLog);
 
-            return path;
+            // The two native components log to their own files; both halves of the
+            // pipeline are useless to diagnose without them.
+            AddFileIfPresent(zip, DiagnosticPaths.XrayLog, "xray.log");
+            AddFileIfPresent(zip, DiagnosticPaths.HevLog, "hev.log");
         }
 
-        private static async Task<bool> HasInternetAsync(CancellationToken ct)
+        private static void AddText(ZipArchive zip, string name, string content)
+        {
+            var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+            using var sw = new StreamWriter(entry.Open());
+            sw.Write(content);
+        }
+
+        private static void AddFileIfPresent(ZipArchive zip, string sourcePath, string entryName)
         {
             try
             {
-                using var client = new TcpClient();
-                await client.ConnectAsync("8.8.8.8", 53, ct);
-                return true;
+                if (!File.Exists(sourcePath)) return;
+
+                // Copy first: the native side may still hold the file open.
+                using var source = new FileStream(
+                    sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+                using var target = entry.Open();
+                source.CopyTo(target);
             }
-            catch
-            {
-                return false;
-            }
+            catch { /* a missing or locked log must not fail the archive */ }
         }
 
-        /// <summary>Removes any tokens, IPs, or paths that might identify the user.</summary>
+        /// <summary>Keeps the newest few archives so the cache doesn't grow without bound.</summary>
+        private static void PruneOldArchives()
+        {
+            try
+            {
+                var stale = Directory.GetFiles(ReportDirectory, "horus_*.zip")
+                    .OrderByDescending(File.GetCreationTimeUtc)
+                    .Skip(5);
+                foreach (var file in stale) File.Delete(file);
+            }
+            catch { /* housekeeping only */ }
+        }
+
+        /// <summary>Removes tokens, IPs and paths that might identify the user. Applied to
+        /// exception text only — the context block is deliberately left intact.</summary>
         private static string Sanitize(string message)
         {
             if (string.IsNullOrEmpty(message)) return message;
 
-            // Strip IP addresses (rough)
             message = System.Text.RegularExpressions.Regex.Replace(
                 message, @"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "[IP]");
-            // Strip Bearer tokens
             message = System.Text.RegularExpressions.Regex.Replace(
                 message, @"Bearer\s+[A-Za-z0-9\-._~+/]+=*", "Bearer [TOKEN]");
-            // Strip file paths that contain username
             message = System.Text.RegularExpressions.Regex.Replace(
                 message, @"[A-Z]:\\Users\\[^\\]+\\", @"C:\Users\[USER]\");
             message = System.Text.RegularExpressions.Regex.Replace(
@@ -193,7 +260,6 @@ namespace Horus.Application
         private static string? SanitizeStackTrace(string? trace)
         {
             if (trace == null) return null;
-            // Strip full paths, keep class/method names
             return System.Text.RegularExpressions.Regex.Replace(
                 trace, @" in [A-Za-z]:\\.*?\.cs:line \d+", " in [source]");
         }

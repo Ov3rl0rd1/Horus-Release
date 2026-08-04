@@ -1,41 +1,44 @@
+using System.Diagnostics;
 using Horus.Application;
 using Horus.Domain.Interfaces;
 using Horus.Presentation.View;
+using Horus.Presentation.ViewModels;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Horus
 {
     public partial class App : Microsoft.Maui.Controls.Application
     {
-        private readonly IAuthService _auth;
-        private readonly VpnManager _vpnManager;
+        private readonly IServiceProvider _services;
 
-        public App(IAuthService auth, VpnManager vpnManager)
+        public App(IServiceProvider services)
         {
-            _auth = auth;
-            _vpnManager = vpnManager;
+            _services = services;
             InitializeComponent();
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
         {
-            return new Window(new AppShell());
+            var root = _services.GetRequiredService<RootPage>();
+            return new Window(root) { Title = "Horus" };
         }
 
         protected override async void OnStart()
         {
             base.OnStart();
-
-            // Attempt to restore persisted session (probes API, may switch to local mode)
-            var restored = await _auth.TryRestoreSessionAsync();
-
-            if (!restored)
+            try
             {
-                await Shell.Current.GoToAsync("AuthPage");
-                return;
-            }
+                var auth = _services.GetRequiredService<IAuthService>();
+                var shell = _services.GetRequiredService<ShellViewModel>();
 
-            // Background: check for binary updates silently (non-blocking)
-            _ = _vpnManager.CheckAndUpdateBinariesAsync();
+                // Restore a persisted session if one exists, then route to the first screen.
+                var restored = await auth.TryRestoreSessionAsync();
+                shell.Initialize(restored);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Horus] Startup error: {ex}");
+            }
         }
     }
 }

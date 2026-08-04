@@ -1,0 +1,34 @@
+<Project>
+
+  <!--
+    Release signing for distributed Android builds.
+
+    SETUP
+      1. Create the key once, OUTSIDE the repo:
+
+           keytool -genkeypair -v -storetype PKCS12 ^
+             -keystore %USERPROFILE%\.horus\horus-release.keystore ^
+             -alias horus -keyalg RSA -keysize 4096 -validity 10000
+
+      2. Copy this file to  Horus.signing.local.props  (that name is gitignored).
+      3. Set HORUS_KS_PASS and HORUS_KEY_PASS in your environment.
+
+    BACK THE KEYSTORE UP IN TWO PLACES, TODAY. Distribution is direct-APK, so there
+    is no Play App Signing to recover from. If this file is lost, every existing
+    install must be uninstalled before it can ever be updated again — for a VPN,
+    that is the entire user base.
+
+    The passwords are read from the environment via the "env:" prefix, which .NET
+    Android resolves at build time. No secret is stored in this file.
+  -->
+
+  <PropertyGroup Condition="'$(Configuration)'=='Release' And
+      $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)'))=='android'">
+    <AndroidKeyStore>true</AndroidKeyStore>
+    <AndroidSigningKeyStore>$(USERPROFILE)\.horus\horus-release.keystore</AndroidSigningKeyStore>
+    <AndroidSigningKeyAlias>horus</AndroidSigningKeyAlias>
+    <AndroidSigningStorePass>env:HORUS_KS_PASS</AndroidSigningStorePass>
+    <AndroidSigningKeyPass>env:HORUS_KEY_PASS</AndroidSigningKeyPass>
+  </PropertyGroup>
+
+</Project>

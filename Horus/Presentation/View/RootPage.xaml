@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             xmlns:screens="clr-namespace:Horus.Presentation.View.Screens"
+             xmlns:controls="clr-namespace:Horus.Presentation.View.Controls"
+             x:DataType="vm:ShellViewModel"
+             x:Class="Horus.Presentation.View.RootPage"
+             NavigationPage.HasNavigationBar="False"
+             BackgroundColor="{StaticResource HzBg}">
+
+    <!-- z-stack: [background glows] [app frame] under [payment overlay] -->
+    <Grid>
+
+        <!-- Decorative radial glows (per the design's purple bg gradients) -->
+        <Grid InputTransparent="True" IsClippedToBounds="True">
+            <Ellipse WidthRequest="1000" HeightRequest="760" HorizontalOptions="End" VerticalOptions="Start"
+                     Margin="0,-240,-220,0" InputTransparent="True">
+                <Ellipse.Fill>
+                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                        <GradientStop Color="#4A5C2A78" Offset="0.0" />
+                        <GradientStop Color="#005C2A78" Offset="0.62" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+            <Ellipse WidthRequest="860" HeightRequest="680" HorizontalOptions="Start" VerticalOptions="Center"
+                     Margin="-280,0,0,0" InputTransparent="True">
+                <Ellipse.Fill>
+                    <RadialGradientBrush Center="0.5,0.5" Radius="0.5">
+                        <GradientStop Color="#4D3D1850" Offset="0.0" />
+                        <GradientStop Color="#003D1850" Offset="0.6" />
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+            </Ellipse>
+        </Grid>
+
+        <Grid RowDefinitions="*,Auto">
+
+            <!-- Main area: [sidebar (desktop)] [content] -->
+            <Grid Grid.Row="0" ColumnDefinitions="Auto,*">
+
+                <!-- ═══ WINDOWS / DESKTOP SIDEBAR ═══ -->
+                <Border Grid.Column="0" WidthRequest="230" IsVisible="{Binding IsSidebarVisible}"
+                        BackgroundColor="Transparent" Stroke="Transparent" Padding="12,16,12,14">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="4">
+
+                        <HorizontalStackLayout Grid.Row="0" Spacing="9" Padding="8,4,0,10">
+                            <Image Source="logo_gold.png" HeightRequest="26" VerticalOptions="Center" />
+                            <Label Text="HORUS" Style="{StaticResource HzDisplay}" FontSize="14" VerticalOptions="Center" />
+                        </HorizontalStackLayout>
+
+                        <VerticalStackLayout Grid.Row="1" Spacing="4">
+                            <Border Padding="0" StrokeThickness="0"
+                                    BackgroundColor="{Binding TabHomeActive, Converter={StaticResource ActiveTabBg}}">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding NavHomeCommand}" />
+                                </Border.GestureRecognizers>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" Padding="13,0" HeightRequest="44">
+                                    <controls:IconView Grid.Column="0" Kind="Home" IconSize="19" StrokeWidth="1.9" VerticalOptions="Center"
+                                        Color="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
+                                    <Label Grid.Column="1" Text="Главная" VerticalOptions="Center" FontSize="13"
+                                        FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
+                                        TextColor="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
+                                </Grid>
+                            </Border>
+                            <Border Padding="0" StrokeThickness="0"
+                                    BackgroundColor="{Binding TabServersActive, Converter={StaticResource ActiveTabBg}}">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding NavServersCommand}" />
+                                </Border.GestureRecognizers>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" Padding="13,0" HeightRequest="44">
+                                    <controls:IconView Grid.Column="0" Kind="Servers" IconSize="19" StrokeWidth="1.7" VerticalOptions="Center"
+                                        Color="{Binding TabServersActive, Converter={StaticResource ActiveTextColor}}" />
+                                    <Label Grid.Column="1" Text="Серверы" VerticalOptions="Center" FontSize="13"
+                                        FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
+                                        TextColor="{Binding TabServersActive, Converter={StaticResource ActiveTextColor}}" />
+                                </Grid>
+                            </Border>
+                            <Border Padding="0" StrokeThickness="0"
+                                    BackgroundColor="{Binding TabSettingsActive, Converter={StaticResource ActiveTabBg}}">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding NavSettingsCommand}" />
+                                </Border.GestureRecognizers>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" Padding="13,0" HeightRequest="44">
+                                    <controls:IconView Grid.Column="0" Kind="Settings" IconSize="19" StrokeWidth="1.9" VerticalOptions="Center"
+                                        Color="{Binding TabSettingsActive, Converter={StaticResource ActiveTextColor}}" />
+                                    <Label Grid.Column="1" Text="Настройки" VerticalOptions="Center" FontSize="13"
+                                        FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
+                                        TextColor="{Binding TabSettingsActive, Converter={StaticResource ActiveTextColor}}" />
+                                </Grid>
+                            </Border>
+                        </VerticalStackLayout>
+
+                        <!-- Account card -->
+                        <Border Grid.Row="3" Style="{StaticResource HzCard}" Padding="13,12">
+                            <VerticalStackLayout Spacing="8">
+                                <Label Text="{Binding AccountEmail}" Style="{StaticResource HzBodyLabel}" FontSize="12"
+                                       FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                                <Label Text="{Binding SubLine}" TextColor="{Binding SubLineColor}" FontSize="11"
+                                       FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
+                                <Button Text="{Binding RenewLabel}" HeightRequest="34" CornerRadius="9"
+                                        BackgroundColor="{StaticResource HzGoldSoft}" BorderColor="{StaticResource HzGoldBorder}"
+                                        BorderWidth="1" TextColor="{StaticResource HzGoldLight}" FontSize="12" FontAttributes="Bold"
+                                        FontFamily="{StaticResource FontBody}" Command="{Binding OpenPayCommand}" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- ═══ CONTENT HOST (all screens; one visible at a time) ═══ -->
+                <Grid Grid.Column="1">
+                    <Grid IsVisible="{Binding IsOnboarding}"><screens:OnboardingView BindingContext="{Binding Auth}" /></Grid>
+                    <Grid IsVisible="{Binding IsLogin}"><screens:LoginView BindingContext="{Binding Auth}" /></Grid>
+                    <Grid IsVisible="{Binding IsRegister}"><screens:RegisterView BindingContext="{Binding Auth}" /></Grid>
+                    <Grid IsVisible="{Binding IsConfirm}"><screens:ConfirmView BindingContext="{Binding Auth}" /></Grid>
+                    <Grid IsVisible="{Binding IsReset}"><screens:ResetView BindingContext="{Binding Auth}" /></Grid>
+                    <Grid IsVisible="{Binding IsHome}">
+                        <screens:HomeViewDesktop BindingContext="{Binding Main}" IsVisible="{OnIdiom Desktop=True, Tablet=True, Default=False}" />
+                        <screens:HomeView BindingContext="{Binding Main}" IsVisible="{OnIdiom Phone=True, Default=False}" />
+                    </Grid>
+                    <Grid IsVisible="{Binding IsServers}"><screens:ServersView BindingContext="{Binding Servers}" /></Grid>
+                    <Grid IsVisible="{Binding IsSettings}"><screens:SettingsView BindingContext="{Binding Settings}" /></Grid>
+                    <Grid IsVisible="{Binding IsSplit}"><screens:SplitTunnelingView BindingContext="{Binding Settings}" /></Grid>
+                </Grid>
+            </Grid>
+
+            <!-- ═══ ANDROID / PHONE BOTTOM TAB BAR ═══ -->
+            <Border Grid.Row="1" IsVisible="{Binding IsBottomBarVisible}" BackgroundColor="#E60E0718"
+                    Stroke="{StaticResource HzBorder}" StrokeThickness="1" Padding="0">
+                <Border.StrokeShape><Rectangle /></Border.StrokeShape>
+                <Grid ColumnDefinitions="*,*,*" HeightRequest="62">
+                    <VerticalStackLayout Grid.Column="0" Spacing="4" VerticalOptions="Center" HorizontalOptions="Center">
+                        <VerticalStackLayout.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding NavHomeCommand}" />
+                        </VerticalStackLayout.GestureRecognizers>
+                        <controls:IconView Kind="Home" IconSize="22" StrokeWidth="1.9" HorizontalOptions="Center"
+                            Color="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
+                        <Label Text="Главная" FontSize="10" FontAttributes="Bold" FontFamily="{StaticResource FontBold}"
+                               TextColor="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
+                    </VerticalStackLayout>
+                    <VerticalStackLayout Grid.Column="1" Spacing="4" VerticalOptions="Center" HorizontalOptions="Center">
+                        <VerticalStackLayout.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding NavServersCommand}" />
+                        </VerticalStackLayout.GestureRecognizers>
+                        <controls:IconView Kind="Servers" IconSize="22" StrokeWidth="1.7" HorizontalOptions="Center"
+                            Color="{Binding TabServersActive, Converter={StaticResource ActiveTextColor}}" />
+                        <Label Text="Серверы" FontSize="10" FontAttributes="Bold" FontFamily="{StaticResource FontBold}"
+                               TextColor="{Binding TabServersActive, Converter={StaticResource ActiveTextColor}}" />
+                    </VerticalStackLayout>
+                    <VerticalStackLayout Grid.Column="2" Spacing="4" VerticalOptions="Center" HorizontalOptions="Center">
+                        <VerticalStackLayout.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding NavSettingsCommand}" />
+                        </VerticalStackLayout.GestureRecognizers>
+                        <controls:IconView Kind="Settings" IconSize="22" StrokeWidth="1.9" HorizontalOptions="Center"
+                            Color="{Binding TabSettingsActive, Converter={StaticResource ActiveTextColor}}" />
+                        <Label Text="Настройки" FontSize="10" FontAttributes="Bold" FontFamily="{StaticResource FontBold}"
+                               TextColor="{Binding TabSettingsActive, Converter={StaticResource ActiveTextColor}}" />
+                    </VerticalStackLayout>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- ═══ PAYMENT OVERLAY ═══ -->
+        <Grid IsVisible="{Binding Payment.IsVisible}">
+            <screens:PaymentOverlayView BindingContext="{Binding Payment}" />
+        </Grid>
+    </Grid>
+</ContentPage>

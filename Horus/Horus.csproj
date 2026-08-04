@@ -1,5 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+	<!-- Optional, machine-local overrides (gitignored). Create Horus.local.props with
+	     <DebuggableRelease>true</DebuggableRelease> to debug Release builds on this PC.
+	     Nothing here is committed, so CI and shipping builds are unaffected. -->
+	<Import Project="$(MSBuildThisFileDirectory)Horus.local.props" Condition="Exists('$(MSBuildThisFileDirectory)Horus.local.props')" />
+
+	<!-- Release signing config. Kept separate from Horus.local.props on purpose: that file
+	     means "make this build debuggable", which is the opposite intent. Copy
+	     Horus.signing.local.props.example to get started. -->
+	<Import Project="$(MSBuildThisFileDirectory)Horus.signing.local.props" Condition="Exists('$(MSBuildThisFileDirectory)Horus.signing.local.props')" />
+
 	<PropertyGroup>
 		<TargetFrameworks>net10.0-android</TargetFrameworks>
 		<TargetFrameworks Condition="!$([MSBuild]::IsOSPlatform('linux'))">$(TargetFrameworks);net10.0-ios;net10.0-maccatalyst</TargetFrameworks>
@@ -30,11 +40,14 @@
 		<!-- Display name -->
 		<ApplicationTitle>Horus</ApplicationTitle>
 
-		<!-- App Identifier -->
-		<ApplicationId>com.companyname.horus</ApplicationId>
+		<!-- App Identifier. Single source of truth: AndroidManifest.xml deliberately has no
+		     package= attribute so this drives it, and libhev_socks.so resolves its JNI entry
+		     points against com/horus/vpn/VPNService — so this value is not free to change. -->
+		<ApplicationId>com.horus.vpn</ApplicationId>
 
-		<!-- Versions -->
-		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+		<!-- Versions. Bump ApplicationVersion (versionCode) for every build handed to a
+		     tester, and tag the commit — Settings surfaces both so bug reports are traceable. -->
+		<ApplicationDisplayVersion>0.9.0</ApplicationDisplayVersion>
 		<ApplicationVersion>1</ApplicationVersion>
 
 		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
@@ -42,17 +55,22 @@
 
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
-		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+		<!-- 26.0, not 21.0: the VPN foreground service uses StartForegroundService and the
+		     channel-based Notification.Builder, both API 26+. Below that the app installs
+		     and then crashes on connect. -->
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">26.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<!-- App Icon -->
-		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
+		<!-- App Icon. #0B0512 matches colorPrimary in Platforms\Android\Resources\values\colors.xml. -->
+		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#0B0512" />
 
-		<!-- Splash Screen -->
-		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
+		<!-- Splash Screen. Uses the Horus mark, not the .NET template artwork: this is the
+		     first thing someone sees after sideloading a VPN, and a stock .NET splash reads
+		     as "you installed the wrong thing". -->
+		<MauiSplashScreen Include="Resources\Images\logo_gold.svg" Color="#0B0512" BaseSize="128,128" />
 
 		<!-- Images -->
 		<MauiImage Include="Resources\Images\*" />
@@ -69,13 +87,26 @@
 	  <None Remove="Resources\Images\appicon_notif.svg" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\hysteria.so" />
+	<!-- VPN core + TUN bridge, both loaded in-process via P/Invoke.
+	     libxray.so is xray-core built as a C shared library (VLESS / Hysteria2 / olcRTC
+	     outbounds); libhev_socks.so bridges the TUN fd to xray's SOCKS5 inbound.
+	     The lib*.so naming is required — Android only extracts files matching it.
+	     libxray.so is ~55 MB per ABI, which is why only the ABIs in
+	     $(AndroidSupportedAbis) are packaged. Sources live in libxray.zip at the
+	     solution root; see Platforms\Android\lib\README.md. -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libxray.so" />
 	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libhev_socks.so" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\armeabi-v7a\hysteria.so" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\armeabi-v7a\libhev_socks.so" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\hysteria.so" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libhev_socks.so" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libxray.so" Condition="'$(AndroidSupportedAbis)'=='' Or $(AndroidSupportedAbis.Contains('x86_64'))" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libhev_socks.so" Condition="'$(AndroidSupportedAbis)'=='' Or $(AndroidSupportedAbis.Contains('x86_64'))" />
+	</ItemGroup>
+
+	<!-- Windows: xray.dll (not an .exe — same shared library, different host). -->
+	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+	  <None Include="Platforms\Windows\bin\xray.dll" Condition="Exists('Platforms\Windows\bin\xray.dll')">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	    <Link>xray.dll</Link>
+	  </None>
 	</ItemGroup>
 
 	<ItemGroup>
@@ -91,8 +122,73 @@
 		<PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
 	</ItemGroup>
 
-	<!-- Admin mode: uncomment the line below to enable the admin panel in the build -->
-	<PropertyGroup><DefineConstants>$(DefineConstants);ADMIN_MODE</DefineConstants></PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-android|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-ios|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-maccatalyst|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-windows10.0.19041.0|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-android|AnyCPU'">
+	  <!-- Portable pdbs are produced next to the output for crash symbolication,
+	       but AndroidIncludeDebugSymbols stays off so they are never packaged into the app. -->
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-ios|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-maccatalyst|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-windows10.0.19041.0|AnyCPU'">
+	  <DebugType>portable</DebugType>
+	</PropertyGroup>
+
+	<!-- Locally debuggable Release build for Android. Opt in via Horus.local.props or
+	     -p:DebuggableRelease=true. Never applies during `dotnet publish`, so the artifact
+	     you actually distribute can't pick this up. -->
+	<PropertyGroup Condition="'$(DebuggableRelease)'=='true' And '$(Configuration)'=='Release' And '$(_IsPublishing)'!='true' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)'))=='android'">
+	  <!-- The Android SDK derives $(AndroidIncludeDebugSymbols) - which packages the pdbs and
+	       marks the app android:debuggable="true" - from these three. Setting it directly does
+	       nothing; the SDK's <Choose> in Xamarin.Android.Common.targets always overwrites it. -->
+	  <DebugSymbols>true</DebugSymbols>
+	  <DebugType>portable</DebugType>
+	  <Optimize>false</Optimize>
+	  <DebuggerSupport>true</DebuggerSupport>
+	  <!-- .aab can't be deployed to a device directly -->
+	  <AndroidPackageFormat>apk</AndroidPackageFormat>
+	  <!-- AOT and trimming both break managed debugging -->
+	  <RunAOTCompilation>false</RunAOTCompilation>
+	  <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+	  <EnableLLVM>false</EnableLLVM>
+	  <PublishTrimmed>false</PublishTrimmed>
+	</PropertyGroup>
+
+	<!-- Distribution builds must be signed, non-debuggable APKs. Pass -p:HorusDistribution=true
+	     for anything handed to a tester; these are errors, not warnings, because the previous
+	     warning-only guard is exactly how bin/Release ended up holding an 87 MB debuggable APK
+	     signed with the Android debug keystore. -->
+	<Target Name="GuardDistributionBuild" BeforeTargets="Build"
+	        Condition="'$(HorusDistribution)'=='true' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)'))=='android'">
+	  <Error Condition="'$(Configuration)'!='Release'"
+	         Text="Distribution builds must be Release (got '$(Configuration)')." />
+	  <Error Condition="'$(DebuggableRelease)'=='true'"
+	         Text="DebuggableRelease=true. Set it false in Horus.local.props, or delete that file, before building for distribution." />
+	  <Error Condition="'$(AndroidKeyStore)'!='true' Or '$(AndroidSigningKeyStore)'==''"
+	         Text="No release signing configured. Copy Horus.signing.local.props.example to Horus.signing.local.props and set HORUS_KS_PASS / HORUS_KEY_PASS." />
+	  <Error Condition="'$(AndroidPackageFormat)'=='aab'"
+	         Text="Distribution must be an APK. Direct-download distribution cannot install an .aab." />
+	</Target>
+
+	<Target Name="WarnOnDebuggableRelease" BeforeTargets="Build"
+	        Condition="'$(DebuggableRelease)'=='true' And '$(Configuration)'=='Release' And '$(_IsPublishing)'!='true' And $([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)'))=='android'">
+	  <Warning Text="DebuggableRelease=true: this Release build is debuggable, untrimmed and contains debug symbols. Do not distribute it." />
+	</Target>
 
 	<ItemGroup>
 	  <Folder Include="Geo\" />
@@ -100,12 +196,4 @@
 	  <Folder Include="Routing\" />
 	</ItemGroup>
 
-	<ItemGroup>
-	  <Compile Update="Presentation\View\SettingsPage.xaml.cs">
-	    <DependentUpon>SettingsPage.xaml</DependentUpon>
-	  </Compile>
-	  <Compile Update="Presentation\View\RegisterPage.xaml.cs">
-	    <DependentUpon>RegisterPage.xaml</DependentUpon>
-	  </Compile>
-	</ItemGroup>
 </Project>

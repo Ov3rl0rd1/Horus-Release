@@ -3,6 +3,11 @@ using Horus.Domain.Models;
 
 namespace Horus.Protocols
 {
+    /// <summary>
+    /// Every protocol is an outbound of the same xray-core process, so there is one
+    /// <see cref="IVpnProtocol"/> implementation. The factory survives as the seam
+    /// <see cref="Horus.Application.VpnManager"/> uses to obtain it.
+    /// </summary>
     public class ProtocolFactory
     {
         private readonly IServiceProvider _sp;
@@ -12,18 +17,33 @@ namespace Horus.Protocols
             _sp = sp;
         }
 
-        public IVpnProtocol Create(ProtocolType type) => type switch
-        {
-            ProtocolType.Hysteria2 => _sp.GetRequiredService<Hysteria2Protocol>(),
-            ProtocolType.OlcRtc => _sp.GetRequiredService<OlcRtcProtocol>(),
-            _ => throw new NotSupportedException($"Protocol {type} is not supported.")
-        };
+        /// <summary>Protocols the bundled core can proxy through, ignoring node availability.</summary>
+        public static IReadOnlyList<ProtocolType> Supported =>
+            [ProtocolType.Hysteria2, ProtocolType.Vless, ProtocolType.OlcRtc];
 
-        public ProtocolConfig CreateDefaultConfig(ProtocolType type) => type switch
+        public IVpnProtocol Create() => _sp.GetRequiredService<XrayProtocol>();
+
+        public IVpnProtocol Create(ProtocolType type)
         {
-            ProtocolType.Hysteria2 => new Hysteria2Config(),
-            ProtocolType.OlcRtc => new OlcRtcConfig(),
-            _ => throw new NotSupportedException($"Protocol {type} is not supported.")
-        };
+            if (!Supported.Contains(type))
+                throw new NotSupportedException($"Protocol {type} is not supported.");
+            return Create();
+        }
+
+        public ProtocolConfig CreateConfig(ProtocolType type, ServerConnection connection)
+        {
+            var link = connection.LinkFor(type)
+                ?? throw new NotSupportedException($"The server did not offer a {type} endpoint.");
+
+            // Start each attempt with a clean log so a failure report shows this
+            // connect, not an accumulation of every previous one.
+            DiagnosticPaths.Truncate(DiagnosticPaths.XrayLog);
+
+            return new XrayConfig
+            {
+                Link = ShareLinkParser.Parse(link),
+                LogFilePath = DiagnosticPaths.XrayLog
+            };
+        }
     }
 }

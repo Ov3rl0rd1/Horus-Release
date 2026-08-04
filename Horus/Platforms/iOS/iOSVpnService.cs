@@ -9,13 +9,13 @@ namespace Horus.Platforms.iOS
     /// iOS/macOS VPN platform service.
     ///
     /// iOS VPN architecture:
-    ///   1. Hysteria2 mode: NEPacketTunnelProvider (Network Extension) runs as a separate
-    ///      process in a sandbox. The main app communicates with it via NEVPNManager /
-    ///      NETunnelProviderSession IPC. The extension spawns the hysteria binary inside
-    ///      its own container and bridges the TUN packets.
-    ///
-    ///   2. olcRTC mode: Same PacketTunnel provider, but calls the olcRTC C library
-    ///      directly (linked into the extension binary) instead of a subprocess.
+    ///   NEPacketTunnelProvider (Network Extension) runs as a separate process in a
+    ///   sandbox. The main app communicates with it via NEVPNManager /
+    ///   NETunnelProviderSession IPC. iOS forbids spawning subprocesses, so the
+    ///   extension must link xray-core as a library (gomobile-style framework) rather
+    ///   than running the binary the way Android and Windows do — every protocol
+    ///   (VLESS / Hysteria2 / olcRTC) is then selected through the same generated
+    ///   xray config.
     ///
     /// The NetworkExtension entitlement (com.apple.developer.networking.networkextension)
     /// must be configured in the app's provisioning profile and Entitlements.plist.

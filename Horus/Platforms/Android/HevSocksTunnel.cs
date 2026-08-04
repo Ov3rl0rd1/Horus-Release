@@ -1,5 +1,6 @@
 ﻿using Android.Runtime;
 using Android.Util;
+using Horus.Domain.Models;
 using Java.Interop;
 using System.Runtime.InteropServices;
 
@@ -10,11 +11,22 @@ namespace Horus.Platforms.Android
     {
         private const string HEV_LIB_NAME = "libhev_socks";
         private const string HEV_TAG = "HEV-SOCKS5";
-        private const string HEV_SOCKS5_TUNNEL_CONFIG = """
+
+        /// <summary>
+        /// hev-socks5-tunnel's YAML. The <c>socks5.port</c> here and
+        /// <see cref="Horus.Domain.Models.XrayConfig.DefaultSocksPort"/> are two halves of
+        /// one contract across a language boundary — change them together or the tunnel
+        /// establishes and silently carries nothing.
+        ///
+        /// <paramref name="logFile"/> matters because <c>stderr</c> inside an Android app
+        /// process goes to /dev/null: without a real path this half of the pipeline is
+        /// completely undiagnosable.
+        /// </summary>
+        private static string BuildConfig(string logFile) => $"""
 misc:
   task-stack-size: 81920
-  log-file: stderr
-  log-level: debug
+  log-file: {logFile}
+  log-level: warn
 tunnel:
   name: tun_horus_0
   multi-queue: false
@@ -22,7 +34,7 @@ tunnel:
   ipv6: 'fc00::1'
   mtu: 8500
 socks5:
-  port: 1080
+  port: {Horus.Domain.Models.XrayConfig.DefaultSocksPort}
   address: 127.0.0.1
   udp: 'udp'
 """;
@@ -30,7 +42,7 @@ socks5:
         private static Java.Lang.Thread? _hevThread = null;
 
         [DllImport(HEV_LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "hev_socks5_tunnel_main_from_str")]
-        private static extern int hev_socks5_tunnel_main_from_str([MarshalAs(UnmanagedType.LPStr)] string config_data, uint config_len, int tun_fd);
+        private static extern int hev_socks5_tunnel_main_from_str(byte[] config_data, uint config_len, int tun_fd);
 
         [DllImport(HEV_LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "hev_socks5_tunnel_quit")]
         private static extern void hev_socks5_tunnel_quit();
@@ -46,22 +58,30 @@ socks5:
                 return;
             }
 
+            var logFile = DiagnosticPaths.HevLog;
+            DiagnosticPaths.Truncate(logFile);
+
+            // The native side takes a byte count, not a character count. Marshalling the
+            // string ourselves keeps the two in agreement once the config carries a path
+            // that is not pure ASCII.
+            var config = System.Text.Encoding.UTF8.GetBytes(BuildConfig(logFile));
+
             _hevThread = new Java.Lang.Thread(() =>
             {
                 Log.Verbose(HEV_TAG, "Start hev-socks5-tunnel");
 
-                int result = 0;
                 try
                 {
-                    result = hev_socks5_tunnel_main_from_str(HEV_SOCKS5_TUNNEL_CONFIG, (uint)HEV_SOCKS5_TUNNEL_CONFIG.Length, tun_fd);
+                    int result = hev_socks5_tunnel_main_from_str(config, (uint)config.Length, tun_fd);
+                    if (result != 0)
+                        Log.Error(HEV_TAG, $"hev-socks5-tunnel exited with {result}");
                 }
                 catch (Exception e)
                 {
+                    // This runs on a bare Java thread — an escaping exception would take
+                    // the process down instead of surfacing anywhere useful.
                     Log.Error(HEV_TAG, e.Message);
                 }
-
-                if (result == -1)
-                    throw new ExternalException();
             });
             _hevThread.Start();
         }
@@ -95,9 +115,13 @@ socks5:
             return new long[4] { (long)tx_packets, (long)tx_bytes, (long)rx_packets, (long)rx_bytes };
         }
 
+        // The native library resolves its JNI entry points against the class name in
+        // [Register] above ("com/horus/vpn/VPNService"), which is why the app id must stay
+        // com.horus.vpn. These declarations exist to shape that Android Callable Wrapper;
+        // the code above reaches the library through its plain C API instead.
         [Export("TProxyStartService")]
         private static extern void TProxyStartService(Java.Lang.String config_path, int fd);
-        [Export("TProxyStartService")]
+        [Export("TProxyStopService")]
         private static extern void TProxyStopService();
         [Export("TProxyGetStats")]
         private static extern long[] TProxyGetStats();

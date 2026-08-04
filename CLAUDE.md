@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Horus is a cross-platform VPN client built with .NET MAUI targeting Android, iOS, macOS, and Windows. It uses the Hysteria2/QUIC protocol. The project is in early development — most service logic exists as stubs with `NotImplementedException`.
+Horus is a cross-platform VPN client built with .NET MAUI targeting Android, iOS, macOS, and Windows. It tunnels through a **custom xray-core build** that carries three outbounds: VLESS/REALITY, Hysteria2 and olcRTC. The project is in early development — some service logic is still stubbed.
 
 ## Build & Run Commands
 
@@ -21,11 +21,19 @@ dotnet run -f net10.0-android
 # Run on Windows
 dotnet run -f net10.0-windows10.0.17763.0
 
-# Run tests (if any test project is added)
-dotnet test
+# Run tests
+dotnet test Horus.Tests/Horus.Tests.csproj
+
+# Build an APK to hand to a tester (fails loudly unless signed, Release and non-debuggable)
+dotnet publish Horus/Horus.csproj -f net10.0-android -c Release \
+  -p:HorusDistribution=true -p:ApplicationVersion=<N> -p:ApplicationDisplayVersion=0.9.<N>
 ```
 
-No custom build scripts exist — all builds go through the standard .NET CLI. The solution file is `Horus.slnx`.
+No CI exists — all builds go through the standard .NET CLI. The solution file is `Horus.slnx`.
+
+Distribution is **direct APK**, never `.aab`: `AndroidProcessRunner`-era concerns aside, the
+app id `com.horus.vpn` is fixed because `libhev_socks.so` resolves its JNI entry points
+against `com/horus/vpn/VPNService`.
 
 ## Architecture
 
@@ -34,8 +42,8 @@ Clean Architecture with MVVM, enforced by folder boundaries:
 - **`Domain/`** — Pure contracts and models; no implementation. `Interfaces/` holds service contracts; `Models/` holds enums and data classes; `Events/EventsArgs.cs` defines all event argument types.
 - **`Application/`** — Service implementations (singletons). `VpnManager.cs` is the central orchestrator that coordinates protocol, platform, auth, and subscription services.
 - **`Presentation/`** — MVVM UI. `View/` holds XAML pages; `ViewModels/` uses CommunityToolkit.Mvvm (`[ObservableProperty]`, `[RelayCommand]`).
-- **`Protocols/`** — VPN protocol implementations. `ProtocolFactory` creates the right `IVpnProtocol` based on `ProtocolType` enum. `Hysteria2Protocol` generates YAML config and runs the binary via `IProcessRunner`.
-- **`Platforms/`** — Platform-specific code. Only Android is actively developed (`AndroidVpnService` extends Android's `VpnService`; `AndroidProcessRunner` runs the Hysteria2 binary process).
+- **`Protocols/`** — The VPN core. xray-core is linked as a **C shared library** (`libxray.so` / `xray.dll`) and runs **in-process**: `XrayInterop` is the P/Invoke surface (`XrayStart`/`XrayStop`/`XrayTest`/`XrayVersion`), and `XrayProtocol` is the single `IVpnProtocol` on top of it. `ShareLinkParser` turns the `vless://` / `hysteria2://` links the API returns into `ShareLink`s, and `XrayConfigBuilder` renders those into an xray config. `ProtocolType` names an *outbound*, not a separate binary.
+- **`Platforms/`** — Platform-specific code. Only Android is actively developed (`AndroidVpnService` extends Android's `VpnService`; `HevSocksTunnel` P/Invokes hev-socks5-tunnel). Binaries live under `Platforms/Android/lib/<abi>/` — see the README there.
 
 ### Dependency Injection
 
@@ -43,19 +51,34 @@ All services are registered in `MauiProgram.cs` as singletons. Platform services
 
 ### Key flow
 
-`MainViewModel` → `VpnManager.ConnectAsync()` → `IAuthService` (validate token) → `ISubscriptionService` (get server) → `IVpnProtocol.ConnectAsync()` → `IVpnPlatformService` (create TUN) + `IProcessRunner` (start Hysteria2 binary) → `ITrafficMonitorService` (stats loop).
+`MainViewModel` → `VpnManager.ConnectAsync()` → `IApiService.GetServerConnectionAsync()` (`GET /servers/connect` — the **API** picks and binds the server, and returns one share link per protocol) → `XrayProtocol.ConnectAsync()` (`XrayTest` then `XrayStart`) → **preflight** (egress IP fetched directly and through the SOCKS5 proxy) → `IVpnPlatformService` (create TUN) → `ITrafficMonitorService` (1 Hz counter poll).
+
+Connect falls back **VLESS → Hysteria2 → olcRTC**, skipping protocols the node didn't publish. VLESS leads because its xray schema is standard; the Hysteria2 outbound targets the custom core's own shape and is unverified. A fallback re-renders the config with a different `proxy` outbound; `XrayStop` must run before each retry because `XrayStart` fails while an instance exists.
+
+### Two invariants that silently kill the tunnel
+
+1. **The app's own UID must be excluded from the TUN** (`HorusVpnTunnelService.ApplySplitTunneling`). xray runs in-process, so without the exclusion its socket to the node is routed back into the tunnel and deadlocks. The core exposes no socket-protect hook — this is the substitute. Consequence: the app's API traffic bypasses the VPN, so **`/whoami` reports the real IP while connected and cannot verify the tunnel**. Verify from another app or through the SOCKS5 proxy.
+2. **`XrayConfig.DefaultSocksPort` and hev's YAML `socks5.port` must agree.** Two files, two languages, nothing linking them; a mismatch establishes a tunnel that carries nothing. `Horus.Tests/SocksPortContractTests.cs` guards it.
 
 ### Protocol config
 
-`Hysteria2Config` serializes to YAML written to a temp file. The binary reads this file. Config includes server address, auth token, TLS/QUIC settings, and a SOCKS5 proxy address that `AndroidVpnService` uses to bridge traffic through the TUN interface.
+`XrayConfigBuilder` renders one SOCKS5 inbound on `127.0.0.1:1080` (dialled by hev-socks5-tunnel), the selected proxy outbound, plus `freedom`/`blackhole`. Routing keeps private/loopback ranges direct and avoids `geoip:`/`geosite:` predicates so no `.dat` assets are needed (otherwise `XraySetAssetPath` would be required before `XrayStart`). Because the core is a library with no usable stdout, its log is routed to a file via `log.error` — see `DiagnosticPaths`.
+
+The Hysteria2 outbound targets the custom core's schema — `XrayConfigBuilder.BuildHysteria2` is the only place to change if that schema differs. `XrayTest` validates a config without starting it, so a schema mismatch surfaces as a parser message rather than a timeout.
 
 ### API
 
-Base URL is `https://localhost:7083` (configured in `ApiService.cs`). Endpoints: `POST /login`, `GET /servers`, `GET /servers/{id}/connect`. Responses are deserialized case-insensitively. JWT tokens are parsed with `System.IdentityModel.Tokens.Jwt`.
+HorusAPI v1, base URL from `appsettings.json`. Auth is a **custom session scheme**, not JWT: `POST /auth/login` or `/auth/verify` returns a session token, replayed by `HttpAuthHandler` in the `X-Session-Key` header.
+
+- Registration does **not** sign you in — `POST /auth/register` mails a 6-digit code (202), and `POST /auth/verify` exchanges it for the session.
+- `expiresAt` on a login response is the **session** expiry. The **subscription** expiry comes from `GET /whoami`, which also returns the egress IP. These are stored separately in `StorageService`.
+- `GET /servers/best` is the catalogue; `GET /servers/connect` takes no id.
+
+Endpoints the old API had and v1 does not: `/geo/*`, `/routing-rules`, `/logs/error`. `GeoDataService`, `RoutingService` and `ErrorReportingService` are local-only as a result — error reports fall back to a mailto with a zip archive.
 
 ## Implementation Status
 
-The skeleton is complete; business logic is not. When implementing a service, check `Domain/Interfaces/` for the contract, `Application/` for the stub, and `MauiProgram.cs` to confirm registration. Most `Application/` services throw `NotImplementedException` — replace these rather than adding new files.
+Auth, servers, connect and the xray pipeline are wired to the real backend. Still placeholder: payments (`PaymentViewModel` — no billing endpoints exist yet), per-server ping (`ServerInfo.PingMs` is always null for real servers), and the kill-switch/auto-connect toggles in Settings. See `PLAN-remaining-functions.md`.
 
 ## UI / Styling
 

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             xmlns:conv="clr-namespace:Horus.Presentation.Converters"
+             x:DataType="vm:AuthFlowViewModel"
+             x:Class="Horus.Presentation.View.Screens.ResetView">
+
+    <ScrollView>
+        <Grid Padding="24,18,24,28" RowDefinitions="Auto,*">
+
+            <Button Grid.Row="0" Text="‹ Назад" HorizontalOptions="Start" Padding="0"
+                    BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
+                    FontSize="14" FontFamily="{StaticResource FontBody}"
+                    Command="{Binding GoLoginCommand}" />
+
+            <Border Grid.Row="1" Style="{StaticResource HzAuthCard}" VerticalOptions="Center"
+                    HorizontalOptions="Center" MaximumWidthRequest="392">
+              <VerticalStackLayout Spacing="0">
+
+                <!-- Idle state: request the reset link -->
+                <VerticalStackLayout Spacing="0"
+                    IsVisible="{Binding ResetSent, Converter={StaticResource InvertBoolConverter}}">
+                    <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16">
+                        <Image.Shadow>
+                            <Shadow Brush="{StaticResource HzGold}" Radius="18" Opacity="0.4" Offset="0,2" />
+                        </Image.Shadow>
+                    </Image>
+                    <Label Style="{StaticResource HzDisplay}" FontSize="22" HorizontalTextAlignment="Center"
+                           Text="Сброс пароля" />
+                    <Label Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,4,0,20"
+                           Text="Укажите email аккаунта — пришлём ссылку для смены пароля" />
+                    <Border Style="{StaticResource HzInputBorder}">
+                        <Entry Style="{StaticResource HzEntry}" Placeholder="you@example.com"
+                               Keyboard="Email" Text="{Binding Email}" ReturnCommand="{Binding DoResetCommand}" />
+                    </Border>
+                    <Button Text="Отправить ссылку" Style="{StaticResource HzPrimaryButton}" Margin="0,14,0,0"
+                            Command="{Binding DoResetCommand}" IsEnabled="{Binding CanReset}"
+                            Opacity="{Binding CanReset, Converter={StaticResource DisabledOpacity}}" />
+                </VerticalStackLayout>
+
+                <!-- Done state -->
+                <VerticalStackLayout Spacing="0" IsVisible="{Binding ResetSent}">
+                    <Border WidthRequest="80" HeightRequest="80" HorizontalOptions="Center" Margin="0,0,0,18"
+                            BackgroundColor="{StaticResource HzGreenSoft}" Stroke="{StaticResource HzGreenBorder}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="40" /></Border.StrokeShape>
+                        <Label Text="✓" FontSize="34" TextColor="{StaticResource HzGreen}"
+                               HorizontalOptions="Center" VerticalOptions="Center" />
+                    </Border>
+                    <Label Style="{StaticResource HzDisplay}" FontSize="22" HorizontalTextAlignment="Center"
+                           Text="Письмо отправлено" />
+                    <Label Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,8,0,24">
+                        <Label.FormattedText>
+                            <FormattedString>
+                                <Span Text="Проверьте " />
+                                <Span Text="{Binding EmailShown}" TextColor="{StaticResource HzGoldLight}" FontAttributes="Bold" />
+                                <Span Text=" — ссылка действует 30 минут" />
+                            </FormattedString>
+                        </Label.FormattedText>
+                    </Label>
+                    <Button Text="Вернуться ко входу" Style="{StaticResource HzPrimaryButton}"
+                            Command="{Binding GoLoginCommand}" />
+                </VerticalStackLayout>
+              </VerticalStackLayout>
+            </Border>
+        </Grid>
+    </ScrollView>
+</ContentView>

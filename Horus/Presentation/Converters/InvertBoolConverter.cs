@@ -32,6 +32,22 @@ namespace Horus.Presentation.Converters
             throw new NotImplementedException();
     }
 
+    /// <summary>
+    /// Dims a control when a bool is false — mirrors the mock's disabled-button opacity.
+    /// TrueOpacity / FalseOpacity default to 1.0 / 0.45.
+    /// </summary>
+    public class BoolToOpacityConverter : IValueConverter
+    {
+        public double TrueOpacity { get; set; } = 1.0;
+        public double FalseOpacity { get; set; } = 0.45;
+
+        public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+            value is true ? TrueOpacity : FalseOpacity;
+
+        public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+            throw new NotImplementedException();
+    }
+
     public class VpnStateToColorConverter : IValueConverter
     {
         public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)

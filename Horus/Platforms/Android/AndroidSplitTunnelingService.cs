@@ -17,6 +17,9 @@ namespace Horus.Platforms.Android
         private readonly Context _context;
         private readonly IVpnPlatformService _vpn;
 
+        private const string ModeKey = "split_tunneling_mode";
+        private const string SelectedKey = "split_tunneling_apps";
+
         private SplitTunnelingMode _mode = SplitTunnelingMode.Disabled;
         private readonly List<string> _selected = [];
 
@@ -29,6 +32,7 @@ namespace Horus.Platforms.Android
             {
                 _mode = value;
                 HorusVpnTunnelService.SplitTunnelingMode = value;
+                Preferences.Set(ModeKey, (int)value);
                 SelectionChanged?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -41,6 +45,18 @@ namespace Horus.Platforms.Android
         {
             _vpn = vpn;
             _context = global::Android.App.Application.Context;
+
+            // Restore the user's choice. Held only in memory before, so every restart
+            // silently reverted split tunnelling to "все через VPN" while Settings still
+            // implied the old selection was in force.
+            _mode = (SplitTunnelingMode)Preferences.Get(ModeKey, (int)SplitTunnelingMode.Disabled);
+
+            var stored = Preferences.Get(SelectedKey, string.Empty);
+            if (!string.IsNullOrEmpty(stored))
+                _selected.AddRange(stored.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+
+            HorusVpnTunnelService.SplitTunnelingMode = _mode;
+            HorusVpnTunnelService.SelectedApps = [.. _selected];
         }
 
         public async Task<IReadOnlyList<AppOrProcessEntry>> GetAvailableEntriesAsync()
@@ -76,6 +92,7 @@ namespace Horus.Platforms.Android
 
             // Propagate to tunnel service so next reconnect picks up the change
             HorusVpnTunnelService.SelectedApps = [.. _selected];
+            Preferences.Set(SelectedKey, string.Join('\n', _selected));
 
             SelectionChanged?.Invoke(this, EventArgs.Empty);
             return Task.CompletedTask;

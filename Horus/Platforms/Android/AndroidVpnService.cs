@@ -21,6 +21,11 @@ namespace Horus.Platforms.Android
             var activity = Microsoft.Maui.ApplicationModel.Platform.CurrentActivity;
             if (activity == null) return false;
 
+            // Android 13+ suppresses the foreground-service notification unless this has
+            // been granted — leaving the user with no visible sign the VPN is running and
+            // no way to stop it from the shade. Declined is not fatal, so don't gate on it.
+            await RequestNotificationPermissionAsync();
+
             var intent = global::Android.Net.VpnService.Prepare(activity);
             if (intent == null) return true;
 
@@ -28,6 +33,19 @@ namespace Horus.Platforms.Android
             VpnPermissionBroker.PendingCallback = result => tcs.TrySetResult(result);
             activity.StartActivityForResult(intent, VpnPermissionBroker.RequestCode);
             return await tcs.Task;
+        }
+
+        private static async Task RequestNotificationPermissionAsync()
+        {
+            if (!OperatingSystem.IsAndroidVersionAtLeast(33)) return;
+
+            try
+            {
+                var status = await Permissions.CheckStatusAsync<Permissions.PostNotifications>();
+                if (status != PermissionStatus.Granted)
+                    await Permissions.RequestAsync<Permissions.PostNotifications>();
+            }
+            catch { /* never block a connect on the notification prompt */ }
         }
 
         public Task StartTunnelAsync(TunnelOptions options, CancellationToken ct = default) =>

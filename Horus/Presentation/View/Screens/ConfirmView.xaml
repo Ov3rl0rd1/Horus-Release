@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             x:DataType="vm:AuthFlowViewModel"
+             x:Class="Horus.Presentation.View.Screens.ConfirmView">
+
+    <ScrollView>
+        <Grid Padding="24,18,24,28" RowDefinitions="Auto,*">
+
+            <Button Grid.Row="0" Text="‹ Назад" HorizontalOptions="Start" Padding="0"
+                    BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
+                    FontSize="14" FontFamily="{StaticResource FontBody}"
+                    Command="{Binding GoRegisterCommand}" />
+
+            <Border Grid.Row="1" Style="{StaticResource HzAuthCard}" VerticalOptions="Center"
+                    HorizontalOptions="Center" MaximumWidthRequest="392">
+              <VerticalStackLayout Spacing="0">
+
+                <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16">
+                    <Image.Shadow>
+                        <Shadow Brush="{StaticResource HzGold}" Radius="18" Opacity="0.4" Offset="0,2" />
+                    </Image.Shadow>
+                </Image>
+                <Label Style="{StaticResource HzDisplay}" FontSize="22" HorizontalTextAlignment="Center"
+                       Text="Подтвердите email" />
+                <Label Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,4,0,20">
+                    <Label.FormattedText>
+                        <FormattedString>
+                            <Span Text="Шаг 2 из 2 — отправили 6-значный код на " />
+                            <Span Text="{Binding EmailShown}" TextColor="{StaticResource HzGoldLight}" FontAttributes="Bold" />
+                        </FormattedString>
+                    </Label.FormattedText>
+                </Label>
+
+                <Border Style="{StaticResource HzInputBorder}" Padding="16,0">
+                    <Entry Style="{StaticResource HzEntry}" HeightRequest="58" Placeholder="••••••"
+                           Keyboard="Numeric" HorizontalTextAlignment="Center" FontSize="22"
+                           CharacterSpacing="8" Text="{Binding Code}" ReturnCommand="{Binding DoConfirmCommand}" />
+                </Border>
+
+                <Button Text="Подтвердить" Style="{StaticResource HzPrimaryButton}" Margin="0,14,0,0"
+                        Command="{Binding DoConfirmCommand}" IsEnabled="{Binding CanConfirm}"
+                        Opacity="{Binding CanConfirm, Converter={StaticResource DisabledOpacity}}" />
+
+                <Button Text="Отправить код ещё раз" HorizontalOptions="Center" Margin="0,16,0,0" Padding="8"
+                        BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
+                        FontSize="13" FontFamily="{StaticResource FontBold}"
+                        Command="{Binding ResendCodeCommand}" />
+              </VerticalStackLayout>
+            </Border>
+        </Grid>
+    </ScrollView>
+</ContentView>

@@ -13,5 +13,28 @@ namespace Horus
                 ?? "1.0.0";
 
         public static string SupportEmail { get; set; } = "support@horus-vpn.app";
+
+        /// <summary>Telegram handle shown on the Settings screen for support contact.</summary>
+        public static string SupportHandle { get; set; } = "@horus_vpn";
+
+#if DEBUG
+        /// <summary>
+        /// Accept any TLS certificate. Debug-only and opt-in: the app talks to the
+        /// production API in every configuration, and a VPN client that silently skips
+        /// certificate validation is a man-in-the-middle waiting to happen. Turn it on
+        /// deliberately for a proxy-inspection session, then turn it back off.
+        /// </summary>
+        public static bool AllowInsecureTls { get; set; }
+
+        /// <summary>
+        /// DEBUG only: when true, the auth screens and the connect button short-circuit to
+        /// local fakes so the UI can be walked without a backend. Off by default so debug
+        /// builds exercise the real API.
+        /// </summary>
+        public static bool UseDevBypass { get; set; }
+#else
+        /// <summary>Always false in Release — certificate validation is never optional in a shipping build.</summary>
+        public static bool AllowInsecureTls => false;
+#endif
     }
 }

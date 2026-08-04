@@ -8,7 +8,6 @@ namespace Horus.Application
     {
         private readonly IVpnPlatformService _platform;
         private readonly IGeoDataService _geo;
-        private readonly IApiService _api;
 
         private readonly List<RoutingRule> _rules = [];
         private readonly string _cachedRulesPath;
@@ -19,11 +18,10 @@ namespace Horus.Application
             get { lock (_lock) return [.. _rules]; }
         }
 
-        public RoutingService(IVpnPlatformService platform, IGeoDataService geo, IApiService api)
+        public RoutingService(IVpnPlatformService platform, IGeoDataService geo)
         {
             _platform = platform;
             _geo = geo;
-            _api = api;
 
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -70,39 +68,26 @@ namespace Horus.Application
             }
         }
 
-        // ── Remote rules update ──────────────────────────────────────────────
+        // ── Rules update ─────────────────────────────────────────────────────
 
         /// <summary>
-        /// Downloads routing rules from the server and merges them with built-in rules.
-        /// Falls back to the cached copy on failure.
+        /// Merges any locally cached rules file on top of the built-in rules.
+        ///
+        /// HorusAPI v1 no longer exposes <c>GET /routing-rules</c>, so nothing is fetched;
+        /// the on-disk cache is the only external source. Split routing itself now happens
+        /// inside xray via the generated config's <c>routing</c> section.
         /// </summary>
         public async Task RefreshFromServerAsync(CancellationToken ct = default)
         {
-            RoutingRulesFile? serverRules = null;
+            if (!File.Exists(_cachedRulesPath)) return;
 
             try
             {
-                serverRules = await _api.GetRoutingRulesAsync(ct);
-                // Cache on disk
-                var json = JsonSerializer.Serialize(serverRules, new JsonSerializerOptions { WriteIndented = false });
-                await File.WriteAllTextAsync(_cachedRulesPath, json, ct);
+                var cached = await File.ReadAllTextAsync(_cachedRulesPath, ct);
+                var rules = JsonSerializer.Deserialize<RoutingRulesFile>(cached);
+                if (rules != null) MergeServerRules(rules);
             }
-            catch
-            {
-                // Try loading from cache
-                if (File.Exists(_cachedRulesPath))
-                {
-                    try
-                    {
-                        var cached = await File.ReadAllTextAsync(_cachedRulesPath, ct);
-                        serverRules = JsonSerializer.Deserialize<RoutingRulesFile>(cached);
-                    }
-                    catch { /* use built-in rules only */ }
-                }
-            }
-
-            if (serverRules != null)
-                MergeServerRules(serverRules);
+            catch { /* use built-in rules only */ }
         }
 
         private void MergeServerRules(RoutingRulesFile file)

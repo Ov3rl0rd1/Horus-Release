@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             x:DataType="vm:AuthFlowViewModel"
+             x:Class="Horus.Presentation.View.Screens.LoginView">
+
+    <ScrollView>
+        <Grid Padding="24,18,24,28" RowDefinitions="Auto,*">
+
+            <Button Grid.Row="0" Text="‹ Назад" HorizontalOptions="Start" Padding="0"
+                    BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
+                    FontSize="14" FontFamily="{StaticResource FontBody}"
+                    IsVisible="{OnIdiom Phone=True, Default=False}"
+                    Command="{Binding GoOnboardingCommand}" />
+
+            <Border Grid.Row="1" Style="{StaticResource HzAuthCard}" VerticalOptions="Center"
+                    HorizontalOptions="Center" MaximumWidthRequest="392">
+              <VerticalStackLayout Spacing="0">
+
+                <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16">
+                    <Image.Shadow>
+                        <Shadow Brush="{StaticResource HzGold}" Radius="18" Opacity="0.4" Offset="0,2" />
+                    </Image.Shadow>
+                </Image>
+                <Label Style="{StaticResource HzDisplay}" FontSize="22" HorizontalTextAlignment="Center" Text="Вход" />
+                <Label Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,4,0,20"
+                       Text="Введите данные аккаунта" />
+
+                <Border Style="{StaticResource HzInputBorder}" Margin="0,0,0,11">
+                    <Entry Style="{StaticResource HzEntry}" Placeholder="you@example.com"
+                           Keyboard="Email" Text="{Binding Email}" />
+                </Border>
+                <Border Style="{StaticResource HzInputBorder}">
+                    <Entry Style="{StaticResource HzEntry}" Placeholder="Пароль" IsPassword="True"
+                           Text="{Binding Password}" ReturnCommand="{Binding DoLoginCommand}" />
+                </Border>
+
+                <Button Text="Забыли пароль?" HorizontalOptions="End" Padding="0" Margin="0,10,0,0"
+                        BackgroundColor="Transparent" TextColor="{StaticResource HzGoldLight}"
+                        FontSize="13" FontFamily="{StaticResource FontBody}" FontAttributes="Bold"
+                        Command="{Binding GoResetCommand}" />
+
+                <Border IsVisible="{Binding HasError}" Margin="0,12,0,0" Padding="12,8"
+                        BackgroundColor="#22F2A6A0" Stroke="#55F2A6A0">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                    <Label Text="{Binding ErrorMessage}" TextColor="{StaticResource HzRed}" FontSize="13" />
+                </Border>
+
+                <Button Text="Войти" Style="{StaticResource HzPrimaryButton}" Margin="0,14,0,0"
+                        Command="{Binding DoLoginCommand}" IsEnabled="{Binding CanLogin}"
+                        Opacity="{Binding CanLogin, Converter={StaticResource DisabledOpacity}}" />
+
+                <ActivityIndicator IsVisible="{Binding IsBusy}" IsRunning="{Binding IsBusy}"
+                                   Color="{StaticResource HzGold}" HeightRequest="22" Margin="0,10,0,0" />
+
+                <HorizontalStackLayout HorizontalOptions="Center" Spacing="6" Margin="0,16,0,0">
+                    <Label Style="{StaticResource HzDim}" Text="Нет аккаунта?" />
+                    <Button Text="Создать" Padding="0" BackgroundColor="Transparent"
+                            TextColor="{StaticResource HzGoldLight}" FontSize="13"
+                            FontFamily="{StaticResource FontBold}" Command="{Binding GoRegisterCommand}" />
+                </HorizontalStackLayout>
+              </VerticalStackLayout>
+            </Border>
+        </Grid>
+    </ScrollView>
+</ContentView>

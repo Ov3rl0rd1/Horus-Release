@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.horus_beta.vpn">
-	<application android:allowBackup="true" android:icon="@mipmap/appicon" android:supportsRtl="true" android:label="Horus Beta">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+	<!-- No package= attribute: $(ApplicationId) from Horus.csproj is the single source of
+	     truth. It must stay com.horus.vpn — libhev_socks.so resolves its JNI entry points
+	     against the class com/horus/vpn/VPNService. -->
+	<application android:allowBackup="false" android:icon="@mipmap/appicon" android:supportsRtl="true" android:label="Horus" android:extractNativeLibs="true">
+		<!-- Must match [Service(Name = …)] on HorusVpnTunnelService character for character,
+		     or the manifest merger emits two <service> elements and fails. ${applicationId}
+		     is not substituted before that validation runs, so the name is spelled out. -->
 		<service
-			android:name="com.horus_beta.vpn.HorusVpnTunnelService"
+			android:name="com.horus.vpn.HorusVpnTunnelService"
 			android:permission="android.permission.BIND_VPN_SERVICE"
 			android:exported="false"
 			android:foregroundServiceType="specialUse">
@@ -14,10 +20,17 @@
 				android:value="vpn" />
 		</service>
 	</application>
+	<!-- Required to enumerate launchable apps for the split-tunnelling picker. Without it
+	     PackageManager.QueryIntentActivities returns nothing on Android 11+. -->
+	<queries>
+		<intent>
+			<action android:name="android.intent.action.MAIN" />
+			<category android:name="android.intent.category.LAUNCHER" />
+		</intent>
+	</queries>
 	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 	<uses-permission android:name="android.permission.INTERNET" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 </manifest>

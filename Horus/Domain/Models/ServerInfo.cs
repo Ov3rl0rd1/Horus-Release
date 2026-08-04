@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Horus.Domain.Models
 {
+    /// <summary>Maps <c>BestServerItem</c> from <c>GET /servers/best</c>.</summary>
     public class ServerInfo
     {
         [JsonPropertyName("id")]
@@ -19,14 +20,16 @@ namespace Horus.Domain.Models
         [JsonPropertyName("host")]
         public string Host { get; set; } = string.Empty;
 
-        [JsonPropertyName("protocol")]
-        public string Protocol { get; set; } = string.Empty;
-
         [JsonPropertyName("current_load")]
         public int CurrentLoad { get; set; }
 
         [JsonPropertyName("max_clients")]
         public int MaxClients { get; set; }
+
+        /// <summary>Measured latency in ms. Not from the API — set for mock/dev data;
+        /// null for real servers until a latency-probe service exists.</summary>
+        [JsonIgnore]
+        public int? PingMs { get; set; }
 
         public string Location => $"{City}, {Country}";
         public int MaxUsers => MaxClients;

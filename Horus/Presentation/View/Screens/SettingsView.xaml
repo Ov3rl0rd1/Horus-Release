@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
+             xmlns:controls="clr-namespace:Horus.Presentation.View.Controls"
+             x:DataType="vm:SettingsViewModel"
+             x:Class="Horus.Presentation.View.Screens.SettingsView">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="{OnIdiom Phone='18,16,18,22', Default='30,20,34,24'}" Spacing="16"
+                             MaximumWidthRequest="{OnIdiom Phone=640, Default=100000}"
+                             HorizontalOptions="{OnIdiom Phone=Center, Default=Fill}">
+
+            <Label Text="Настройки" Style="{StaticResource HzDisplay}" FontSize="20" />
+
+            <!-- СОЕДИНЕНИЕ -->
+            <VerticalStackLayout Spacing="6">
+                <Label Text="СОЕДИНЕНИЕ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout Spacing="0">
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Kill Switch" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Блокировать интернет при обрыве VPN" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding KillSwitch}" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Автоподключение" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Включать защиту при запуске приложения" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding AutoConnect}" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Автозапуск" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Запускать при старте системы" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding AutoStart}" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding GoSplitCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Split tunneling" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Какие приложения идут через VPN" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <Label Grid.Column="1" Text="{Binding SplitTunnelingValue}" Style="{StaticResource HzDim}"
+                                   FontSize="13" VerticalOptions="Center" />
+                            <controls:IconView Grid.Column="2" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <!-- АККАУНТ -->
+            <VerticalStackLayout Spacing="6">
+                <Label Text="АККАУНТ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout Spacing="0">
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
+                            <Label Grid.Column="0" Text="Email" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding AccountEmail}" TextColor="{StaticResource HzGoldLight}"
+                                   FontSize="13" FontAttributes="Bold" VerticalOptions="Center" FontFamily="{StaticResource FontBody}" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding OpenPayCommand}" />
+                            </Grid.GestureRecognizers>
+                            <Label Grid.Column="0" Text="Подписка" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding SubscriptionValue}" Style="{StaticResource HzDim}"
+                                   FontSize="13" VerticalOptions="Center" />
+                            <controls:IconView Grid.Column="2" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*" MinimumHeightRequest="56">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SignOutCommand}" />
+                            </Grid.GestureRecognizers>
+                            <Label Text="Выйти из аккаунта" TextColor="{StaticResource HzRed}" FontAttributes="Bold"
+                                   FontFamily="{StaticResource FontBody}" FontSize="14" VerticalOptions="Center" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <!-- ДИАГНОСТИКА -->
+            <VerticalStackLayout Spacing="6">
+                <Label Text="ДИАГНОСТИКА" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout Spacing="0">
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding CollectLogsCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Собрать логи" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Архив для отправки в поддержку" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:IconView Grid.Column="1" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ShowSessionLogCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Журнал подключения" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Показать и скопировать текст" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:IconView Grid.Column="1" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56">
+                            <Label Grid.Column="0" Text="Ядро VPN" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding CoreVersion}" Style="{StaticResource HzDim}"
+                                   FontSize="12" VerticalOptions="Center" LineBreakMode="TailTruncation" MaximumWidthRequest="180" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <!-- О ПРИЛОЖЕНИИ -->
+            <VerticalStackLayout Spacing="6">
+                <Label Text="О ПРИЛОЖЕНИИ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout Spacing="0">
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56">
+                            <Label Grid.Column="0" Text="Версия" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding AppVersion}" Style="{StaticResource HzDim}" FontSize="13" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56">
+                            <Label Grid.Column="0" Text="Поддержка" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding SupportHandle}" TextColor="{StaticResource HzGoldLight}"
+                                   FontSize="13" FontAttributes="Bold" VerticalOptions="Center" FontFamily="{StaticResource FontBody}" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <Label Text="{Binding StatusMessage}" TextColor="{StaticResource HzGoldLight}"
+                   HorizontalTextAlignment="Center" FontSize="12" FontFamily="{StaticResource FontBody}" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentView>

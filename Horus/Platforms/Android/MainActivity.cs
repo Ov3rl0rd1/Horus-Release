@@ -1,6 +1,8 @@
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
+using Android.OS;
+using AndroidX.Core.View;
 using Horus.Platforms.Android;
 
 namespace Horus
@@ -15,6 +17,26 @@ namespace Horus
             ConfigChanges.SmallestScreenSize | ConfigChanges.Density)]
     public class MainActivity : MauiAppCompatActivity
     {
+        protected override void OnCreate(Bundle? savedInstanceState)
+        {
+            base.OnCreate(savedInstanceState);
+
+            // Tint the system bars to match the app's dark theme (default was MAUI purple).
+            if (Window is not null)
+            {
+                Window.SetStatusBarColor(global::Android.Graphics.Color.ParseColor("#0B0512"));
+                Window.SetNavigationBarColor(global::Android.Graphics.Color.ParseColor("#0E0718"));
+
+                // Dark bars → light (white) icons.
+                var controller = WindowCompat.GetInsetsController(Window, Window.DecorView);
+                if (controller is not null)
+                {
+                    controller.AppearanceLightStatusBars = false;
+                    controller.AppearanceLightNavigationBars = false;
+                }
+            }
+        }
+
         protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
         {
             if (requestCode == VpnPermissionBroker.RequestCode)

@@ -14,7 +14,6 @@ namespace Horus.Application
     /// </summary>
     public class GeoDataService : IGeoDataService
     {
-        private readonly IApiService _api;
         private readonly string _geoDbPath;
         private readonly string _geoVersionPath;
 
@@ -23,9 +22,8 @@ namespace Horus.Application
         private readonly object _metaLock = new();
         private DateTime? _geoIpLastUpdated;
 
-        public GeoDataService(IApiService api)
+        public GeoDataService()
         {
-            _api = api;
             var dir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Horus", "geo");
@@ -70,48 +68,19 @@ namespace Horus.Application
         public Task LoadGeoSiteAsync(string path) => Task.CompletedTask;
 
         /// <summary>
-        /// Downloads the latest GeoIP database from the server.
-        /// Only downloads if the server version is newer than the cached version.
+        /// Loads the cached GeoIP database if one is present.
+        ///
+        /// HorusAPI v1 no longer serves <c>/geo/country.mmdb</c>, so there is nothing to
+        /// download — a database has to be placed at <see cref="_geoDbPath"/> out of band.
+        /// Country-based routing on the tunnel itself is handled by xray.
         /// </summary>
         public async Task UpdateGeoDataAsync(string geoIpUrl, string geoSiteUrl)
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            try
-            {
-                // Check if update is needed
-                var serverVersion = await _api.GetGeoDataVersionAsync();
-                var cachedVersion = ReadCachedVersion();
+            if (!File.Exists(_geoDbPath))
+                throw new NotSupportedException(
+                    "GeoIP database updates are not available — the API no longer serves one.");
 
-                bool needsUpdate = cachedVersion == null
-                    || serverVersion.UpdatedAt > cachedVersion.UpdatedAt
-                    || !File.Exists(_geoDbPath);
-
-                if (!needsUpdate) return;
-
-                // Download
-                await using var stream = await _api.DownloadGeoDataAsync(cts.Token);
-                var tempPath = _geoDbPath + ".tmp";
-                await using (var fs = File.Create(tempPath))
-                    await stream.CopyToAsync(fs, cts.Token);
-
-                // Validate by opening it
-                using (var testReader = new Reader(tempPath)) { /* validates */ }
-
-                // Atomic replace
-                File.Move(tempPath, _geoDbPath, overwrite: true);
-                WriteCachedVersion(serverVersion);
-
-                // Reload in-memory reader
-                await LoadGeoIpAsync(_geoDbPath);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception)
-            {
-                // If update fails but we have an existing cached copy, load that
-                if (File.Exists(_geoDbPath) && _reader == null)
-                    await LoadGeoIpAsync(_geoDbPath);
-                throw;
-            }
+            await LoadGeoIpAsync(_geoDbPath);
         }
 
         public Task<GeoMatchResult> MatchIpAsync(string ip)
