@@ -27,8 +27,28 @@ namespace Horus.Domain.Models
         public string SocksAddress { get; set; } = "127.0.0.1";
         public int SocksPort { get; set; } = DefaultSocksPort;
 
-        /// <summary>xray log level: debug | info | warning | error | none.</summary>
-        public string LogLevel { get; set; } = "warning";
+        /// <summary>
+        /// xray log level: debug | info | warning | error | none.
+        ///
+        /// <c>info</c> in every configuration, deliberately. A failing outbound reports
+        /// itself at info ("failed to process outbound traffic > …"); at <c>warning</c> the
+        /// log contains nothing but the startup banner, so a tunnel that connects and
+        /// carries nothing looks identical to a healthy one — which is precisely the case
+        /// this log exists to explain.
+        ///
+        /// The volume is modest, the file is truncated on every connect, and access
+        /// logging — the part that would record where the user goes — stays off.
+        /// </summary>
+        public string LogLevel { get; set; } = "info";
+
+        /// <summary>
+        /// Resolvers for the core's own DNS client. Required on Android: the Go resolver
+        /// finds no nameservers (no <c>/etc/resolv.conf</c>) and fails every lookup without
+        /// sending a packet. DoH first so a poisoned or hijacked UDP resolver on the
+        /// carrier network cannot silently redirect the direct path.
+        /// </summary>
+        public IReadOnlyList<string> DnsServers { get; set; } =
+            ["https://1.1.1.1/dns-query", "1.1.1.1", "8.8.8.8"];
 
         /// <summary>
         /// File xray writes its error log to. The core is linked as a shared library, so

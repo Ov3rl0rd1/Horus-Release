@@ -15,7 +15,9 @@ namespace Horus.Presentation.Navigation
     {
         private const int MaxHistory = 32;
 
-        [ObservableProperty] private AppScreen _currentScreen = AppScreen.Login;
+        // Startup, not Login: the first screen must not be a guess. ShellViewModel.Initialize
+        // replaces it once the stored session has been read.
+        [ObservableProperty] private AppScreen _currentScreen = AppScreen.Startup;
 
         private readonly List<AppScreen> _history = new();
 

@@ -78,6 +78,38 @@ namespace Horus.Protocols
             };
         }
 
+        /// <summary>
+        /// Checks the handshake parameters a link must carry for its protocol, and throws
+        /// a message that names the offending field.
+        ///
+        /// The core's own rejection ("invalid \"shortId\": System.String[]") arrives after a
+        /// config round-trip and reads like a client bug, when in practice it means the
+        /// server rendered the link wrong — interpolating a string[] into the URI is the
+        /// classic case. Failing here turns that into something actionable.
+        /// </summary>
+        public static void Validate(ShareLink link)
+        {
+            if (link.Protocol != ProtocolType.Vless || !link.IsReality) return;
+
+            if (string.IsNullOrEmpty(link.PublicKey))
+                throw new FormatException(
+                    "REALITY link has no public key (pbk) — the server issued an incomplete link.");
+
+            // A REALITY short id is 0–8 bytes of hex, so at most 16 characters and always
+            // an even count. Anything else never reaches the wire usefully.
+            var sid = link.ShortId;
+            if (!string.IsNullOrEmpty(sid) && !IsShortId(sid))
+                throw new FormatException(
+                    $"REALITY link has an invalid short id (sid=\"{sid}\"). Expected up to 16 hex " +
+                    "characters. A value like \"System.String[]\" means the server interpolated an " +
+                    "array into the link instead of one of its short ids.");
+        }
+
+        private static bool IsShortId(string sid) =>
+            sid.Length <= 16
+            && sid.Length % 2 == 0
+            && sid.All(Uri.IsHexDigit);
+
         public static bool TryParse(string? link, out ShareLink? parsed)
         {
             parsed = null;
@@ -110,7 +142,11 @@ namespace Horus.Protocols
             }
             else
             {
-                var colon = authority.LastIndexOf(':');
+                // FIRST colon, not last: a colon-separated hop range ("8443,31111:49999")
+                // puts more colons after the port, and splitting on the last one would tear
+                // the range in half. An IPv6 literal must be bracketed in a URI authority,
+                // so it never reaches this branch.
+                var colon = authority.IndexOf(':');
                 if (colon < 0)
                     throw new FormatException($"Share link has no port: '{Redact(link)}'.");
 
@@ -118,14 +154,21 @@ namespace Horus.Protocols
                 portPart = authority[(colon + 1)..];
             }
 
-            // Hysteria2 port hopping: "443,20000-30000"
+            // Hysteria2 port hopping appears in two forms in the wild:
+            //   "443,20000-50000" — a dial port plus a hop range (what the API emits)
+            //   "20000-50000"     — a bare hop range, dial port implied (hand-written links)
             string? range = null;
             var comma = portPart.IndexOf(',');
             if (comma >= 0)
             {
-                range = portPart[(comma + 1)..].Trim();
+                range = NormalizePortRange(portPart[(comma + 1)..]);
                 portPart = portPart[..comma];
-                if (range.Length == 0) range = null;
+            }
+            else if (portPart.Contains('-'))
+            {
+                // Bare range: hop over all of it, and dial the low end to get started.
+                range = NormalizePortRange(portPart)!;
+                portPart = range[..range.IndexOf('-')];
             }
 
             if (!int.TryParse(portPart, out var port) || port is <= 0 or > 65535)
@@ -135,6 +178,21 @@ namespace Horus.Protocols
                 throw new FormatException($"Share link has no host: '{Redact(link)}'.");
 
             return (host, port, range);
+        }
+
+        /// <summary>
+        /// Normalises a hop-port range to the hyphen form the core requires.
+        ///
+        /// HorusAPI stores the range colon-separated (<c>31111:49999</c>) while the core's
+        /// <c>PortList</c> only understands <c>31111-49999</c>. Passed through unchanged the
+        /// colon ends up inside the dial address, and the core fails every connection with
+        /// <c>too many colons in address</c> — after the tunnel has already come up, so the
+        /// app reports success while carrying nothing.
+        /// </summary>
+        private static string? NormalizePortRange(string raw)
+        {
+            var range = raw.Trim().Replace(':', '-');
+            return range.Length == 0 ? null : range;
         }
 
         private static Dictionary<string, string> ParseQuery(string query)
@@ -153,9 +211,16 @@ namespace Horus.Protocols
             return result;
         }
 
+        /// <summary>
+        /// Percent-decoding only. <c>+</c> is deliberately left alone: translating it to a
+        /// space is an <c>application/x-www-form-urlencoded</c> rule, not a URI one, and
+        /// share links are URIs. Applying it here silently corrupts any base64 secret that
+        /// happens to contain a plus — which is most of them — turning a valid credential
+        /// into one the node rejects, with nothing in the logs to say why.
+        /// </summary>
         private static string Unescape(string value)
         {
-            try { return Uri.UnescapeDataString(value.Replace('+', ' ')); }
+            try { return Uri.UnescapeDataString(value); }
             catch { return value; }
         }
 

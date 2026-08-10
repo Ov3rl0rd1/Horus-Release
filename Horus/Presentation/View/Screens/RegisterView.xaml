@@ -17,11 +17,7 @@
                     HorizontalOptions="Center" MaximumWidthRequest="392">
               <VerticalStackLayout Spacing="0">
 
-                <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16">
-                    <Image.Shadow>
-                        <Shadow Brush="{StaticResource HzGold}" Radius="18" Opacity="0.4" Offset="0,2" />
-                    </Image.Shadow>
-                </Image>
+                <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16" />
                 <Label Style="{StaticResource HzDisplay}" FontSize="22" HorizontalTextAlignment="Center" Text="Регистрация" />
                 <Label Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,4,0,20"
                        Text="Шаг 1 из 2 — затем подтверждение email" />

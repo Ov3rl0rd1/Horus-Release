@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
+using Horus.Domain.Models;
 using Horus.Presentation.Navigation;
 
 namespace Horus.Presentation.ViewModels
@@ -66,6 +67,7 @@ namespace Horus.Presentation.ViewModels
 
         // ── Screen flags (bound to each view's IsVisible) ──
         public AppScreen Screen => _nav.CurrentScreen;
+        public bool IsStartup => Screen == AppScreen.Startup;
         public bool IsOnboarding => Screen == AppScreen.Onboarding;
         public bool IsLogin => Screen == AppScreen.Login;
         public bool IsRegister => Screen == AppScreen.Register;
@@ -76,7 +78,8 @@ namespace Horus.Presentation.ViewModels
         public bool IsSettings => Screen == AppScreen.Settings;
         public bool IsSplit => Screen == AppScreen.Split;
 
-        public bool IsAuthFlow => Screen is AppScreen.Onboarding or AppScreen.Login
+        /// <summary>Startup counts as "outside the app" so no chrome or account card shows.</summary>
+        public bool IsAuthFlow => Screen is AppScreen.Startup or AppScreen.Onboarding or AppScreen.Login
             or AppScreen.Register or AppScreen.Confirm or AppScreen.Reset;
         public bool InApp => !IsAuthFlow;
         /// <summary>Chrome (tab bar / sidebar) is shown on the three main tabs only.</summary>
@@ -105,11 +108,21 @@ namespace Horus.Presentation.ViewModels
                 return Math.Max((int)Math.Ceiling((exp.Value.ToUniversalTime() - DateTime.UtcNow).TotalDays), 0);
             }
         }
+        /// <summary>True until the server has actually said the subscription is gone.</summary>
+        private bool SubscriptionKnown => _auth.SubscriptionState != SubscriptionState.Unknown;
+
         public bool HasSubscription => SubDaysLeft > 0;
-        public string SubLine => HasSubscription
-            ? $"Подписка · до {_auth.CurrentUser!.expiresAt!.Value.ToLocalTime():d MMMM}"
-            : "Подписка не активна";
-        public Color SubLineColor => HasSubscription ? Color.FromArgb("#F3D48E") : Color.FromArgb("#F2A6A0");
+
+        // While the state is Unknown the card stays neutral rather than announcing
+        // "Подписка не активна" on every cold start, before /whoami has answered.
+        public string SubLine => _auth.CurrentUser?.expiresAt is { } exp && SubDaysLeft > 0
+            ? $"Подписка · до {exp.ToLocalTime():d MMMM}"
+            : SubscriptionKnown ? "Подписка не активна" : "Проверяем подписку…";
+
+        public Color SubLineColor => !SubscriptionKnown
+            ? Color.FromArgb("#99EFEAF6")
+            : HasSubscription ? Color.FromArgb("#F3D48E") : Color.FromArgb("#F2A6A0");
+
         public string RenewLabel => HasSubscription ? "Продлить подписку" : "Оформить подписку";
 
         // ── Tab navigation ──
@@ -118,13 +131,43 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void NavSettings() => _nav.Go(AppScreen.Settings);
         [RelayCommand] private void OpenPay() => Payment.Open();
 
-        /// <summary>Called from App startup once the session-restore attempt is done.</summary>
+        private int _started;
+
+        /// <summary>
+        /// Reads the stored session and routes to the first real screen. Idempotent and
+        /// called from both <c>App.OnStart</c> and <c>RootPage.OnAppearing</c> — the app
+        /// opens on <see cref="AppScreen.Startup"/>, so if neither hook fired the user
+        /// would be stranded there.
+        /// </summary>
+        public async Task EnsureStartedAsync()
+        {
+            if (Interlocked.Exchange(ref _started, 1) != 0) return;
+
+            bool restored = false;
+            try
+            {
+                // Bounded: a stalled keystore read must not leave the app on a blank screen.
+                restored = await _auth.TryRestoreSessionAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Horus] Session restore failed: {ex}");
+            }
+
+            Initialize(restored);
+        }
+
+        /// <summary>Routes to the first screen once the session-restore attempt is done.</summary>
         public void Initialize(bool sessionRestored)
         {
+            _started = 1;
+
             if (sessionRestored)
                 _nav.Reset(AppScreen.Home);
             else
                 _nav.Reset(DeviceInfo.Idiom == DeviceIdiom.Phone ? AppScreen.Onboarding : AppScreen.Login);
+
+            RaiseScreenFlags();
             RaiseAccount();
         }
 
@@ -157,6 +200,7 @@ namespace Horus.Presentation.ViewModels
         private void RaiseScreenFlags()
         {
             OnPropertyChanged(nameof(Screen));
+            OnPropertyChanged(nameof(IsStartup));
             OnPropertyChanged(nameof(IsOnboarding));
             OnPropertyChanged(nameof(IsLogin));
             OnPropertyChanged(nameof(IsRegister));

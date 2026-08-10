@@ -49,11 +49,7 @@
                                 <TapGestureRecognizer Command="{Binding ToggleConnectCommand}" />
                             </Border.GestureRecognizers>
                             <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center" Spacing="9">
-                                <Image Source="logo_gold.png" WidthRequest="74" Opacity="{Binding LogoOpacity}" HorizontalOptions="Center">
-                                    <Image.Shadow>
-                                        <Shadow Brush="{StaticResource HzGold}" Radius="20" Opacity="0.5" Offset="0,2" />
-                                    </Image.Shadow>
-                                </Image>
+                                <Image Source="logo_gold.png" WidthRequest="74" Opacity="{Binding LogoOpacity}" HorizontalOptions="Center" />
                                 <Label Text="{Binding BtnLabel}" TextColor="{Binding BtnWordColor}" FontSize="11"
                                        FontAttributes="Bold" CharacterSpacing="2" FontFamily="{StaticResource FontBold}"
                                        HorizontalOptions="Center" />

@@ -21,11 +21,7 @@
                 <!-- Idle state: request the reset link -->
                 <VerticalStackLayout Spacing="0"
                     IsVisible="{Binding ResetSent, Converter={StaticResource InvertBoolConverter}}">
-                    <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16">
-                        <Image.Shadow>
-                            <Shadow Brush="{StaticResource HzGold}" Radius="18" Opacity="0.4" Offset="0,2" />
-                        </Image.Shadow>
-                    </Image>
+                    <Image Source="logo_gold.png" HeightRequest="46" HorizontalOptions="Center" Margin="0,0,0,16" />
                     <Label Style="{StaticResource HzDisplay}" FontSize="22" HorizontalTextAlignment="Center"
                            Text="Сброс пароля" />
                     <Label Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" Margin="0,4,0,20"

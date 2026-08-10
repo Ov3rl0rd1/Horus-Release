@@ -108,11 +108,16 @@ namespace Horus.Presentation.ViewModels
             if (_auth.CurrentUser != null)
             {
                 Username = _auth.CurrentUser.username;
-                AccountEmail = _auth.CurrentUser.username;
-                RenewalDate = _auth.CurrentUser.expiresAt.HasValue ? _auth.CurrentUser.expiresAt.Value.ToLocalTime().ToString("d MMM yyyy") : "None";
-                SubscriptionValue = _auth.CurrentUser.expiresAt.HasValue
-                    ? $"до {_auth.CurrentUser.expiresAt.Value.ToLocalTime():d MMM}"
-                    : "не активна";
+                AccountEmail = _auth.CurrentUser.email ?? _auth.CurrentUser.username;
+
+                var expiry = _auth.CurrentUser.expiresAt;
+                RenewalDate = expiry.HasValue ? expiry.Value.ToLocalTime().ToString("d MMM yyyy") : "—";
+
+                // "не активна" only once the server has confirmed it — otherwise a cold
+                // start would claim the subscription is gone before /whoami has answered.
+                SubscriptionValue = expiry.HasValue
+                    ? $"до {expiry.Value.ToLocalTime():d MMM}"
+                    : _auth.SubscriptionState == SubscriptionState.Unknown ? "проверяем…" : "не активна";
             }
 
             // GeoIP status

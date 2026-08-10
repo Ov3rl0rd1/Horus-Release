@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using Horus.Application;
-using Horus.Domain.Interfaces;
 using Horus.Presentation.View;
 using Horus.Presentation.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
@@ -28,12 +26,8 @@ namespace Horus
             base.OnStart();
             try
             {
-                var auth = _services.GetRequiredService<IAuthService>();
-                var shell = _services.GetRequiredService<ShellViewModel>();
-
-                // Restore a persisted session if one exists, then route to the first screen.
-                var restored = await auth.TryRestoreSessionAsync();
-                shell.Initialize(restored);
+                // Idempotent — RootPage.OnAppearing races this and whichever wins, wins.
+                await _services.GetRequiredService<ShellViewModel>().EnsureStartedAsync();
             }
             catch (Exception ex)
             {

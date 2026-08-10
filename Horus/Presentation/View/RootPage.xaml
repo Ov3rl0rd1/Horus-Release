@@ -112,6 +112,12 @@
 
                 <!-- ═══ CONTENT HOST (all screens; one visible at a time) ═══ -->
                 <Grid Grid.Column="1">
+                    <!-- Startup: shown only until the stored session has been read. Matches the
+                         splash so the handover is invisible rather than a flash of Login. -->
+                    <Grid IsVisible="{Binding IsStartup}">
+                        <Image Source="logo_gold.png" HeightRequest="88" Opacity="0.75"
+                               HorizontalOptions="Center" VerticalOptions="Center" />
+                    </Grid>
                     <Grid IsVisible="{Binding IsOnboarding}"><screens:OnboardingView BindingContext="{Binding Auth}" /></Grid>
                     <Grid IsVisible="{Binding IsLogin}"><screens:LoginView BindingContext="{Binding Auth}" /></Grid>
                     <Grid IsVisible="{Binding IsRegister}"><screens:RegisterView BindingContext="{Binding Auth}" /></Grid>

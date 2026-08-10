@@ -53,7 +53,7 @@ All services are registered in `MauiProgram.cs` as singletons. Platform services
 
 `MainViewModel` → `VpnManager.ConnectAsync()` → `IApiService.GetServerConnectionAsync()` (`GET /servers/connect` — the **API** picks and binds the server, and returns one share link per protocol) → `XrayProtocol.ConnectAsync()` (`XrayTest` then `XrayStart`) → **preflight** (egress IP fetched directly and through the SOCKS5 proxy) → `IVpnPlatformService` (create TUN) → `ITrafficMonitorService` (1 Hz counter poll).
 
-Connect falls back **VLESS → Hysteria2 → olcRTC**, skipping protocols the node didn't publish. VLESS leads because its xray schema is standard; the Hysteria2 outbound targets the custom core's own shape and is unverified. A fallback re-renders the config with a different `proxy` outbound; `XrayStop` must run before each retry because `XrayStart` fails while an instance exists.
+Connect falls back **Hysteria2 → VLESS → olcRTC**, skipping protocols the node didn't publish. A fallback re-renders the config with a different `proxy` outbound; `XrayStop` must run before each retry because `XrayStart` fails while an instance exists.
 
 ### Two invariants that silently kill the tunnel
 
@@ -64,7 +64,11 @@ Connect falls back **VLESS → Hysteria2 → olcRTC**, skipping protocols the no
 
 `XrayConfigBuilder` renders one SOCKS5 inbound on `127.0.0.1:1080` (dialled by hev-socks5-tunnel), the selected proxy outbound, plus `freedom`/`blackhole`. Routing keeps private/loopback ranges direct and avoids `geoip:`/`geosite:` predicates so no `.dat` assets are needed (otherwise `XraySetAssetPath` would be required before `XrayStart`). Because the core is a library with no usable stdout, its log is routed to a file via `log.error` — see `DiagnosticPaths`.
 
-The Hysteria2 outbound targets the custom core's schema — `XrayConfigBuilder.BuildHysteria2` is the only place to change if that schema differs. `XrayTest` validates a config without starting it, so a schema mismatch surfaces as a parser message rather than a timeout.
+**The fork's protocol names are not the usual ones.** Hysteria2 is registered as `hysteria` (both `"protocol"` and `streamSettings.network`) — `hysteria2` is not a valid transport and yields `Config: unknown transport protocol: hysteria2`. Its auth password lives on the *transport* (`hysteriaSettings.auth`), not the outbound, and `settings` is flat `{version:2, address, port}` rather than a `servers[]` array. Salamander obfuscation and UDP port hopping are **finalmask** features (`streamSettings.finalmask.udp[]` and `.quicParams.udpHop`), not hysteria ones. ALPN must include `h3`. Source of truth: `infra/conf/hysteria.go`, `infra/conf/transport_method.go` and `test-configs/server.json` in the core fork.
+
+`xhttp` is an alias for `splithttp` and still needs an `xhttpSettings` object with `path`/`mode`.
+
+`XrayTest` validates a config without starting it, so a schema mismatch surfaces as a parser message rather than a timeout. To check a change against the real core: `xray.exe run -test -c config.json`.
 
 ### API
 

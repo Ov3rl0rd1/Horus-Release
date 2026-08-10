@@ -67,10 +67,11 @@
 		<!-- App Icon. #0B0512 matches colorPrimary in Platforms\Android\Resources\values\colors.xml. -->
 		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#0B0512" />
 
-		<!-- Splash Screen. Uses the Horus mark, not the .NET template artwork: this is the
-		     first thing someone sees after sideloading a VPN, and a stock .NET splash reads
-		     as "you installed the wrong thing". -->
-		<MauiSplashScreen Include="Resources\Images\logo_gold.svg" Color="#0B0512" BaseSize="128,128" />
+		<!-- Splash Screen. Its own copy of the mark under Resources\Splash — pointing this at
+		     Resources\Images\logo_gold.svg would make the same file both a MauiImage and a
+		     MauiSplashScreen, and the two pipelines rasterise it differently.
+		     BaseSize MUST keep the artwork's 340:240 ratio; a square BaseSize squashes it. -->
+		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#0B0512" BaseSize="170,120" />
 
 		<!-- Images -->
 		<MauiImage Include="Resources\Images\*" />

@@ -7,6 +7,13 @@ namespace Horus.Presentation.Navigation
     /// </summary>
     public enum AppScreen
     {
+        /// <summary>
+        /// Nothing decided yet — the state the app opens in, before the stored session has
+        /// been read. Must stay the default: any real screen here renders for a moment on
+        /// every launch, and if startup stalls or throws the user is left staring at it.
+        /// </summary>
+        Startup,
+
         // ── Auth / onboarding ──
         Onboarding,
         Login,

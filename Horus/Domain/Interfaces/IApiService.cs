@@ -48,6 +48,16 @@ namespace Horus.Domain.Interfaces
         // ── Account ──────────────────────────────────────────────────────────
         Task<WhoAmIResponse?> GetWhoAmIAsync(CancellationToken ct = default);
 
+        /// <summary>
+        /// Egress IP as the API sees it, optionally asked <i>through</i> a SOCKS5 proxy.
+        ///
+        /// Comparing the direct answer with the proxied one is what proves a tunnel is
+        /// really carrying traffic: the core starts happily even when its outbound cannot
+        /// dial, so "connected" is otherwise an unverified claim. Returns null when the
+        /// request did not complete.
+        /// </summary>
+        Task<string?> GetEgressIpAsync(string? socksProxy = null, CancellationToken ct = default);
+
         Task<bool> IsHealthyAsync(CancellationToken ct = default);
     }
 }

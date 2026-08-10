@@ -7,11 +7,7 @@
 
     <Grid Padding="26,28" RowDefinitions="*,Auto">
         <VerticalStackLayout Grid.Row="0" VerticalOptions="Center" HorizontalOptions="Center" Spacing="10">
-            <Image Source="logo_gold.png" HeightRequest="104" HorizontalOptions="Center">
-                <Image.Shadow>
-                    <Shadow Brush="{StaticResource HzGold}" Radius="24" Opacity="0.45" Offset="0,3" />
-                </Image.Shadow>
-            </Image>
+            <Image Source="logo_gold.png" HeightRequest="104" HorizontalOptions="Center" />
 
             <Label Style="{StaticResource HzDisplay}" FontSize="26" HorizontalTextAlignment="Center"
                    Margin="0,20,0,0" Text="Весь интернет." />

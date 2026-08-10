@@ -142,7 +142,15 @@ namespace Horus.Presentation.ViewModels
                 return Math.Max(days, 0);
             }
         }
-        public bool ShowRenew => SubDaysLeft <= 7;
+
+        /// <summary>True once <c>/whoami</c> has told us where we stand.</summary>
+        private bool SubscriptionKnown => _auth.SubscriptionState != SubscriptionState.Unknown;
+
+        /// <summary>
+        /// Hidden until the server has actually said the subscription is short or gone —
+        /// otherwise every cold start flashed "Подписка не активна" before /whoami answered.
+        /// </summary>
+        public bool ShowRenew => SubscriptionKnown && SubDaysLeft <= 7;
         public string RenewTitle => SubDaysLeft > 0 ? "Подписка заканчивается" : "Подписка не активна";
         public string RenewSub => SubDaysLeft > 0
             ? $"Осталось {SubDaysLeft} дн. — продлите, чтобы не потерять доступ"
@@ -155,16 +163,16 @@ namespace Horus.Presentation.ViewModels
         {
             if (IsOn || IsConnecting) { await DisconnectAsync(); return; }
 
-            // Re-read the subscription before gating: it is granted server-side, so the
-            // cached expiry can easily be stale — without this a just-granted account
-            // still bounces into the payment sheet.
-            if (SubDaysLeft <= 0)
+            // Only block on a subscription the server has actually confirmed is gone.
+            // While the state is Unknown we let the attempt through: the API is the
+            // authority and answers 403 if it really has expired, which is handled below.
+            if (SubscriptionKnown && SubDaysLeft <= 0)
             {
+                // Re-check first — access is granted server-side, so a cached expiry can
+                // be stale and a just-granted account would otherwise still bounce.
                 await RefreshAccountAsync();
 
-                // The API enforces this too (connect answers 403), but checking here keeps
-                // the user on the payment sheet instead of in an error dialog.
-                if (SubDaysLeft <= 0)
+                if (SubscriptionKnown && SubDaysLeft <= 0)
                 {
                     _payment.Open();
                     return;
@@ -225,6 +233,18 @@ namespace Horus.Presentation.ViewModels
                 // The API picks and binds the server itself (GET /servers/connect takes no
                 // id); the resolved server is passed only so the UI can label the session.
                 await _vpnManager.ConnectAsync(await ResolveServerAsync());
+            }
+            catch (SubscriptionExpiredException)
+            {
+                // The server is the authority on this, and the local gate is deliberately
+                // optimistic — so this is the normal way an expired account is discovered.
+                await RefreshAccountAsync();
+                _payment.Open();
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // HttpAuthHandler already raised SessionExpired; ShellViewModel is routing
+                // to Login, so an error dialog on top of that would just be noise.
             }
             catch (Exception ex)
             {

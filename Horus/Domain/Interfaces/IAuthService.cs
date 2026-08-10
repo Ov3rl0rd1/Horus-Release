@@ -8,6 +8,13 @@ namespace Horus.Domain.Interfaces
         User? CurrentUser { get; }
         bool IsAuthenticated { get; }
 
+        /// <summary>
+        /// What we know about the subscription right now. <see cref="SubscriptionState.Unknown"/>
+        /// until <c>/whoami</c> has answered — a restored session is trusted until the
+        /// server says otherwise, so the UI must not show a renew banner before then.
+        /// </summary>
+        SubscriptionState SubscriptionState { get; }
+
         Task<AuthResult> LoginAsync(string username, string password);
 
         /// <summary>

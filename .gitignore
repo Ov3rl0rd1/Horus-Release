@@ -67,3 +67,4 @@ nunit-*.xml
 # Upstream core drop — 110 MB of prebuilt binaries. The .so/.dll files the build
 # actually consumes are committed under Platforms/; the archive itself is not.
 libxray.zip
+/--nologo

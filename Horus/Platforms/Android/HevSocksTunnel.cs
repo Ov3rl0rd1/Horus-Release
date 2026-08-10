@@ -13,6 +13,17 @@ namespace Horus.Platforms.Android
         private const string HEV_TAG = "HEV-SOCKS5";
 
         /// <summary>
+        /// At <c>warn</c> a healthy-looking but dead tunnel writes an empty log, which is
+        /// indistinguishable from "hev never started". Debug builds log every connection so
+        /// the TUN half is actually diagnosable; release stays quiet.
+        /// </summary>
+#if DEBUG
+        private const string HevLogLevel = "info";
+#else
+        private const string HevLogLevel = "warn";
+#endif
+
+        /// <summary>
         /// hev-socks5-tunnel's YAML. The <c>socks5.port</c> here and
         /// <see cref="Horus.Domain.Models.XrayConfig.DefaultSocksPort"/> are two halves of
         /// one contract across a language boundary — change them together or the tunnel
@@ -26,7 +37,7 @@ namespace Horus.Platforms.Android
 misc:
   task-stack-size: 81920
   log-file: {logFile}
-  log-level: warn
+  log-level: {HevLogLevel}
 tunnel:
   name: tun_horus_0
   multi-queue: false

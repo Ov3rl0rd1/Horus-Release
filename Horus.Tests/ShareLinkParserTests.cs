@@ -85,12 +85,43 @@ public class ShareLinkParserTests
     }
 
     [Fact]
-    public void Decodes_percent_and_plus_in_query_values()
+    public void Percent_decodes_but_keeps_plus_literal()
     {
+        // "+" must survive: it is a literal in a URI, and form-encoding rules do not apply
+        // to share links. Translating it to a space corrupts base64 secrets, which the node
+        // then rejects with no indication of why.
         var link = ShareLinkParser.Parse(
             "hysteria2://pw@h.example:443/?obfs=salamander&obfs-password=a%2Bb+c#t");
 
-        Assert.Equal("a+b c", link.ObfsPassword);
+        Assert.Equal("a+b+c", link.ObfsPassword);
+    }
+
+    [Fact]
+    public void Base64_credential_survives_decoding_intact()
+    {
+        // Shape taken from a real issued link: percent-encoded '/' plus base64 padding.
+        const string encoded = "JFqI2BXTkzP9mRirRyMAAAGfW2OLBgAIAAAFACi1znEEAwBHMEUCIQCy7UIx%2F36Qu";
+        const string expected = "JFqI2BXTkzP9mRirRyMAAAGfW2OLBgAIAAAFACi1znEEAwBHMEUCIQCy7UIx/36Qu";
+
+        Assert.Equal(expected,
+            ShareLinkParser.Parse($"hysteria2://{encoded}@h.example:443?sni=s#t").Credential);
+    }
+
+    [Theory]
+    [InlineData("hysteria2://pw@h.example:8443,31111:49999/?sni=s#t", 8443, "31111-49999")]
+    [InlineData("hysteria2://pw@h.example:8443,31111-49999/?sni=s#t", 8443, "31111-49999")]
+    [InlineData("hysteria2://pw@h.example:20000-50000?sni=s#t", 20000, "20000-50000")]
+    public void Hop_range_is_normalised_to_the_hyphen_form(string raw, int port, string range)
+    {
+        // HorusAPI stores the range colon-separated. The core's PortList only accepts a
+        // hyphen; a colon survives into the dial address and every connection then fails
+        // with "too many colons in address" — after the tunnel is already up, so the app
+        // reports success while carrying nothing.
+        var link = ShareLinkParser.Parse(raw);
+
+        Assert.Equal(port, link.Port);
+        Assert.Equal(range, link.PortRange);
+        Assert.DoesNotContain(':', link.PortRange!);
     }
 
     [Fact]
@@ -111,6 +142,40 @@ public class ShareLinkParserTests
     public void Rejects_malformed_links(string raw)
     {
         Assert.False(ShareLinkParser.TryParse(raw, out _));
+    }
+
+    [Theory]
+    [InlineData("System.String[]")]   // server interpolated an array into the link
+    [InlineData("zzzz")]              // not hex
+    [InlineData("abc")]               // odd length
+    [InlineData("0123456789abcdef00")] // longer than 8 bytes
+    public void Validate_rejects_a_malformed_reality_short_id(string sid)
+    {
+        var link = ShareLinkParser.Parse(
+            $"vless://uid@h.example:443?encryption=none&security=reality&pbk=K&sid={sid}&type=tcp#t");
+
+        var ex = Assert.Throws<FormatException>(() => ShareLinkParser.Validate(link));
+        Assert.Contains("short id", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("f151e6cf5446f615")]
+    [InlineData("a1b2c3d4")]
+    [InlineData("")]                  // absent is legal
+    public void Validate_accepts_a_well_formed_reality_short_id(string sid)
+    {
+        var suffix = sid.Length == 0 ? "" : $"&sid={sid}";
+        var link = ShareLinkParser.Parse(
+            $"vless://uid@h.example:443?encryption=none&security=reality&pbk=K{suffix}&type=tcp#t");
+
+        ShareLinkParser.Validate(link);
+    }
+
+    [Fact]
+    public void Validate_ignores_non_reality_links()
+    {
+        // Hysteria2 has no short id; validation must not invent requirements for it.
+        ShareLinkParser.Validate(ShareLinkParser.Parse(HysteriaLink));
     }
 
     [Fact]

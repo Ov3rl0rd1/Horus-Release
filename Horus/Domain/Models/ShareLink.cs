@@ -14,6 +14,19 @@ namespace Horus.Domain.Models
         public required string Host { get; init; }
         public required int Port { get; init; }
 
+        /// <summary>
+        /// Literal IP for <see cref="Host"/>, resolved by the app before the config is
+        /// rendered. Android has no <c>/etc/resolv.conf</c>, so the core's Go resolver has
+        /// no nameservers and every lookup fails without sending a packet — which silently
+        /// prevents the outbound from ever dialling. Resolving here uses the platform
+        /// resolver instead, which works because the app's UID is outside the tunnel.
+        /// Null when resolution failed; the hostname is then used as-is.
+        /// </summary>
+        public string? ResolvedHost { get; set; }
+
+        /// <summary>Address the outbound should dial. SNI keeps using <see cref="Host"/>.</summary>
+        public string DialAddress => ResolvedHost ?? Host;
+
         /// <summary>Fragment after <c>#</c> — the node's label for this endpoint.</summary>
         public string Tag { get; init; } = string.Empty;
 
@@ -35,6 +48,18 @@ namespace Horus.Domain.Models
         // ── Hysteria2 ────────────────────────────────────────────────────────
         public string? Obfs => GetOrNull("obfs");
         public string? ObfsPassword => GetOrNull("obfs-password") ?? GetOrNull("obfs_password");
+
+        /// <summary>
+        /// ALPN list. The node's Hysteria2 listener negotiates <c>h3</c>, so the client
+        /// must offer it — omitting it fails the handshake.
+        /// </summary>
+        public IReadOnlyList<string> Alpn =>
+            GetOrNull("alpn")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            ?? [];
+
+        /// <summary>Seconds between UDP port hops. The core rejects anything below 5.</summary>
+        public int? HopInterval =>
+            int.TryParse(GetOrNull("hopInterval") ?? GetOrNull("hop-interval"), out var v) ? v : null;
 
         /// <summary>
         /// Extra port range for UDP port hopping, taken from the <c>host:port,range</c>

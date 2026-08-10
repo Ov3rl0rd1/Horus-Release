@@ -32,6 +32,12 @@ namespace Horus.Application
         /// </summary>
         public bool IsAuthenticated => _currentUser != null;
 
+        /// <summary>
+        /// Stays <see cref="SubscriptionState.Unknown"/> until <c>/whoami</c> answers, so a
+        /// restored session is trusted until the server contradicts it.
+        /// </summary>
+        public SubscriptionState SubscriptionState { get; private set; } = SubscriptionState.Unknown;
+
         public event EventHandler<AuthStateChangedEventArgs>? AuthStateChanged;
 
         public async Task<AuthResult> LoginAsync(string username, string password)
@@ -70,6 +76,7 @@ namespace Horus.Application
         public async Task LogoutAsync()
         {
             _currentUser = null;
+            SubscriptionState = SubscriptionState.Unknown;
             _storage.Clear();
             await Task.CompletedTask;
             AuthStateChanged?.Invoke(this, new AuthStateChangedEventArgs(false, null));
@@ -81,17 +88,23 @@ namespace Horus.Application
 
             var session = _storage.Session();
             if (string.IsNullOrEmpty(session))
-                return false;
-
-            // Reject a token the API already considers expired rather than letting the
-            // first authenticated call fail with a 401.
-            var sessionExpiry = _storage.SessionExpiresAt();
-            if (sessionExpiry is { } exp && exp <= DateTime.UtcNow)
             {
-                _storage.Clear();
+                // Logged because "no session stored" and "startup never ran" look identical
+                // from the outside — both leave the user on the sign-in screen.
+                System.Diagnostics.Debug.WriteLine(
+                    "[Horus] No stored session; routing to sign-in.");
                 return false;
             }
 
+            System.Diagnostics.Debug.WriteLine(
+                $"[Horus] Restoring session for '{_storage.Username()}' " +
+                $"(stored expiry {_storage.SessionExpiresAt()?.ToString("O") ?? "none"}).");
+
+            // Deliberately no local expiry check. A stored token is assumed good and the
+            // user goes straight to Home; only the API rejecting it (401, handled globally
+            // by HttpAuthHandler) sends them back to Login. A clock skew or a server-side
+            // extension would otherwise sign out someone whose session is perfectly valid.
+            //
             // Show the cached account immediately so startup isn't gated on the network.
             _currentUser = new User(
                 _storage.Username() ?? string.Empty,
@@ -109,7 +122,14 @@ namespace Horus.Application
         public async Task<WhoAmIResponse?> RefreshAccountAsync()
         {
             var me = await _api.GetWhoAmIAsync();
+
+            // No answer means offline, not expired — leave the state alone so the UI keeps
+            // trusting what it had.
             if (me is null) return null;
+
+            SubscriptionState = me.SubscriptionExpiresAt is { } exp && exp > DateTime.UtcNow
+                ? SubscriptionState.Active
+                : SubscriptionState.Expired;
 
             _currentUser = new User(
                 string.IsNullOrEmpty(me.Username) ? _currentUser?.username ?? string.Empty : me.Username,

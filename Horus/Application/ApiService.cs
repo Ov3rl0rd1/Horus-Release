@@ -254,7 +254,7 @@ namespace Horus.Application
             using var response = await _httpClient.GetAsync($"{_baseUrl}{ApiConsts.SERVERS_CONNECT}", ct);
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
-                throw new InvalidOperationException(
+                throw new SubscriptionExpiredException(
                     await ReadErrorAsync(response, "Подписка истекла."));
 
             if (response.StatusCode == HttpStatusCode.NotFound)
@@ -292,6 +292,41 @@ namespace Horus.Application
                 return await DeserializeAsync<WhoAmIResponse>(response, ct);
             }
             catch { return null; }
+        }
+
+        public async Task<string?> GetEgressIpAsync(string? socksProxy = null, CancellationToken ct = default)
+        {
+            try
+            {
+                using var handler = new SocketsHttpHandler
+                {
+                    Proxy = socksProxy is null ? null : new WebProxy(socksProxy),
+                    UseProxy = socksProxy is not null,
+                    ConnectTimeout = TimeSpan.FromSeconds(6)
+                };
+                using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) };
+
+                // /whoami rather than a plain echo: it already exists and reports the
+                // address the API observes, which is exactly the comparison we need.
+                using var request = new HttpRequestMessage(
+                    HttpMethod.Get, $"{_baseUrl}{ApiConsts.WHOAMI}");
+
+                var session = _storage.Session();
+                if (!string.IsNullOrWhiteSpace(session))
+                    request.Headers.Add(ApiConsts.SESSION_HEADER, session);
+
+                using var response = await client.SendAsync(request, ct);
+                if (!response.IsSuccessStatusCode) return null;
+
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                var body = await JsonSerializer.DeserializeAsync<WhoAmIResponse>(stream, JsonOptions, ct);
+
+                return string.IsNullOrWhiteSpace(body?.Ip) ? null : body.Ip;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         public async Task<bool> IsHealthyAsync(CancellationToken ct = default)

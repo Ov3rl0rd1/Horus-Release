@@ -58,6 +58,33 @@ public class XrayConfigBuilderTests
     }
 
     [Fact]
+    public void Xhttp_vless_link_emits_xhttpSettings()
+    {
+        // The node also publishes an xhttp/REALITY endpoint. "xhttp" is only an alias for
+        // splithttp — the settings object is still required, and without it the transport
+        // has no path to request.
+        var stream = ProxyOutbound(Build(
+                "vless://uid@h.example:8443?encryption=none&security=reality&sni=s.example" +
+                "&fp=randomized&pbk=K&sid=S&type=xhttp&path=%2Fapi%2Fv1%2Fupdates&mode=stream-one#x"))
+            .GetProperty("streamSettings");
+
+        Assert.Equal("xhttp", stream.GetProperty("network").GetString());
+
+        var xhttp = stream.GetProperty("xhttpSettings");
+        Assert.Equal("/api/v1/updates", xhttp.GetProperty("path").GetString());
+        Assert.Equal("stream-one", xhttp.GetProperty("mode").GetString());
+    }
+
+    [Fact]
+    public void Tcp_vless_link_emits_no_xhttpSettings()
+    {
+        var stream = ProxyOutbound(Build(VlessLink)).GetProperty("streamSettings");
+
+        Assert.Equal("tcp", stream.GetProperty("network").GetString());
+        Assert.False(stream.TryGetProperty("xhttpSettings", out _));
+    }
+
+    [Fact]
     public void Flow_is_omitted_when_the_link_does_not_specify_one()
     {
         var proxy = ProxyOutbound(Build(
@@ -67,32 +94,99 @@ public class XrayConfigBuilderTests
         Assert.False(user.TryGetProperty("flow", out _));
     }
 
+    // The fork registers this as "hysteria", not "hysteria2" — see proxy/hysteria and
+    // infra/conf.TransportProtocol. Emitting "hysteria2" is what produced the
+    // "no transport for hysteria protocol" config error.
+    private const string HysteriaLink =
+        "hysteria2://pw@h.example:8443,20000-30000/?sni=s.example&alpn=h3" +
+        "&obfs=salamander&obfs-password=OP&hopInterval=30#t";
+
     [Fact]
-    public void Hysteria2_outbound_includes_obfs_and_hop_ports()
+    public void Hysteria_outbound_uses_the_forks_protocol_and_transport_names()
     {
-        var proxy = ProxyOutbound(Build(
-            "hysteria2://pw@h.example:8443,20000-30000/?sni=s.example&obfs=salamander&obfs-password=OP#t"));
+        var proxy = ProxyOutbound(Build(HysteriaLink));
 
-        Assert.Equal("hysteria2", proxy.GetProperty("protocol").GetString());
-
-        var server = proxy.GetProperty("settings").GetProperty("servers")[0];
-        Assert.Equal("h.example", server.GetProperty("address").GetString());
-        Assert.Equal(8443, server.GetProperty("port").GetInt32());
-        Assert.Equal("pw", server.GetProperty("password").GetString());
-
-        var settings = proxy.GetProperty("streamSettings").GetProperty("hysteria2Settings");
-        Assert.Equal("salamander", settings.GetProperty("obfs").GetProperty("type").GetString());
-        Assert.Equal("OP", settings.GetProperty("obfs").GetProperty("password").GetString());
-        Assert.Equal("20000-30000", settings.GetProperty("hopPorts").GetString());
+        Assert.Equal("hysteria", proxy.GetProperty("protocol").GetString());
+        Assert.Equal("hysteria", proxy.GetProperty("streamSettings").GetProperty("network").GetString());
     }
 
     [Fact]
-    public void Hop_ports_are_omitted_when_the_link_has_no_range()
+    public void Hysteria_settings_are_flat_with_a_version_and_carry_auth_on_the_transport()
     {
-        var proxy = ProxyOutbound(Build("hysteria2://pw@h.example:8443/?sni=s.example#t"));
-        var settings = proxy.GetProperty("streamSettings").GetProperty("hysteria2Settings");
+        var proxy = ProxyOutbound(Build(HysteriaLink));
 
-        Assert.False(settings.TryGetProperty("hopPorts", out _));
+        // settings is {version,address,port} — not a servers[] array.
+        var settings = proxy.GetProperty("settings");
+        Assert.Equal(2, settings.GetProperty("version").GetInt32());
+        Assert.Equal("h.example", settings.GetProperty("address").GetString());
+        Assert.Equal(8443, settings.GetProperty("port").GetInt32());
+        Assert.False(settings.TryGetProperty("servers", out _));
+
+        // The auth password lives on the transport (HysteriaConfig.Auth), not the outbound.
+        var hy = proxy.GetProperty("streamSettings").GetProperty("hysteriaSettings");
+        Assert.Equal(2, hy.GetProperty("version").GetInt32());
+        Assert.Equal("pw", hy.GetProperty("auth").GetString());
+    }
+
+    [Fact]
+    public void Hysteria_tls_uses_the_node_domain_and_offers_h3()
+    {
+        var tls = ProxyOutbound(Build(HysteriaLink))
+            .GetProperty("streamSettings").GetProperty("tlsSettings");
+
+        // The node's HY2 certificate is issued for its own hostname, so the SNI must be
+        // the host — not the link's sni, which carries the REALITY camouflage domain.
+        Assert.Equal("h.example", tls.GetProperty("serverName").GetString());
+        Assert.Contains("h3", tls.GetProperty("alpn").EnumerateArray().Select(a => a.GetString()));
+    }
+
+    [Fact]
+    public void Hysteria_defaults_alpn_to_h3_when_the_link_omits_it()
+    {
+        // The API issues hysteria2 links without alpn; the listener negotiates h3 only.
+        var tls = ProxyOutbound(Build("hysteria2://pw@h.example:9443/?sni=s.example#t"))
+            .GetProperty("streamSettings").GetProperty("tlsSettings");
+
+        Assert.Equal(["h3"], tls.GetProperty("alpn").EnumerateArray().Select(a => a.GetString()));
+    }
+
+    [Fact]
+    public void Hysteria_obfs_and_port_hopping_live_under_finalmask()
+    {
+        // HysteriaConfig.Build warns that congestion/up/down/udphop moved to
+        // finalmask/quicParams, and salamander is a finalmask udp mask.
+        var finalmask = ProxyOutbound(Build(HysteriaLink))
+            .GetProperty("streamSettings").GetProperty("finalmask");
+
+        var mask = finalmask.GetProperty("udp")[0];
+        Assert.Equal("salamander", mask.GetProperty("type").GetString());
+        Assert.Equal("OP", mask.GetProperty("settings").GetProperty("password").GetString());
+
+        var hop = finalmask.GetProperty("quicParams").GetProperty("udpHop");
+        Assert.Equal("20000-30000", hop.GetProperty("ports").GetString());
+        Assert.Equal(30, hop.GetProperty("interval").GetInt32());
+    }
+
+    [Fact]
+    public void Hysteria_omits_finalmask_when_there_is_nothing_to_mask()
+    {
+        var stream = ProxyOutbound(Build("hysteria2://pw@h.example:8443/?sni=s.example#t"))
+            .GetProperty("streamSettings");
+
+        Assert.False(stream.TryGetProperty("finalmask", out _));
+    }
+
+    [Fact]
+    public void Hop_interval_below_the_cores_minimum_is_dropped()
+    {
+        // A non-zero interval under 5s is rejected by the core; omitting it lets the
+        // core apply its own default instead of failing the whole config.
+        var hop = ProxyOutbound(Build(
+                "hysteria2://pw@h.example:8443,20000-30000/?obfs=salamander&hopInterval=2#t"))
+            .GetProperty("streamSettings").GetProperty("finalmask")
+            .GetProperty("quicParams").GetProperty("udpHop");
+
+        Assert.False(hop.TryGetProperty("interval", out _));
     }
 
     [Fact]
@@ -125,6 +219,44 @@ public class XrayConfigBuilderTests
         // Catch-all must be last, or it would shadow the direct rule.
         var last = rules[rules.GetArrayLength() - 1];
         Assert.Equal(XrayConfigBuilder.ProxyTag, last.GetProperty("outboundTag").GetString());
+    }
+
+    [Fact]
+    public void Config_carries_explicit_dns_servers()
+    {
+        // Android has no /etc/resolv.conf, so the core's Go resolver has no nameservers and
+        // fails every lookup without sending a packet — the outbound then never dials at
+        // all. Explicit servers are what make name resolution work inside the core.
+        var dns = Build(VlessLink).GetProperty("dns");
+
+        var servers = dns.GetProperty("servers").EnumerateArray().Select(s => s.GetString()).ToList();
+        Assert.NotEmpty(servers);
+        Assert.Contains(servers, s => s!.StartsWith("https://"));   // DoH resists UDP poisoning
+    }
+
+    [Fact]
+    public void Routing_resolves_nothing_on_the_client()
+    {
+        // AsIs keeps proxied domains unresolved locally — the node resolves them. IPIfNonMatch
+        // would force a client-side lookup for every destination, which on Android stalls
+        // every connection on the dead Go resolver.
+        Assert.Equal("AsIs",
+            Build(VlessLink).GetProperty("routing").GetProperty("domainStrategy").GetString());
+    }
+
+    [Fact]
+    public void Outbound_dials_the_resolved_ip_but_keeps_the_hostname_as_sni()
+    {
+        var cfg = new XrayConfig { Link = ShareLinkParser.Parse(VlessLink) };
+        cfg.Link.ResolvedHost = "203.0.113.7";
+
+        var proxy = ProxyOutbound(JsonDocument.Parse(cfg.ToConfig()).RootElement);
+
+        Assert.Equal("203.0.113.7",
+            proxy.GetProperty("settings").GetProperty("vnext")[0].GetProperty("address").GetString());
+        Assert.Equal("www.microsoft.com",
+            proxy.GetProperty("streamSettings").GetProperty("realitySettings")
+                 .GetProperty("serverName").GetString());
     }
 
     [Fact]

@@ -27,12 +27,13 @@ namespace Horus.Application
         /// fallback re-renders the config with a different proxy outbound rather than
         /// swapping binaries.
         ///
-        /// VLESS/REALITY leads because it is the one outbound whose xray schema is
-        /// standard and verified; the Hysteria2 outbound targets the custom core's own
-        /// shape and is still unconfirmed against a live node.
+        /// Hysteria2 leads: it is QUIC-based with salamander masking and port hopping, so
+        /// it survives conditions that kill a TCP/REALITY connection. Both its config and
+        /// the VLESS one are validated against the real core by
+        /// <c>Horus.Tests/XrayConfigBuilderTests</c>.
         /// </summary>
         private static readonly ProtocolType[] FallbackOrder =
-            [ProtocolType.Vless, ProtocolType.Hysteria2, ProtocolType.OlcRtc];
+            [ProtocolType.Hysteria2, ProtocolType.Vless, ProtocolType.OlcRtc];
 
         /// <summary>How often the core is polled for liveness while connected.</summary>
         private static readonly TimeSpan CoreWatchInterval = TimeSpan.FromSeconds(5);
@@ -88,6 +89,11 @@ namespace Horus.Application
             SetState(VpnState.Connecting, null);
             _protocolLogBuffer.Clear();
 
+            // Once per connect, not per attempt: the fallback loop would otherwise wipe the
+            // failing protocol's log on its way to trying the next one, which is exactly the
+            // log needed to explain why the first one failed.
+            DiagnosticPaths.Truncate(DiagnosticPaths.XrayLog);
+
             try
             {
                 var connection = await _api.GetServerConnectionAsync(ct);
@@ -106,11 +112,6 @@ namespace Horus.Application
 
                 ActiveProtocol = protocol;
                 ActiveProtocolType = usedType;
-
-                // Prove the proxy half works before building the TUN. If this shows a
-                // foreign IP and the tunnel still fails afterwards, the fault is entirely
-                // in the TUN half — which is most of the triage work, done up front.
-                await RunPreflightAsync(ct);
 
                 // Establish TUN, apply routing
                 var tunnelOptions = BuildTunnelOptions(server);
@@ -201,16 +202,17 @@ namespace Horus.Application
         /// or the node is down.</item>
         /// </list>
         ///
-        /// Never throws: a failed preflight is a diagnostic, not a reason to abort a
-        /// connection that might still work.
+        /// Returns true when the proxy demonstrably reached the internet with an egress
+        /// address that differs from the device's own. Never throws — a transport failure
+        /// here is an answer, not an exception.
         /// </summary>
-        private async Task RunPreflightAsync(CancellationToken ct)
+        private async Task<bool> RunPreflightAsync(CancellationToken ct)
         {
             LastPreflightDirectIp = null;
             LastPreflightProxiedIp = null;
 
-            LastPreflightDirectIp = await FetchEgressIpAsync(null, ct);
-            LastPreflightProxiedIp = await FetchEgressIpAsync(
+            LastPreflightDirectIp = await _api.GetEgressIpAsync(null, ct);
+            LastPreflightProxiedIp = await _api.GetEgressIpAsync(
                 $"socks5://127.0.0.1:{XrayConfig.DefaultSocksPort}", ct);
 
             var direct = LastPreflightDirectIp ?? "—";
@@ -222,35 +224,32 @@ namespace Horus.Application
             _errorReporting.SetContext("protocol", ActiveProtocolType?.ToString());
             _errorReporting.SetContext("coreVersion", XrayProtocol.CoreVersion);
 
-            if (LastPreflightProxiedIp is null)
-                OnProtocolOutput(this,
-                    "[preflight] Proxy did not answer — the outbound is not carrying traffic.");
-            else if (LastPreflightProxiedIp == LastPreflightDirectIp)
-                OnProtocolOutput(this,
-                    "[preflight] Proxied IP equals the direct IP — traffic is not leaving via the node.");
-        }
-
-        private async Task<string?> FetchEgressIpAsync(string? socksProxy, CancellationToken ct)
-        {
-            try
+            if (LastPreflightProxiedIp is not null)
             {
-                using var handler = new SocketsHttpHandler
+                if (LastPreflightProxiedIp == LastPreflightDirectIp)
                 {
-                    Proxy = socksProxy is null ? null : new System.Net.WebProxy(socksProxy),
-                    UseProxy = socksProxy is not null,
-                    ConnectTimeout = TimeSpan.FromSeconds(5)
-                };
-                using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
+                    OnProtocolOutput(this,
+                        "[preflight] Proxied IP equals the direct IP — traffic is not leaving via the node.");
+                    return false;
+                }
 
-                var url = $"{AppConfiguration.ApiBaseUrl.TrimEnd('/')}/ip";
-                var text = await client.GetStringAsync(url, ct);
-                var ip = text.Trim();
-                return ip.Length is > 0 and <= 64 ? ip : null;
+                return true;
             }
-            catch
+
+            // Proxy gave no answer. That only condemns the outbound if the same check
+            // succeeds without it — otherwise the probe itself is broken (no connectivity,
+            // endpoint down) and rejecting the protocol would be a false negative that
+            // blocks a perfectly good tunnel.
+            if (LastPreflightDirectIp is not null)
             {
-                return null;
+                OnProtocolOutput(this,
+                    "[preflight] Proxy did not answer while the direct check did — outbound is dead.");
+                return false;
             }
+
+            OnProtocolOutput(this,
+                "[preflight] Inconclusive: neither check answered. Accepting the protocol.");
+            return true;
         }
 
         // ── Core watchdog ───────────────────────────────────────────────────
@@ -335,11 +334,39 @@ namespace Horus.Application
 
                 try
                 {
-                    var config = _protocolFactory.CreateConfig(protocolType, connection);
+                    var config = await _protocolFactory.CreateConfigAsync(protocolType, connection, ct);
                     protocol = _protocolFactory.Create(protocolType);
                     Attach(protocol);
 
+                    if (config is XrayConfig xc)
+                    {
+                        OnProtocolOutput(this,
+                            $"[{protocolType}] {xc.Link.Host} -> {xc.Link.DialAddress}:{xc.Link.Port}" +
+                            (xc.Link.ResolvedHost is null ? " (DNS FAILED, using hostname)" : ""));
+
+                        // Public handshake parameters only — never the credential. These are
+                        // what a server-side provisioning mistake corrupts, and comparing
+                        // them against a known-good link is the fastest way to spot it.
+                        OnProtocolOutput(this, xc.Link.Protocol == ProtocolType.Vless
+                            ? $"[{protocolType}] sni={xc.Link.Sni} fp={xc.Link.Fingerprint} " +
+                              $"flow={xc.Link.Flow ?? "-"} pbk={xc.Link.PublicKey} sid={xc.Link.ShortId} " +
+                              $"net={xc.Link.Network} sec={xc.Link.Security}"
+                            : $"[{protocolType}] sni={xc.Link.Sni} alpn=[{string.Join(',', xc.Link.Alpn)}] " +
+                              $"obfs={xc.Link.Obfs ?? "-"} hop={xc.Link.PortRange ?? "-"}");
+                    }
+
                     await protocol.ConnectAsync(config, ct);
+
+                    // Starting is not the same as working: the core comes up happily and
+                    // only fails per-connection at dial time, which used to leave the app
+                    // reporting ЗАЩИЩЕНО over a tunnel carrying nothing. Prove the outbound
+                    // actually reaches the internet before accepting it — and do it before
+                    // the TUN exists, so a rejected protocol costs the user nothing.
+                    if (!await RunPreflightAsync(ct))
+                        throw new InvalidOperationException(
+                            $"{protocolType} came up but carried no traffic " +
+                            $"(preflight: direct={LastPreflightDirectIp ?? "—"}, " +
+                            $"proxied={LastPreflightProxiedIp ?? "—"}).");
 
                     if (lastEx != null)
                         ProtocolFallback?.Invoke(this, new ProtocolFallbackEventArgs(
