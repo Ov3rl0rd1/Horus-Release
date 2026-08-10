@@ -16,21 +16,34 @@
                 <Label Text="HORUS" Style="{StaticResource HzDisplay}" FontSize="13"
                        CharacterSpacing="1" VerticalOptions="Center" />
             </HorizontalStackLayout>
-            <Border Grid.Column="2" BackgroundColor="{Binding PillBg}" Stroke="{Binding PillBorder}"
-                    Padding="12,6" VerticalOptions="Center" HorizontalOptions="End">
-                <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
-                <HorizontalStackLayout Spacing="7">
-                    <Ellipse WidthRequest="6" HeightRequest="6" Fill="{Binding StatusColor}" VerticalOptions="Center" />
-                    <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="11"
-                           FontAttributes="Bold" CharacterSpacing="0.5" FontFamily="{StaticResource FontBody}" />
-                </HorizontalStackLayout>
-            </Border>
+            <VerticalStackLayout Grid.Column="2" Spacing="3" VerticalOptions="Center" HorizontalOptions="End">
+                <Border BackgroundColor="{Binding PillBg}" Stroke="{Binding PillBorder}"
+                        Padding="12,6" HorizontalOptions="End">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                    <HorizontalStackLayout Spacing="7">
+                        <Ellipse WidthRequest="6" HeightRequest="6" Fill="{Binding StatusColor}" VerticalOptions="Center" />
+                        <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="11"
+                               FontAttributes="Bold" CharacterSpacing="0.5" FontFamily="{StaticResource FontBody}" />
+                    </HorizontalStackLayout>
+                </Border>
+                <!-- Which outbound is carrying traffic. Deliberately faint: useful when
+                     something misbehaves, invisible the rest of the time. -->
+                <Label Text="{Binding ActiveProtocolLabel}" IsVisible="{Binding ShowActiveProtocol}"
+                       TextColor="{StaticResource HzTextMuted}" FontSize="9" CharacterSpacing="0.6"
+                       HorizontalTextAlignment="End" HorizontalOptions="End" Margin="0,0,4,0"
+                       FontFamily="{StaticResource FontBody}" />
+            </VerticalStackLayout>
         </Grid>
 
         <!-- ── SCROLLING CONTENT ── -->
         <ScrollView Grid.Row="1">
+            <!-- Fill on phones. HorizontalOptions="Center" makes a stack size to its
+                 content instead of the parent, which left visible dead margins down both
+                 sides and made everything look pinched. The width clamp is only meaningful
+                 on desktop, where the window really can get too wide to read. -->
             <VerticalStackLayout Padding="18,8,18,22" Spacing="14"
-                                 MaximumWidthRequest="560" HorizontalOptions="Center">
+                                 MaximumWidthRequest="{OnIdiom Phone=100000, Default=560}"
+                                 HorizontalOptions="{OnIdiom Phone=Fill, Default=Center}">
 
                 <!-- Renew banner (subscription expiring / inactive) -->
                 <Border IsVisible="{Binding ShowRenew}" BackgroundColor="{StaticResource HzGoldSoft}"

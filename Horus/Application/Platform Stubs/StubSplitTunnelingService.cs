@@ -12,6 +12,8 @@ namespace Horus.Application
 
         public IReadOnlyList<string> SelectedEntries => [];
 
+        public IReadOnlyList<string> AlwaysDirectEntries => [];
+
         public event EventHandler? SelectionChanged;
 
         public Task<IReadOnlyList<AppOrProcessEntry>> GetAvailableEntriesAsync() =>
@@ -20,5 +22,10 @@ namespace Horus.Application
         public Task SetSelectedEntriesAsync(IEnumerable<string> entries) => Task.CompletedTask;
 
         public Task ApplyAsync() => Task.CompletedTask;
+
+        public Task LoadIconsAsync(
+            IReadOnlyList<AppOrProcessEntry> entries,
+            Action<AppOrProcessEntry> onReady,
+            CancellationToken ct = default) => Task.CompletedTask;
     }
 }

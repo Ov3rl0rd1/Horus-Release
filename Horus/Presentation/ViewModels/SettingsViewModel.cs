@@ -184,6 +184,99 @@ namespace Horus.Presentation.ViewModels
         private static readonly string[] ChipPalette =
             { "#5B8DEF", "#E05656", "#4CAF7D", "#4E9EC9", "#7B61C9", "#D98E3E" };
 
+        /// <summary>Every user-togglable row, unfiltered. The source the search filters over.</summary>
+        private List<SplitAppRow> _allApps = [];
+
+        private CancellationTokenSource? _iconCts;
+        private CancellationTokenSource? _searchCts;
+
+        /// <summary>
+        /// Rows currently shown. A plain list, replaced wholesale — mutating an
+        /// ObservableCollection of ~200 rows fires a notification per item and makes both
+        /// typing and clearing the search box visibly stutter.
+        /// </summary>
+        [ObservableProperty] private IReadOnlyList<SplitAppRow> _visibleApps = [];
+
+        /// <summary>Config-forced bypass rows, shown above the list and not togglable.</summary>
+        [ObservableProperty] private IReadOnlyList<SplitAppRow> _blockedApps = [];
+
+        [ObservableProperty] private bool _isBlockedExpanded;
+        [ObservableProperty] private string _appSearch = string.Empty;
+
+        /// <summary>First letters present in the visible list, for the A–Z jump strip.</summary>
+        [ObservableProperty] private IReadOnlyList<string> _alphabetIndex = [];
+
+        public bool HasBlockedApps => BlockedApps.Count > 0;
+        public string BlockedSummary => $"{BlockedApps.Count} прил. · всегда напрямую";
+        public string BlockedChevron => IsBlockedExpanded ? "⌄" : "›";
+        public bool NoAppResults => !IsLoadingApps && VisibleApps.Count == 0 && _allApps.Count > 0;
+
+        partial void OnBlockedAppsChanged(IReadOnlyList<SplitAppRow> value)
+        {
+            OnPropertyChanged(nameof(HasBlockedApps));
+            OnPropertyChanged(nameof(BlockedSummary));
+        }
+
+        partial void OnIsBlockedExpandedChanged(bool value) => OnPropertyChanged(nameof(BlockedChevron));
+
+        partial void OnVisibleAppsChanged(IReadOnlyList<SplitAppRow> value) =>
+            OnPropertyChanged(nameof(NoAppResults));
+
+        /// <summary>
+        /// Debounced so a fast typist filters once, not once per keystroke. Clearing the
+        /// box cancels any pending filter rather than queueing another pass over the list.
+        /// </summary>
+        partial void OnAppSearchChanged(string value)
+        {
+            _searchCts?.Cancel();
+            var cts = new CancellationTokenSource();
+            _searchCts = cts;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(160, cts.Token);
+                    var filtered = Filter(value);
+                    if (cts.Token.IsCancellationRequested) return;
+
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        if (cts.Token.IsCancellationRequested) return;
+                        VisibleApps = filtered;
+                        AlphabetIndex = BuildIndex(filtered);
+                    });
+                }
+                catch (OperationCanceledException) { }
+            }, cts.Token);
+        }
+
+        private List<SplitAppRow> Filter(string query)
+        {
+            query = query.Trim();
+            if (query.Length == 0) return _allApps;
+
+            // Matches the package name too: users looking for a specific app often know
+            // the id from a forum post rather than the display name.
+            return [.. _allApps.Where(r =>
+                r.SearchName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
+                || r.Id.Contains(query, StringComparison.OrdinalIgnoreCase))];
+        }
+
+        private static IReadOnlyList<string> BuildIndex(IReadOnlyList<SplitAppRow> rows) =>
+            [.. rows.Select(r => r.IndexKey).Distinct().Take(28)];
+
+        /// <summary>Index of the first row under a letter, for the jump strip. -1 if none.</summary>
+        public int IndexOfLetter(string letter)
+        {
+            for (int i = 0; i < VisibleApps.Count; i++)
+                if (VisibleApps[i].IndexKey == letter) return i;
+            return -1;
+        }
+
+        [RelayCommand]
+        private void ToggleBlocked() => IsBlockedExpanded = !IsBlockedExpanded;
+
         [RelayCommand]
         async Task LoadAppsAsync()
         {
@@ -191,21 +284,63 @@ namespace Horus.Presentation.ViewModels
             IsLoadingApps = true;
             try
             {
-                AvailableApps = await _splitTunneling.GetAvailableEntriesAsync();
-                SplitApps.Clear();
+                var entries = await _splitTunneling.GetAvailableEntriesAsync();
+                AvailableApps = entries;
+
+                var forced = _splitTunneling.AlwaysDirectEntries.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var user = new List<SplitAppRow>(entries.Count);
+                var blocked = new List<SplitAppRow>();
                 int i = 0;
-                foreach (var app in AvailableApps)
+
+                foreach (var app in entries)
                 {
-                    SplitApps.Add(new SplitAppRow(app.Id, app.DisplayName,
-                        Color.FromArgb(ChipPalette[i % ChipPalette.Length]),
-                        IsAppSelected(app.Id)));
-                    i++;
+                    var row = new SplitAppRow(
+                        app.Id, app.DisplayName,
+                        Color.FromArgb(ChipPalette[i++ % ChipPalette.Length]),
+                        isDirect: forced.Contains(app.Id) || IsAppSelected(app.Id),
+                        isLocked: forced.Contains(app.Id))
+                    { IconPath = app.IconPath };
+
+                    (row.IsLocked ? blocked : user).Add(row);
                 }
+
+                _allApps = user;
+                BlockedApps = blocked;
+                VisibleApps = Filter(AppSearch);
+                AlphabetIndex = BuildIndex(VisibleApps);
+
+                StartIconLoad(entries);
             }
             finally
             {
                 IsLoadingApps = false;
+                OnPropertyChanged(nameof(NoAppResults));
             }
+        }
+
+        /// <summary>
+        /// Icons stream in after the list is already on screen. Decoding another package's
+        /// drawable is far too slow to block the list on — several seconds across a couple
+        /// of hundred apps — and every icon is cached to disk, so this only really runs
+        /// once per install.
+        /// </summary>
+        private void StartIconLoad(IReadOnlyList<AppOrProcessEntry> entries)
+        {
+            _iconCts?.Cancel();
+            var cts = new CancellationTokenSource();
+            _iconCts = cts;
+
+            var byId = _allApps.Concat(BlockedApps)
+                .ToDictionary(r => r.Id, StringComparer.Ordinal);
+
+            _ = _splitTunneling.LoadIconsAsync(entries, entry =>
+            {
+                if (cts.Token.IsCancellationRequested) return;
+                if (!byId.TryGetValue(entry.Id, out var row)) return;
+
+                MainThread.BeginInvokeOnMainThread(() => row.IconPath = entry.IconPath);
+            }, cts.Token);
         }
 
         /// <summary>
@@ -215,7 +350,10 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand]
         async Task ApplyApp(SplitAppRow? row)
         {
-            if (row is null) return;
+            // Locked rows are forced direct by configuration; a stray toggle must not
+            // persist them into the user's selection.
+            if (row is null || row.IsLocked) return;
+
             var current = _splitTunneling.SelectedEntries.ToHashSet();
             if (row.IsDirect) current.Add(row.Id);
             else current.Remove(row.Id);
@@ -352,23 +490,60 @@ namespace Horus.Presentation.ViewModels
     {
         [ObservableProperty] private bool _isDirect;
 
+        /// <summary>Cached PNG path, filled in after the list renders. Null until then.</summary>
+        [ObservableProperty] private string? _iconPath;
+
         public string Id { get; }
         public string Name { get; }
         public Color ChipColor { get; }
-        public string Letter => string.IsNullOrEmpty(Name) ? "?" : Name[..1].ToUpperInvariant();
 
-        public SplitAppRow(string id, string name, Color chip, bool isDirect)
+        /// <summary>Forced direct by configuration — shown, but not togglable.</summary>
+        public bool IsLocked { get; }
+
+        /// <summary>Lower-cased once at construction; the search filter runs over this.</summary>
+        public string SearchName { get; }
+
+        public string Letter => string.IsNullOrEmpty(Name) ? "#" : Name[..1].ToUpperInvariant();
+
+        /// <summary>
+        /// Bucket for the A–Z strip. Anything not starting with a letter collapses into
+        /// "#", so digits and punctuation don't each claim their own jump target.
+        /// </summary>
+        public string IndexKey => Letter.Length == 1 && char.IsLetter(Letter[0]) ? Letter : "#";
+
+        public SplitAppRow(string id, string name, Color chip, bool isDirect, bool isLocked = false)
         {
-            Id = id; Name = name; ChipColor = chip; _isDirect = isDirect;
+            Id = id;
+            Name = name;
+            ChipColor = chip;
+            _isDirect = isDirect;
+            IsLocked = isLocked;
+            SearchName = name ?? string.Empty;
         }
 
-        public string StatusText => IsDirect ? "Напрямую, мимо VPN" : "Через VPN";
+        public bool HasIcon => !string.IsNullOrEmpty(IconPath);
+
+        /// <summary>Letter chip is only shown until the real icon arrives.</summary>
+        public bool ShowLetter => !HasIcon;
+
+        public bool CanToggle => !IsLocked;
+
+        public string StatusText => IsLocked
+            ? "Всегда напрямую — задано в приложении"
+            : IsDirect ? "Напрямую, мимо VPN" : "Через VPN";
+
         public Color StatusColor => IsDirect ? Color.FromArgb("#F3D48E") : Color.FromArgb("#73EFEAF6");
 
         partial void OnIsDirectChanged(bool value)
         {
             OnPropertyChanged(nameof(StatusText));
             OnPropertyChanged(nameof(StatusColor));
+        }
+
+        partial void OnIconPathChanged(string? value)
+        {
+            OnPropertyChanged(nameof(HasIcon));
+            OnPropertyChanged(nameof(ShowLetter));
         }
     }
 }

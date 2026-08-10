@@ -8,8 +8,7 @@
 
     <ScrollView>
         <VerticalStackLayout Padding="{OnIdiom Phone='18,16,18,22', Default='30,20,34,24'}" Spacing="16"
-                             MaximumWidthRequest="{OnIdiom Phone=640, Default=100000}"
-                             HorizontalOptions="{OnIdiom Phone=Center, Default=Fill}">
+                             HorizontalOptions="Fill">
 
             <Label Text="Настройки" Style="{StaticResource HzDisplay}" FontSize="20" />
 

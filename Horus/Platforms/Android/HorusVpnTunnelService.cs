@@ -38,6 +38,12 @@ namespace Horus.Platforms.Android
         public static SplitTunnelingMode SplitTunnelingMode { get; set; } = SplitTunnelingMode.Disabled;
         public static string[] SelectedApps { get; set; } = [];
 
+        /// <summary>
+        /// Packages that bypass the tunnel in every mode, from app configuration. Not part
+        /// of the user's selection and not overridable by it.
+        /// </summary>
+        public static string[] AlwaysDirectApps { get; set; } = [];
+
         internal static Task StartTunnelAsync(TunnelOptions options)
         {
             _pendingOptions = options;
@@ -157,12 +163,20 @@ namespace Horus.Platforms.Android
         /// </summary>
         private static void ApplySplitTunneling(Builder builder, TunnelOptions options, string self)
         {
+            // Config-forced bypass applies in every mode. In Whitelist that means leaving
+            // these packages out of the allowed set; in the other modes it means adding
+            // them to the disallowed set.
+            var forced = AlwaysDirectApps;
+
             // Whitelist mode excludes us by omission. Android throws
             // UnsupportedOperationException if allowed and disallowed apps are mixed on
             // one Builder, so this branch must never call AddDisallowedApplication.
             if (SplitTunnelingMode == SplitTunnelingMode.Whitelist)
             {
-                var allowed = SelectedApps.Where(p => p != self).ToArray();
+                var allowed = SelectedApps
+                    .Where(p => p != self && !forced.Contains(p))
+                    .ToArray();
+
                 if (allowed.Length == 0)
                     throw new InvalidOperationException(
                         "Выберите хотя бы одно приложение для режима «только выбранные».");
@@ -178,11 +192,12 @@ namespace Horus.Platforms.Android
             // Blacklist and Disabled: our own UID first and unconditionally.
             builder.AddDisallowedApplication(self);
 
-            var bypass = SplitTunnelingMode == SplitTunnelingMode.Blacklist
-                ? SelectedApps
-                : options.BypassApps ?? [];
+            var bypass = (SplitTunnelingMode == SplitTunnelingMode.Blacklist
+                    ? SelectedApps
+                    : options.BypassApps ?? [])
+                .Concat(forced);
 
-            foreach (var pkg in bypass)
+            foreach (var pkg in bypass.Distinct())
             {
                 if (pkg == self) continue; // already excluded
                 try { builder.AddDisallowedApplication(pkg); }

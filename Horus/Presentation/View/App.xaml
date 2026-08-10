@@ -256,6 +256,7 @@
             <conv:BoolToColorConverter x:Key="ActiveTabBg"
                 TrueColor="#14F0C46A" FalseColor="#00FFFFFF" />
             <conv:BoolToOpacityConverter x:Key="DisabledOpacity" />
+            <conv:StringToBoolConverter x:Key="IsNotEmpty" />
 
             <!-- ── Cards (Border replaces deprecated Frame in v2 UI) ── -->
             <Style x:Key="HzCard" TargetType="Border">

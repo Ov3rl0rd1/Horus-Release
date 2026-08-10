@@ -17,6 +17,16 @@ namespace Horus
         /// <summary>Telegram handle shown on the Settings screen for support contact.</summary>
         public static string SupportHandle { get; set; } = "@horus_vpn";
 
+        /// <summary>
+        /// Android package names that must always bypass the tunnel, whatever split-tunnel
+        /// mode the user picks. Populated from <c>BlockedPackages</c> in appsettings.json.
+        ///
+        /// Intended for apps that are known to break behind a VPN — banking apps that
+        /// refuse to run, carrier services tied to the local network, anything that would
+        /// otherwise generate support tickets. The user can see the list but not edit it.
+        /// </summary>
+        public static IReadOnlyList<string> BlockedPackages { get; set; } = [];
+
 #if DEBUG
         /// <summary>
         /// Accept any TLS certificate. Debug-only and opt-in: the app talks to the

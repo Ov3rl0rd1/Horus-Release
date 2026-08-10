@@ -6,89 +6,195 @@
              x:DataType="vm:SettingsViewModel"
              x:Class="Horus.Presentation.View.Screens.SplitTunnelingView">
 
-    <ScrollView>
-        <VerticalStackLayout Padding="{OnIdiom Phone='18,14,18,22', Default='30,18,34,24'}" Spacing="12"
-                             MaximumWidthRequest="{OnIdiom Phone=640, Default=100000}"
-                             HorizontalOptions="{OnIdiom Phone=Center, Default=Fill}">
+    <!--
+        The CollectionView owns the scrolling and everything above the list rides in its
+        Header. Nesting it inside a ScrollView instead would give it unbounded height:
+        every one of ~200 rows gets realised, virtualisation is lost, and ScrollTo has
+        nothing to scroll. The search box stays outside the list so re-filtering — which
+        replaces ItemsSource on each keystroke — can never steal focus mid-word.
+    -->
+    <Grid RowDefinitions="Auto,*" Padding="{OnIdiom Phone='18,14,18,0', Default='30,18,34,0'}"
+          RowSpacing="10">
 
+        <!-- ── Fixed: back, title, search ── -->
+        <VerticalStackLayout Grid.Row="0" Spacing="10">
             <Button Text="‹ Настройки" HorizontalOptions="Start" Padding="0"
                     BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
                     FontSize="13" FontAttributes="Bold" FontFamily="{StaticResource FontBody}"
                     Command="{Binding BackToSettingsCommand}" />
 
             <Label Text="Split tunneling" Style="{StaticResource HzDisplay}" FontSize="20" />
-            <Label Text="Выберите, какие приложения идут через VPN, а какие — напрямую."
-                   Style="{StaticResource HzDim}" />
 
-            <!-- Mode: all via VPN -->
-            <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
-                    Stroke="{Binding IsModeAll, Converter={StaticResource SelectionRingColor}}">
-                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
-                <Border.GestureRecognizers>
-                    <TapGestureRecognizer Command="{Binding SetModeAllCommand}" />
-                </Border.GestureRecognizers>
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
-                    <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
-                        <Ellipse Stroke="{Binding IsModeAll, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
-                        <Ellipse WidthRequest="10" HeightRequest="10"
-                                 Fill="{Binding IsModeAll, Converter={StaticResource SelectionDotColor}}" />
-                    </Grid>
-                    <VerticalStackLayout Grid.Column="1" Spacing="1">
-                        <Label Text="Все приложения — через VPN" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
-                        <Label Text="Весь трафик устройства идёт через защищённый туннель" Style="{StaticResource HzDim}" FontSize="12" />
-                    </VerticalStackLayout>
+            <Border Style="{StaticResource HzInputBorder}" Padding="14,0" HeightRequest="46">
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+                    <controls:IconView Grid.Column="0" Kind="Search" IconSize="17" StrokeWidth="2"
+                        Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                    <Entry Grid.Column="1" Style="{StaticResource HzEntry}" HeightRequest="46"
+                           Placeholder="Поиск приложения" Text="{Binding AppSearch}" />
+                    <Label Grid.Column="2" Text="✕" TextColor="{StaticResource HzTextMuted}" FontSize="15"
+                           VerticalOptions="Center" IsVisible="{Binding AppSearch, Converter={StaticResource IsNotEmpty}}">
+                        <Label.GestureRecognizers>
+                            <TapGestureRecognizer Tapped="OnClearSearch" />
+                        </Label.GestureRecognizers>
+                    </Label>
                 </Grid>
             </Border>
+        </VerticalStackLayout>
 
-            <!-- Mode: selected direct -->
-            <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
-                    Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}">
-                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
-                <Border.GestureRecognizers>
-                    <TapGestureRecognizer Command="{Binding SetModeCustomCommand}" />
-                </Border.GestureRecognizers>
-                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
-                    <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
-                        <Ellipse Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
-                        <Ellipse WidthRequest="10" HeightRequest="10"
-                                 Fill="{Binding IsModeCustom, Converter={StaticResource SelectionDotColor}}" />
-                    </Grid>
-                    <VerticalStackLayout Grid.Column="1" Spacing="1">
-                        <Label Text="Выбранные — напрямую" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
-                        <Label Text="Отмеченные приложения работают мимо VPN — банк напрямую, YouTube через Хорус"
-                               Style="{StaticResource HzDim}" FontSize="12" />
+        <!-- ── Scrolling: modes + blocked group (header) then the app list ── -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="2">
+
+            <CollectionView x:Name="AppList" Grid.Column="0" ItemsSource="{Binding VisibleApps}"
+                            ItemSizingStrategy="MeasureFirstItem">
+
+                <CollectionView.Header>
+                    <VerticalStackLayout Spacing="12" Padding="0,0,0,10"
+                                         BindingContext="{Binding Source={RelativeSource AncestorType={x:Type ContentView}}, Path=BindingContext}"
+                                         x:DataType="vm:SettingsViewModel">
+
+                        <Label Text="Выберите, какие приложения идут через VPN, а какие — напрямую."
+                               Style="{StaticResource HzDim}" />
+
+                        <!-- Mode: all via VPN -->
+                        <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
+                                Stroke="{Binding IsModeAll, Converter={StaticResource SelectionRingColor}}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SetModeAllCommand}" />
+                            </Border.GestureRecognizers>
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
+                                <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                                    <Ellipse Stroke="{Binding IsModeAll, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                    <Ellipse WidthRequest="10" HeightRequest="10"
+                                             Fill="{Binding IsModeAll, Converter={StaticResource SelectionDotColor}}" />
+                                </Grid>
+                                <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                    <Label Text="Все приложения — через VPN" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                    <Label Text="Весь трафик устройства идёт через защищённый туннель" Style="{StaticResource HzDim}" FontSize="12" />
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Border>
+
+                        <!-- Mode: selected direct -->
+                        <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
+                                Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SetModeCustomCommand}" />
+                            </Border.GestureRecognizers>
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
+                                <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                                    <Ellipse Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                    <Ellipse WidthRequest="10" HeightRequest="10"
+                                             Fill="{Binding IsModeCustom, Converter={StaticResource SelectionDotColor}}" />
+                                </Grid>
+                                <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                    <Label Text="Выбранные — напрямую" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                    <Label Text="Отмеченные приложения работают мимо VPN — банк напрямую, YouTube через Хорус"
+                                           Style="{StaticResource HzDim}" FontSize="12" />
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Border>
+
+                        <!-- Always direct (from configuration, read-only) -->
+                        <VerticalStackLayout Spacing="6" IsVisible="{Binding HasBlockedApps}">
+                            <Label Text="ВСЕГДА НАПРЯМУЮ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,2,0,0" />
+                            <Border Style="{StaticResource HzListCard}">
+                                <VerticalStackLayout Spacing="0">
+                                    <Grid Padding="14,11" ColumnDefinitions="*,Auto" MinimumHeightRequest="52">
+                                        <Grid.GestureRecognizers>
+                                            <TapGestureRecognizer Command="{Binding ToggleBlockedCommand}" />
+                                        </Grid.GestureRecognizers>
+                                        <VerticalStackLayout Grid.Column="0" Spacing="1" VerticalOptions="Center">
+                                            <Label Text="Исключены приложением" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                            <Label Text="{Binding BlockedSummary}" Style="{StaticResource HzDim}" FontSize="12" />
+                                        </VerticalStackLayout>
+                                        <Label Grid.Column="1" Text="{Binding BlockedChevron}" TextColor="{StaticResource HzTextMuted}"
+                                               FontSize="17" VerticalOptions="Center" />
+                                    </Grid>
+
+                                    <VerticalStackLayout IsVisible="{Binding IsBlockedExpanded}"
+                                                         BindableLayout.ItemsSource="{Binding BlockedApps}" Spacing="0">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:SplitAppRow">
+                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="13" Padding="14,8"
+                                                      MinimumHeightRequest="52" Opacity="0.6">
+                                                    <Grid Grid.Column="0" WidthRequest="30" HeightRequest="30">
+                                                        <Border BackgroundColor="{Binding ChipColor}" IsVisible="{Binding ShowLetter}">
+                                                            <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
+                                                            <Label Text="{Binding Letter}" TextColor="{StaticResource HzText}" FontSize="13"
+                                                                   FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
+                                                                   FontFamily="{StaticResource FontBody}" />
+                                                        </Border>
+                                                        <Image Source="{Binding IconPath}" IsVisible="{Binding HasIcon}"
+                                                               WidthRequest="30" HeightRequest="30" Aspect="AspectFit" />
+                                                    </Grid>
+                                                    <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                                        <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                                        <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="11"
+                                                               FontFamily="{StaticResource FontBody}" />
+                                                    </VerticalStackLayout>
+                                                    <Label Grid.Column="2" Text="🔒" FontSize="13" VerticalOptions="Center" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </VerticalStackLayout>
+                                </VerticalStackLayout>
+                            </Border>
+                        </VerticalStackLayout>
+
+                        <Label Text="ПРИЛОЖЕНИЯ · НАПРЯМУЮ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,2,0,0" />
                     </VerticalStackLayout>
-                </Grid>
-            </Border>
+                </CollectionView.Header>
 
-            <Label Text="ПРИЛОЖЕНИЯ · НАПРЯМУЮ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,4,0,0" />
-
-            <Border Style="{StaticResource HzListCard}" Opacity="{Binding AppsOpacity}">
-                <VerticalStackLayout BindableLayout.ItemsSource="{Binding SplitApps}" Spacing="0">
-                    <BindableLayout.ItemTemplate>
-                        <DataTemplate x:DataType="vm:SplitAppRow">
-                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="13" Padding="14,9" MinimumHeightRequest="56">
-                                <Border Grid.Column="0" WidthRequest="34" HeightRequest="34" BackgroundColor="{Binding ChipColor}">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SplitAppRow">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="13" Padding="14,9" MinimumHeightRequest="56">
+                            <Grid Grid.Column="0" WidthRequest="34" HeightRequest="34">
+                                <Border BackgroundColor="{Binding ChipColor}" IsVisible="{Binding ShowLetter}">
                                     <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
                                     <Label Text="{Binding Letter}" TextColor="{StaticResource HzText}" FontSize="14"
                                            FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
                                            FontFamily="{StaticResource FontBody}" />
                                 </Border>
-                                <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
-                                    <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
-                                    <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="12"
-                                           FontFamily="{StaticResource FontBody}" />
-                                </VerticalStackLayout>
-                                <controls:PillToggle Grid.Column="2" VerticalOptions="Center"
-                                        IsToggled="{Binding IsDirect, Mode=TwoWay}" Toggled="OnAppToggled" />
+                                <Image Source="{Binding IconPath}" IsVisible="{Binding HasIcon}"
+                                       WidthRequest="34" HeightRequest="34" Aspect="AspectFit" />
                             </Grid>
-                        </DataTemplate>
-                    </BindableLayout.ItemTemplate>
-                </VerticalStackLayout>
-            </Border>
+                            <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="12"
+                                       FontFamily="{StaticResource FontBody}" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="2" VerticalOptions="Center"
+                                    IsToggled="{Binding IsDirect, Mode=TwoWay}" Toggled="OnAppToggled" />
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
 
-            <ActivityIndicator IsVisible="{Binding IsLoadingApps}" IsRunning="{Binding IsLoadingApps}"
-                               Color="{StaticResource HzGold}" Margin="0,8,0,0" />
-        </VerticalStackLayout>
-    </ScrollView>
+                <CollectionView.EmptyView>
+                    <Label Text="Ничего не найдено" Style="{StaticResource HzDim}"
+                           HorizontalTextAlignment="Center" Margin="0,24,0,0" />
+                </CollectionView.EmptyView>
+            </CollectionView>
+
+            <!-- A–Z jump strip, pinned beside the list rather than scrolling with it -->
+            <VerticalStackLayout Grid.Column="1" Spacing="0" VerticalOptions="Center"
+                                 BindableLayout.ItemsSource="{Binding AlphabetIndex}">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                        <Label Text="{Binding .}" FontSize="10" FontAttributes="Bold"
+                               TextColor="{StaticResource HzTextMuted}" FontFamily="{StaticResource FontBody}"
+                               WidthRequest="20" HorizontalTextAlignment="Center" Padding="0,1">
+                            <Label.GestureRecognizers>
+                                <TapGestureRecognizer Tapped="OnAlphabetTapped" />
+                            </Label.GestureRecognizers>
+                        </Label>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+
+            <ActivityIndicator Grid.Column="0" IsVisible="{Binding IsLoadingApps}" IsRunning="{Binding IsLoadingApps}"
+                               Color="{StaticResource HzGold}" VerticalOptions="Center" HorizontalOptions="Center" />
+        </Grid>
+    </Grid>
 </ContentView>

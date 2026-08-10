@@ -112,10 +112,14 @@
 
                 <!-- ═══ CONTENT HOST (all screens; one visible at a time) ═══ -->
                 <Grid Grid.Column="1">
-                    <!-- Startup: shown only until the stored session has been read. Matches the
-                         splash so the handover is invisible rather than a flash of Login. -->
+                    <!-- Startup: shown until the stored session has been read.
+                         Android always paints a window background before the first MAUI
+                         frame — that native splash cannot be a MAUI page. So instead of
+                         fighting it, this matches it exactly: same artwork, same 170x120
+                         size (MauiSplashScreen BaseSize), same #0B0512 ground. The handover
+                         is then invisible and the two read as one screen. -->
                     <Grid IsVisible="{Binding IsStartup}">
-                        <Image Source="logo_gold.png" HeightRequest="88" Opacity="0.75"
+                        <Image Source="logo_gold.png" HeightRequest="120"
                                HorizontalOptions="Center" VerticalOptions="Center" />
                     </Grid>
                     <Grid IsVisible="{Binding IsOnboarding}"><screens:OnboardingView BindingContext="{Binding Auth}" /></Grid>

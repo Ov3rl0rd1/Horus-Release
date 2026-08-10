@@ -36,7 +36,16 @@ namespace Horus.Platforms.Windows
 
         public IReadOnlyList<string> SelectedEntries => _selected.AsReadOnly();
 
+        /// <summary>Config-forced bypass is an Android concept (package names); nothing to do here.</summary>
+        public IReadOnlyList<string> AlwaysDirectEntries => [];
+
         public event EventHandler? SelectionChanged;
+
+        /// <summary>Windows process entries carry no icons.</summary>
+        public Task LoadIconsAsync(
+            IReadOnlyList<AppOrProcessEntry> entries,
+            Action<AppOrProcessEntry> onReady,
+            CancellationToken ct = default) => Task.CompletedTask;
 
         public WindowsSplitTunnelingService()
         {

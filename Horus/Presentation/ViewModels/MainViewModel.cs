@@ -76,6 +76,23 @@ namespace Horus.Presentation.ViewModels
         public string StatusSub => IsOn ? "Ваш трафик зашифрован"
             : IsConnecting ? "Ищем лучший маршрут…" : "Нажмите кнопку, чтобы подключиться";
 
+        /// <summary>
+        /// Which outbound is actually carrying traffic, for the caption under the status
+        /// pill. Empty unless connected — naming a protocol we aren't using would be worse
+        /// than saying nothing.
+        /// </summary>
+        public string ActiveProtocolLabel => IsOn
+            ? _vpnManager.ActiveProtocolType switch
+            {
+                ProtocolType.Hysteria2 => "Hysteria2",
+                ProtocolType.Vless => "VLESS",
+                ProtocolType.OlcRtc => "olcRTC",
+                _ => string.Empty
+            }
+            : string.Empty;
+
+        public bool ShowActiveProtocol => ActiveProtocolLabel.Length > 0;
+
         public double BarsOpacity => IsOn ? 1.0 : 0.35;
         public string BtnLabel => IsOn ? "ОТКЛЮЧИТЬ" : IsConnecting ? "ОТМЕНА" : "ПОДКЛЮЧИТЬ";
         public Color BtnWordColor => IsOn ? Hz("#F3D48E") : IsConnecting ? Hz("#CCF3D48E") : Hz("#99EFEAF6");

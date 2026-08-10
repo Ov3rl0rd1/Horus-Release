@@ -148,6 +148,15 @@ namespace Horus
 
                 if (root.TryGetProperty("SupportHandle", out var handle))
                     AppConfiguration.SupportHandle = handle.GetString() ?? AppConfiguration.SupportHandle;
+
+                if (root.TryGetProperty("BlockedPackages", out var blocked)
+                    && blocked.ValueKind == JsonValueKind.Array)
+                {
+                    AppConfiguration.BlockedPackages = [.. blocked.EnumerateArray()
+                        .Select(e => e.GetString())
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s!.Trim())];
+                }
             }
             catch { /* appsettings parse failure is non-fatal */ }
         }
