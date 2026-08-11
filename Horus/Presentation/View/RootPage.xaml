@@ -120,7 +120,26 @@
                          is then invisible and the two read as one screen. -->
                     <Grid IsVisible="{Binding IsStartup}">
                         <Image Source="logo_gold.png" HeightRequest="120"
-                               HorizontalOptions="Center" VerticalOptions="Center" />
+                               HorizontalOptions="Center" VerticalOptions="Center"
+                               IsVisible="{Binding HasStartupError, Converter={StaticResource InvertBoolConverter}}" />
+
+                        <!-- Missing native components. Deliberately a dead end: there is
+                             nothing useful the app can do without its core, and letting the
+                             user in would only turn one clear problem into several vague ones. -->
+                        <ScrollView IsVisible="{Binding HasStartupError}" Padding="28,40">
+                            <VerticalStackLayout Spacing="14" VerticalOptions="Center"
+                                                 MaximumWidthRequest="560" HorizontalOptions="Center">
+                                <Image Source="logo_gold.png" HeightRequest="64" HorizontalOptions="Center" Opacity="0.5" />
+                                <Label Text="Приложение не может запуститься"
+                                       Style="{StaticResource HzDisplay}" FontSize="18"
+                                       HorizontalTextAlignment="Center" />
+                                <Border BackgroundColor="{StaticResource HzSurface}" Padding="16,14">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="14" /></Border.StrokeShape>
+                                    <Label Text="{Binding StartupError}" Style="{StaticResource HzDim}"
+                                           FontSize="13" LineHeight="1.35" />
+                                </Border>
+                            </VerticalStackLayout>
+                        </ScrollView>
                     </Grid>
                     <Grid IsVisible="{Binding IsOnboarding}"><screens:OnboardingView BindingContext="{Binding Auth}" /></Grid>
                     <Grid IsVisible="{Binding IsLogin}"><screens:LoginView BindingContext="{Binding Auth}" /></Grid>

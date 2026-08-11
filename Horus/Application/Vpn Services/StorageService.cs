@@ -57,7 +57,7 @@ namespace Horus.Application
             _session = session;
             _sessionExpiresAt = sessionExpiresAt;
 
-            await SecureStorage.SetAsync(SESSION_KEY, session);
+            await WriteAsync(SESSION_KEY, session);
             await WriteDateAsync(SESSION_EXPIRY_KEY, sessionExpiresAt);
         }
 
@@ -67,8 +67,8 @@ namespace Horus.Application
             _email = email;
             _subscription = subscription;
 
-            await SecureStorage.SetAsync(USERNAME_KEY, username);
-            await SecureStorage.SetAsync(EMAIL_KEY, email ?? string.Empty);
+            await WriteAsync(USERNAME_KEY, username);
+            await WriteAsync(EMAIL_KEY, email);
             await WriteDateAsync(SUBSCRIPTION_KEY, subscription);
         }
 
@@ -85,11 +85,38 @@ namespace Horus.Application
             _username = null;
             _email = null;
             _subscription = null;
-            SecureStorage.RemoveAll();
+
+            // Only our own keys. RemoveAll() wipes the whole app's secure store, which is
+            // more than logout should ever do.
+            foreach (var key in new[]
+                     { SESSION_KEY, SESSION_EXPIRY_KEY, USERNAME_KEY, EMAIL_KEY, SUBSCRIPTION_KEY })
+            {
+                try { SecureStorage.Remove(key); } catch { /* already absent */ }
+            }
+        }
+
+        /// <summary>
+        /// Stores a value, or clears the key when there is nothing to store.
+        ///
+        /// An empty string is not a storable value here: on Windows SecureStorage encrypts
+        /// through DataProtectionProvider, which rejects a zero-length buffer with
+        /// "Value does not fall within the expected range" — so writing "" for an absent
+        /// expiry threw during login. Android happened to tolerate it, which is why this
+        /// only ever surfaced on desktop.
+        /// </summary>
+        private static async Task WriteAsync(string key, string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                SecureStorage.Remove(key);
+                return;
+            }
+
+            await SecureStorage.SetAsync(key, value);
         }
 
         private static Task WriteDateAsync(string key, DateTime? value) =>
-            SecureStorage.SetAsync(key, value?.ToUniversalTime().ToString("O") ?? string.Empty);
+            WriteAsync(key, value?.ToUniversalTime().ToString("O"));
 
         private static DateTime? ParseDate(string? raw) =>
             DateTime.TryParse(raw, CultureInfo.InvariantCulture,

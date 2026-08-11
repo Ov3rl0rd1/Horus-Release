@@ -2,6 +2,18 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
   <assemblyIdentity version="1.0.0.0" name="Horus.WinUI.app"/>
 
+  <!-- Creating a wintun adapter requires administrator rights, so without them the app can
+       do everything except the one thing it exists for. Asking up front is honest; the
+       alternative is a UAC-less launch that looks fine until the user presses Connect and
+       is told to restart the app elevated. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <!-- The combination of below two tags have the following effect:

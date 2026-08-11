@@ -1,0 +1,275 @@
+name: Release
+
+# Manual only, always from main. Nothing here runs on push: releases are a deliberate act,
+# and the version and Android versionCode have to be chosen by a human anyway.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Display version, e.g. 0.9.1'
+        required: true
+        type: string
+      version_code:
+        description: 'Android versionCode — an integer that must increase with every build'
+        required: true
+        type: string
+      platforms:
+        description: 'What to build'
+        required: true
+        default: both
+        type: choice
+        options: [both, windows, android]
+      draft:
+        description: 'Create the GitHub release as a draft'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  # Its own job so it gates both platforms — the suite guards cross-language invariants
+  # (the SOCKS5 port contract, the DNS-leak rule) that an Android-only release would
+  # otherwise skip. Plain net10.0, so no workload install and it finishes in seconds.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - run: dotnet test Horus.Tests/Horus.Tests.csproj -c Release
+
+  # ── Windows: MSI installer + portable zip, x64 ─────────────────────────────
+  #
+  # x64 only, deliberately. The app is x64, a 32-bit build cannot load the x64 core, and
+  # Windows on ARM runs x64 under emulation — an arm64 target would need arm64 builds of
+  # xray, wintun and the MSYS-based bridge, which upstream does not publish.
+  windows:
+    needs: test
+    if: inputs.platforms == 'both' || inputs.platforms == 'windows'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install MAUI Windows workload
+        run: dotnet workload install maui-windows
+
+      # Self-contained: a VPN client installed from a direct download cannot assume a .NET
+      # runtime is present, and "install this other thing first" loses users at the door.
+      # UseMonoRuntime=false because the MAUI default would pull a Mono pack that does not
+      # exist for win-x64.
+      - name: Publish
+        run: >
+          dotnet publish Horus/Horus.csproj
+          -f net10.0-windows10.0.19041.0 -c Release -r win-x64
+          -p:SelfContained=true -p:UseMonoRuntime=false
+          -p:ApplicationDisplayVersion=${{ inputs.version }}
+          -p:ApplicationVersion=${{ inputs.version_code }}
+          -o publish/win-x64
+
+      - name: Sanity-check the payload
+        shell: pwsh
+        run: |
+          $required = @(
+            'publish/win-x64/Horus.exe',
+            'publish/win-x64/xray.dll',
+            'publish/win-x64/Resources/Native/hev-socks5-tunnel.exe',
+            'publish/win-x64/Resources/Native/msys-2.0.dll',
+            'publish/win-x64/Resources/Native/wintun.dll'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_) }
+          if ($missing) { throw "Missing from the publish output:`n$($missing -join "`n")" }
+          Write-Host "payload OK - $((Get-ChildItem publish/win-x64 -Recurse -File).Count) files"
+
+      - name: Portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path publish/win-x64/* `
+            -DestinationPath "dist/Horus-${{ inputs.version }}-win-x64-portable.zip"
+
+      - name: MSI
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.*
+          wix build -arch x64 `
+            -d Version=${{ inputs.version }} `
+            -d PublishDir="$(Resolve-Path publish/win-x64)" `
+            packaging/windows/Horus.wxs `
+            -o "dist/Horus-${{ inputs.version }}-win-x64.msi"
+
+      # No Authenticode certificate yet, so both artifacts are unsigned and SmartScreen will
+      # warn on first run. To sign, add the two secrets and drop the `if: false`.
+      - name: Sign (disabled - no certificate)
+        if: false
+        shell: pwsh
+        run: |
+          $pfx = "$env:RUNNER_TEMP\cert.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                       Where-Object FullName -like '*x64*' | Select-Object -Last 1).FullName
+          & $signtool sign /f $pfx /p $env:CERT_PASS /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 (Get-ChildItem dist/*.msi)
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+
+  # ── Android: one APK per shipped ABI ───────────────────────────────────────
+  #
+  # Per-ABI rather than universal because libxray.so is ~53 MB per architecture; a combined
+  # APK would carry both and double for no one's benefit. The set is dictated by which
+  # architectures Platforms/Android/lib actually has a core for.
+  android:
+    needs: test
+    if: inputs.platforms == 'both' || inputs.platforms == 'android'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: android-arm64
+            abi: arm64-v8a
+          - rid: android-x64
+            abi: x86_64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android
+
+      - name: Restore the signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set. Add the keystore secret, or the"
+            echo "::error::build would ship an APK signed with a throwaway key that can never"
+            echo "::error::update an already-installed copy."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/horus.keystore"
+
+      # HorusDistribution=true turns the release checklist into build errors: Release config,
+      # not debuggable, really signed, apk not aab. It exists because a warning-only version
+      # of the same check is how a debuggable, debug-signed APK once reached bin/Release.
+      - name: Publish ${{ matrix.abi }}
+        run: >
+          dotnet publish Horus/Horus.csproj
+          -f net10.0-android -c Release -r ${{ matrix.rid }}
+          -p:HorusDistribution=true
+          -p:AndroidPackageFormat=apk
+          -p:ApplicationDisplayVersion=${{ inputs.version }}
+          -p:ApplicationVersion=${{ inputs.version_code }}
+          -p:AndroidKeyStore=true
+          -p:AndroidSigningKeyStore="$RUNNER_TEMP/horus.keystore"
+          -p:AndroidSigningKeyAlias='${{ secrets.ANDROID_KEY_ALIAS }}'
+          -p:AndroidSigningStorePass='${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'
+          -p:AndroidSigningKeyPass='${{ secrets.ANDROID_KEY_PASSWORD }}'
+          -o publish/${{ matrix.abi }}
+
+      - name: Collect and verify the APK
+        run: |
+          mkdir -p dist
+          apk=$(ls publish/${{ matrix.abi }}/*-Signed.apk 2>/dev/null || ls publish/${{ matrix.abi }}/*.apk | head -1)
+          out="dist/Horus-${{ inputs.version }}-android-${{ matrix.abi }}.apk"
+          cp "$apk" "$out"
+
+          # The ABI filter is a build property, so a mistake there is silent and only shows
+          # up as a download twice the size it should be.
+          libs=$(unzip -Z1 "$out" 'lib/*' | cut -d/ -f2 | sort -u)
+          echo "ABIs in the APK: $libs"
+          [ "$libs" = "${{ matrix.abi }}" ] || { echo "::error::expected only ${{ matrix.abi }}"; exit 1; }
+          unzip -Z1 "$out" | grep -q 'lib/${{ matrix.abi }}/libxray.so' \
+            || { echo "::error::the core is missing from the APK"; exit 1; }
+
+          buildtools=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$buildtools/apksigner" verify --print-certs "$out"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ matrix.abi }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ── Publish ────────────────────────────────────────────────────────────────
+  publish:
+    needs: [windows, android]
+    # Runs whenever the jobs that were asked for succeeded; a skipped platform is not a
+    # failure, so `always()` plus an explicit failure check rather than the default.
+    if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd staging
+          ls -la
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      # Publish the hashes next to the downloads: with no code-signing certificate, this is
+      # the only way a tester can tell a genuine build from a tampered one.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=$(cat <<'EOF'
+          Built from `main` by the Release workflow.
+
+          **Windows (x64)** — install with the `.msi`, or unpack the portable `.zip`.
+          Horus needs administrator rights to create its tunnel adapter and will ask for
+          them on launch. The build is not code-signed yet, so SmartScreen will warn on
+          first run; check the SHA-256 below before running it.
+
+          **Android** — pick the APK for your device: `arm64-v8a` for essentially every
+          phone, `x86_64` for emulators. They are separate downloads because the VPN core
+          is about 53 MB per architecture.
+
+          Verify a download against `SHA256SUMS.txt`.
+          EOF
+          )
+          gh release create "v${{ inputs.version }}" staging/* \
+            --title "Horus ${{ inputs.version }}" \
+            --notes "$notes" \
+            --target main \
+            ${{ inputs.draft && '--draft' || '' }}

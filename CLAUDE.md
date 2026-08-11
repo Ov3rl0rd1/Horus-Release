@@ -43,7 +43,7 @@ Clean Architecture with MVVM, enforced by folder boundaries:
 - **`Application/`** — Service implementations (singletons). `VpnManager.cs` is the central orchestrator that coordinates protocol, platform, auth, and subscription services.
 - **`Presentation/`** — MVVM UI. `View/` holds XAML pages; `ViewModels/` uses CommunityToolkit.Mvvm (`[ObservableProperty]`, `[RelayCommand]`).
 - **`Protocols/`** — The VPN core. xray-core is linked as a **C shared library** (`libxray.so` / `xray.dll`) and runs **in-process**: `XrayInterop` is the P/Invoke surface (`XrayStart`/`XrayStop`/`XrayTest`/`XrayVersion`), and `XrayProtocol` is the single `IVpnProtocol` on top of it. `ShareLinkParser` turns the `vless://` / `hysteria2://` links the API returns into `ShareLink`s, and `XrayConfigBuilder` renders those into an xray config. `ProtocolType` names an *outbound*, not a separate binary.
-- **`Platforms/`** — Platform-specific code. Only Android is actively developed (`AndroidVpnService` extends Android's `VpnService`; `HevSocksTunnel` P/Invokes hev-socks5-tunnel). Binaries live under `Platforms/Android/lib/<abi>/` — see the README there.
+- **`Platforms/`** — Platform-specific code. Android and Windows both carry a real tunnel, using the *same* hev-socks5-tunnel in two hosting models: Android runs it in-process (`HevSocksTunnel` P/Invokes it and hands over the `VpnService` TUN fd), Windows runs it as a **child process** that creates its own wintun adapter (`WindowsVpnService`). Its YAML comes from one shared generator, `Protocols/HevTunnelConfig.cs`. Binaries live under `Platforms/Android/lib/<abi>/` and `Platforms/Windows/bin/` — see the READMEs there.
 
 ### Dependency Injection
 
@@ -57,8 +57,16 @@ Connect falls back **Hysteria2 → VLESS → olcRTC**, skipping protocols the no
 
 ### Two invariants that silently kill the tunnel
 
-1. **The app's own UID must be excluded from the TUN** (`HorusVpnTunnelService.ApplySplitTunneling`). xray runs in-process, so without the exclusion its socket to the node is routed back into the tunnel and deadlocks. The core exposes no socket-protect hook — this is the substitute. Consequence: the app's API traffic bypasses the VPN, so **`/whoami` reports the real IP while connected and cannot verify the tunnel**. Verify from another app or through the SOCKS5 proxy.
-2. **`XrayConfig.DefaultSocksPort` and hev's YAML `socks5.port` must agree.** Two files, two languages, nothing linking them; a mismatch establishes a tunnel that carries nothing. `Horus.Tests/SocksPortContractTests.cs` guards it.
+1. **Anything the config routes `direct` must have a real way out, or it re-enters the tunnel.** xray runs in-process and has no socket-protect hook, so each platform substitutes its own escape hatch: Android excludes the app's UID (`HorusVpnTunnelService.ApplySplitTunneling`), which covers everything at once. Windows has no such notion — its `direct` outbound is simply the OS route table, so once a default route points at the TUN, a "direct" rule is not direct at all. `WindowsVpnService` therefore installs a `/32` host route via the physical gateway for every address in `TunnelOptions.BypassIps`, which must contain:
+   - **the node** (`TunnelOptions.NodeAddress`) — without it the transport carries itself and deadlocks; a failed DNS pre-resolution must abort the connect rather than proceed;
+   - **the resolvers** the config sends down `direct` (`XrayConfigBuilder.ResolverIps`) — without them every DNS query loops, and the tunnel connects but resolves nothing, which presents as "no site opens".
+
+   Multicast and broadcast are the third case and are handled differently: they go to `blackhole` (`XrayConfigBuilder.DropRanges`), because a host route per group is meaningless and forwarding them costs a SOCKS5 session per packet. Windows chatters on a fresh interface, so leaving them on `direct` amplified into ~1000 sessions in 3 seconds.
+
+   Consequence on Android: the app's API traffic bypasses the VPN, so **`/whoami` reports the real IP while connected and cannot verify the tunnel** — verify from another app or through the SOCKS5 proxy. On Windows only the node and the resolvers are excluded, so `/whoami` is meaningful there.
+2. **The core's SOCKS5 inbound and hev's `socks5.port` must agree** — a mismatch establishes a tunnel that carries nothing. The port is no longer fixed at 1080: `SocksPortAllocator` picks the first free port from there (desktop machines routinely already have something on 1080), and the single chosen value flows through `XrayConfig.SocksPort` → `TunnelOptions.SocksPort` → `HevTunnelConfig.Build`. One generator, shared by both hosts; `Horus.Tests/SocksPortContractTests.cs` asserts the generated pair matches across the allocator's range and that neither host has re-inlined its own copy.
+
+**Testing the Windows tunnel behind a system-wide proxy client** (Proxifier and friends): those hook outbound TCP at the WFP layer *before* routing, so TCP never reaches the Horus adapter and the tunnel appears to carry only UDP and ICMP. Exclude `Horus.exe` or stop the redirector before drawing conclusions.
 
 ### Protocol config
 

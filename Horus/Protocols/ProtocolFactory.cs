@@ -49,7 +49,12 @@ namespace Horus.Protocols
             return new XrayConfig
             {
                 Link = link,
-                LogFilePath = DiagnosticPaths.XrayLog
+                LogFilePath = DiagnosticPaths.XrayLog,
+
+                // Chosen per attempt rather than fixed at 1080. The fallback loop stops the
+                // core between attempts, so a retry re-picks the same port unless something
+                // else took it meanwhile — which is exactly when moving is the right answer.
+                SocksPort = SocksPortAllocator.Allocate()
             };
         }
 

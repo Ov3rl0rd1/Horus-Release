@@ -139,9 +139,27 @@ namespace Horus.Presentation.ViewModels
         /// opens on <see cref="AppScreen.Startup"/>, so if neither hook fired the user
         /// would be stranded there.
         /// </summary>
+        /// <summary>Set when a required native binary is missing or unusable; blocks startup.</summary>
+        [ObservableProperty] private string _startupError = string.Empty;
+
+        public bool HasStartupError => StartupError.Length > 0;
+
+        partial void OnStartupErrorChanged(string value) => OnPropertyChanged(nameof(HasStartupError));
+
         public async Task EnsureStartedAsync()
         {
             if (Interlocked.Exchange(ref _started, 1) != 0) return;
+
+            // Before anything else: without the core there is no product, and every later
+            // failure would be a confusing symptom of this one. Stay on the startup screen
+            // and say exactly which file is missing and where it belongs.
+            var deps = Protocols.NativeDependencies.Check();
+            if (!deps.IsSatisfied)
+            {
+                StartupError = Protocols.NativeDependencies.Describe(deps);
+                RaiseScreenFlags();
+                return;
+            }
 
             bool restored = false;
             try

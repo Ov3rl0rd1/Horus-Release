@@ -100,7 +100,13 @@ namespace Horus.Application
 
                 bool granted = await _platform.RequestPermissionsAsync();
                 if (!granted)
-                    throw new InvalidOperationException("VPN permission denied by user.");
+                    throw new InvalidOperationException(
+                        OperatingSystem.IsWindows()
+                            // On Windows this is about elevation, not a user-facing consent
+                            // dialog — creating a TUN adapter needs administrator rights.
+                            ? "Для создания туннеля нужны права администратора. " +
+                              "Запустите Horus от имени администратора."
+                            : "Разрешение на VPN не выдано.");
 
                 // Only try outbounds this node actually published.
                 var available = FallbackOrder.Where(p => connection.LinkFor(p) != null).ToArray();
@@ -108,13 +114,14 @@ namespace Horus.Application
                     throw new InvalidOperationException(
                         "The server did not offer any protocol this build supports.");
 
-                var (protocol, usedType) = await ConnectWithFallbackAsync(connection, available, ct);
+                var (protocol, usedType, usedConfig) =
+                    await ConnectWithFallbackAsync(connection, available, ct);
 
                 ActiveProtocol = protocol;
                 ActiveProtocolType = usedType;
 
                 // Establish TUN, apply routing
-                var tunnelOptions = BuildTunnelOptions(server);
+                var tunnelOptions = BuildTunnelOptions(server, usedConfig);
                 await _platform.StartTunnelAsync(tunnelOptions, ct);
 
                 // Routing rules are advisory today: the Android platform hook is a no-op
@@ -206,14 +213,14 @@ namespace Horus.Application
         /// address that differs from the device's own. Never throws — a transport failure
         /// here is an answer, not an exception.
         /// </summary>
-        private async Task<bool> RunPreflightAsync(CancellationToken ct)
+        private async Task<bool> RunPreflightAsync(int socksPort, CancellationToken ct)
         {
             LastPreflightDirectIp = null;
             LastPreflightProxiedIp = null;
 
             LastPreflightDirectIp = await _api.GetEgressIpAsync(null, ct);
             LastPreflightProxiedIp = await _api.GetEgressIpAsync(
-                $"socks5://127.0.0.1:{XrayConfig.DefaultSocksPort}", ct);
+                $"socks5://127.0.0.1:{socksPort}", ct);
 
             var direct = LastPreflightDirectIp ?? "—";
             var proxied = LastPreflightProxiedIp ?? "—";
@@ -322,7 +329,7 @@ namespace Horus.Application
 
         // ── Connect helpers ─────────────────────────────────────────────────
 
-        private async Task<(IVpnProtocol Protocol, ProtocolType Type)> ConnectWithFallbackAsync(
+        private async Task<(IVpnProtocol Protocol, ProtocolType Type, ProtocolConfig Config)> ConnectWithFallbackAsync(
             ServerConnection connection, ProtocolType[] available, CancellationToken ct)
         {
             Exception? lastEx = null;
@@ -362,7 +369,8 @@ namespace Horus.Application
                     // reporting ЗАЩИЩЕНО over a tunnel carrying nothing. Prove the outbound
                     // actually reaches the internet before accepting it — and do it before
                     // the TUN exists, so a rejected protocol costs the user nothing.
-                    if (!await RunPreflightAsync(ct))
+                    if (!await RunPreflightAsync(
+                            config is XrayConfig pc ? pc.SocksPort : XrayConfig.DefaultSocksPort, ct))
                         throw new InvalidOperationException(
                             $"{protocolType} came up but carried no traffic " +
                             $"(preflight: direct={LastPreflightDirectIp ?? "—"}, " +
@@ -372,7 +380,7 @@ namespace Horus.Application
                         ProtocolFallback?.Invoke(this, new ProtocolFallbackEventArgs(
                             available[i - 1].ToString(), protocolType.ToString(), lastEx.Message));
 
-                    return (protocol, protocolType);
+                    return (protocol, protocolType, config);
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
@@ -467,17 +475,51 @@ namespace Horus.Application
 
         // ── Private helpers ─────────────────────────────────────────────────
 
-        private static TunnelOptions BuildTunnelOptions(ServerInfo? server) => new()
+        private static TunnelOptions BuildTunnelOptions(ServerInfo? server, ProtocolConfig config) => new()
         {
-            // Must match HevSocksTunnel.HEV_SOCKS5_TUNNEL_CONFIG → tunnel.ipv4: 198.18.0.1
-            // and the HorusVpnTunnelService.Builder.AddAddress call.
-            TunAddress = "198.18.0.1",
+            // Single source for the three places that must agree: hev's YAML, the Android
+            // Builder.AddAddress call, and the Windows route/netsh commands.
+            TunAddress = HevTunnelConfig.Ipv4Address,
             TunPrefix = 30,
-            Mtu = 8500,       // matches HevSocksTunnel mtu: 8500
+            Mtu = HevTunnelConfig.Mtu,
             DnsServers = ["1.1.1.1", "8.8.8.8"],
             BypassApps = [],
-            AllTraffic = true
+            AllTraffic = true,
+            BypassIps = OffTunnelAddresses(config),
+            NodeAddress = NodeAddress(config),
+
+            // Whatever the core actually bound, not the conventional default — the bridge
+            // has to dial the same one.
+            SocksPort = config is XrayConfig xc ? xc.SocksPort : XrayConfig.DefaultSocksPort
         };
+
+        /// <summary>
+        /// The only thing that gets a host route around the tunnel: the node itself.
+        /// Without it the core's transport is carried by the tunnel it is feeding and
+        /// deadlocks.
+        ///
+        /// <list type="bullet">
+        /// <item>the node — always;</item>
+        /// <item>nothing else, on purpose.</item>
+        /// </list>
+        ///
+        /// The resolvers deliberately do <b>not</b> appear here. Exempting them would make
+        /// DNS work by sending every query out in clear over the physical link — the same
+        /// leak the routing config used to have, relocated into the route table. They are
+        /// carried by the tunnel like everything else.
+        ///
+        /// Only a literal IP is usable, since a hostname cannot be a route; a failed
+        /// pre-resolution therefore yields nothing and the platform decides whether it can
+        /// proceed. See <see cref="TunnelOptions.BypassIps"/>.
+        /// </summary>
+        private static string[] OffTunnelAddresses(ProtocolConfig config) =>
+            NodeAddress(config) is { } node ? [node] : [];
+
+        /// <summary>The node's literal IP, or null when pre-resolution failed.</summary>
+        private static string? NodeAddress(ProtocolConfig config) =>
+            config is XrayConfig xc && System.Net.IPAddress.TryParse(xc.Link.DialAddress, out var ip)
+                ? ip.ToString()
+                : null;
 
         /// <summary>
         /// Writes a diagnostics archive after every protocol has failed, so it is already

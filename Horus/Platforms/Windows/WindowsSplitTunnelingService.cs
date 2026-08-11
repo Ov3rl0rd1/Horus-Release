@@ -22,7 +22,12 @@ namespace Horus.Platforms.Windows
         private SplitTunnelingMode _mode = SplitTunnelingMode.Disabled;
         private WinDivertHandle? _divert;
 
-        public bool IsSupported => true;
+        /// <summary>
+        /// Only when the WinDivert driver is actually present. <c>ApplyAsync</c> returns
+        /// silently without it, so claiming support would give the user a screen of
+        /// switches that quietly do nothing.
+        /// </summary>
+        public bool IsSupported => File.Exists(Path.Combine(_nativeDir, "WinDivert.dll"));
 
         public SplitTunnelingMode Mode
         {
@@ -74,7 +79,10 @@ namespace Horus.Platforms.Windows
                                     Id = exe,
                                     DisplayName = proc.MainWindowTitle is { Length: > 0 } t
                                         ? t : Path.GetFileNameWithoutExtension(exe),
-                                    IconPath = proc.MainModule?.FileName,
+                                    // Deliberately null: IconPath feeds an Image source, and
+                                    // an .exe path there renders as a broken image. Extracting
+                                    // the real icon would need a Win32 shell call.
+                                    IconPath = null,
                                     IsSystem = IsSystemProcess(proc.MainModule?.FileName)
                                 });
                             }

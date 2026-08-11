@@ -95,20 +95,61 @@
 	     libxray.so is ~55 MB per ABI, which is why only the ABIs in
 	     $(AndroidSupportedAbis) are packaged. Sources live in libxray.zip at the
 	     solution root; see Platforms\Android\lib\README.md. -->
+	<!-- Which ABIs this build actually packages. Driven by the runtime identifier, which is
+	     what .NET Android itself uses — $(AndroidSupportedAbis) is a Xamarin-era property and
+	     setting it no longer restricts anything. Getting this wrong is expensive rather than
+	     broken: an unfiltered build quietly carries the other ABI's 55 MB libxray.so. -->
+	<PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+	  <HorusAbis Condition="'$(RuntimeIdentifier)' == 'android-arm64'">arm64-v8a</HorusAbis>
+	  <HorusAbis Condition="'$(RuntimeIdentifier)' == 'android-x64'">x86_64</HorusAbis>
+	  <HorusAbis Condition="'$(HorusAbis)' == ''">arm64-v8a;x86_64</HorusAbis>
+	</PropertyGroup>
+
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libxray.so" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libhev_socks.so" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libxray.so" Condition="'$(AndroidSupportedAbis)'=='' Or $(AndroidSupportedAbis.Contains('x86_64'))" />
-	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libhev_socks.so" Condition="'$(AndroidSupportedAbis)'=='' Or $(AndroidSupportedAbis.Contains('x86_64'))" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libxray.so" Condition="$(HorusAbis.Contains('arm64-v8a'))" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\arm64-v8a\libhev_socks.so" Condition="$(HorusAbis.Contains('arm64-v8a'))" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libxray.so" Condition="$(HorusAbis.Contains('x86_64'))" />
+	  <AndroidNativeLibrary Include="Platforms\Android\lib\x86_64\libhev_socks.so" Condition="$(HorusAbis.Contains('x86_64'))" />
 	</ItemGroup>
 
-	<!-- Windows: xray.dll (not an .exe — same shared library, different host). -->
+	<!-- Windows: xray.dll (not an .exe — same shared library, different host).
+	     No Exists() condition: a missing core must fail the build, not quietly produce a
+	     package that starts and then cannot connect. See GuardWindowsNativeCore below. -->
 	<ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
-	  <None Include="Platforms\Windows\bin\xray.dll" Condition="Exists('Platforms\Windows\bin\xray.dll')">
+	  <None Include="Platforms\Windows\bin\xray.dll">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	    <Link>xray.dll</Link>
 	  </None>
+
+	  <!-- The TUN bridge (hev-socks5-tunnel.exe + msys-2.0.dll + wintun.dll) and the
+	       optional WinDivert driver. Runtime files only — the .h/.lib in that folder are
+	       there for rebuilding, not for shipping.
+	       These land in ONE directory on purpose: hev resolves wintun.dll with
+	       LOAD_LIBRARY_SEARCH_APPLICATION_DIR, which is the directory of hev's own exe. -->
+	  <None Include="Platforms\Windows\bin\Native\**\*.exe;Platforms\Windows\bin\Native\**\*.dll;Platforms\Windows\bin\Native\**\*.sys"
+	        Condition="Exists('Platforms\Windows\bin\Native')">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	    <Link>Resources\Native\%(RecursiveDir)%(Filename)%(Extension)</Link>
+	  </None>
 	</ItemGroup>
+
+	<!-- PrepareForBuild, not Build: the copy of @(None) items runs among Build's dependencies,
+	     so a Build-hooked check reports MSB3030 "could not copy" before this ever gets the
+	     chance to explain what is actually wrong. -->
+	<Target Name="GuardWindowsNativeCore" BeforeTargets="PrepareForBuild"
+	        Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\xray.dll')"
+	         Text="Platforms\Windows\bin\xray.dll is missing. Extract the Windows x64 core from libxray.zip (windows/x64/xray.dll) — the app cannot connect without it. See Platforms\Windows\bin\README.md." />
+
+	  <!-- Without these the app starts and then cannot build a tunnel at all. Catching it
+	       here beats catching it on a user's machine at connect time. -->
+	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\Native\hev-socks5-tunnel.exe')"
+	         Text="Platforms\Windows\bin\Native\hev-socks5-tunnel.exe is missing — the Windows TUN bridge. See Platforms\Windows\bin\README.md." />
+	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\Native\msys-2.0.dll')"
+	         Text="Platforms\Windows\bin\Native\msys-2.0.dll is missing — hev-socks5-tunnel is an MSYS build and will not start without it. See Platforms\Windows\bin\README.md." />
+	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\Native\wintun.dll')"
+	         Text="Platforms\Windows\bin\Native\wintun.dll is missing — no TUN adapter can be created. See Platforms\Windows\bin\README.md." />
+	</Target>
 
 	<ItemGroup>
 		<EmbeddedResource Include="appsettings.json" />

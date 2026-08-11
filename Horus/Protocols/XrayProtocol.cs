@@ -55,6 +55,23 @@ namespace Horus.Protocols
             }
         ];
 
+        /// <summary>
+        /// Whether something is already listening on the SOCKS5 port. Only ever used to
+        /// explain a start failure, never to pre-empt one: a platform that cannot
+        /// enumerate listeners must not be able to block an otherwise fine connect.
+        /// </summary>
+        private static bool IsPortTaken(int port)
+        {
+            try
+            {
+                return System.Net.NetworkInformation.IPGlobalProperties
+                    .GetIPGlobalProperties()
+                    .GetActiveTcpListeners()
+                    .Any(e => e.Port == port);
+            }
+            catch { return false; }
+        }
+
         public Task ConnectAsync(ProtocolConfig config, CancellationToken ct = default)
         {
             if (config is not XrayConfig xrayConfig)
@@ -78,7 +95,22 @@ namespace Horus.Protocols
                 XrayInterop.Test(json);
                 OutputReceived?.Invoke(this, $"[xray] Config accepted ({_activeType}).");
 
-                XrayInterop.Start(json);
+                try
+                {
+                    XrayInterop.Start(json);
+                }
+                catch (Exception ex) when (IsPortTaken(xrayConfig.SocksPort))
+                {
+                    // Far more likely on desktop than on Android, where every app gets its
+                    // own network namespace for loopback purposes. Another VPN client
+                    // parked on the same conventional port produces a core start failure
+                    // whose text says nothing about ports.
+                    throw new InvalidOperationException(
+                        $"Порт {xrayConfig.SocksPort} уже занят другой программой — " +
+                        "скорее всего, другим VPN-клиентом. Закройте его и попробуйте снова. " +
+                        $"({ex.Message})", ex);
+                }
+
                 OutputReceived?.Invoke(this,
                     $"[xray] Started {CoreVersion}; SOCKS5 on {xrayConfig.SocksAddress}:{xrayConfig.SocksPort}.");
 

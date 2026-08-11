@@ -40,8 +40,13 @@
                             </VerticalStackLayout>
                             <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding AutoStart}" />
                         </Grid>
-                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
-                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}"
+                                 IsVisible="{Binding SplitTunnelingSupported}" />
+                        <!-- Hidden where the platform can't actually enforce it (Windows
+                             without the WinDivert driver), rather than offering switches
+                             that silently do nothing. -->
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" MinimumHeightRequest="56" ColumnSpacing="8"
+                              IsVisible="{Binding SplitTunnelingSupported}">
                             <Grid.GestureRecognizers>
                                 <TapGestureRecognizer Command="{Binding GoSplitCommand}" />
                             </Grid.GestureRecognizers>

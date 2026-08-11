@@ -206,7 +206,18 @@ public class XrayConfigBuilderTests
     {
         var rules = Build(VlessLink).GetProperty("routing").GetProperty("rules");
 
-        var direct = rules[0];
+        // Multicast and broadcast are dropped first. Sending them anywhere else costs a
+        // SOCKS5 session per packet, and on Windows they come straight back through the
+        // tunnel and amplify — see XrayConfigBuilder.DropRanges.
+        var drop = rules[0];
+        Assert.Equal(XrayConfigBuilder.BlockTag, drop.GetProperty("outboundTag").GetString());
+
+        var dropped = drop.GetProperty("ip").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains("224.0.0.0/4", dropped);
+        Assert.Contains("255.255.255.255/32", dropped);
+        Assert.Contains("ff00::/8", dropped);
+
+        var direct = rules[1];
         Assert.Equal(XrayConfigBuilder.DirectTag, direct.GetProperty("outboundTag").GetString());
 
         var ranges = direct.GetProperty("ip").EnumerateArray().Select(e => e.GetString()).ToList();
@@ -216,9 +227,45 @@ public class XrayConfigBuilderTests
         Assert.Contains("::1/128", ranges);
         Assert.Contains("fc00::/7", ranges);
 
+        // Unicast LAN ranges stay direct; nothing droppable leaks into that rule.
+        Assert.DoesNotContain("224.0.0.0/4", ranges);
+        Assert.DoesNotContain("255.255.255.255/32", ranges);
+
         // Catch-all must be last, or it would shadow the direct rule.
         var last = rules[rules.GetArrayLength() - 1];
         Assert.Equal(XrayConfigBuilder.ProxyTag, last.GetProperty("outboundTag").GetString());
+    }
+
+    /// <summary>
+    /// No rule may send resolver traffic anywhere but the proxy. An exemption here does not
+    /// look like a leak in the config — it looks like a sensible bootstrap shortcut — but it
+    /// puts every name the device looks up on the wire in clear while the UI says the
+    /// connection is protected. The node is pre-resolved before the core starts, so nothing
+    /// needs the shortcut.
+    /// </summary>
+    [Fact]
+    public void No_rule_exempts_the_resolvers_from_the_tunnel()
+    {
+        var cfg = new XrayConfig { Link = ShareLinkParser.Parse(VlessLink) };
+        var resolvers = XrayConfigBuilder.ResolverIps(cfg.DnsServers);
+
+        Assert.NotEmpty(resolvers);   // otherwise this test proves nothing
+
+        var rules = Build(VlessLink).GetProperty("routing").GetProperty("rules");
+
+        foreach (var rule in rules.EnumerateArray())
+        {
+            if (rule.GetProperty("outboundTag").GetString() == XrayConfigBuilder.ProxyTag)
+                continue;
+            if (!rule.TryGetProperty("ip", out var ips))
+                continue;
+
+            var listed = ips.EnumerateArray().Select(e => e.GetString()!).ToList();
+
+            foreach (var resolver in resolvers)
+                Assert.DoesNotContain(listed, entry => entry.StartsWith(resolver + "/")
+                                                       || entry == resolver);
+        }
     }
 
     [Fact]

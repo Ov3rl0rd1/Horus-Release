@@ -132,7 +132,7 @@ namespace Horus.Platforms.Android
                 _tunFd = builder.Establish()
                     ?? throw new InvalidOperationException("VpnService.Builder.Establish() returned null.");
 
-                HevSocksTunnel.StartTunnel(_tunFd.Fd);
+                HevSocksTunnel.StartTunnel(_tunFd.Fd, options.SocksPort);
 
                 UpdateNotification("Подключено");
                 SetState(TunnelState.Started);

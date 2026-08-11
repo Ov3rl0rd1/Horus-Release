@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI for the Windows build.
+
+  Per-machine on purpose: the app requires administrator rights to create its TUN adapter,
+  so a per-user install into a directory it can write would still prompt for elevation on
+  every launch and buys nothing.
+
+  PublishDir is passed in by the workflow and points at a `dotnet publish` output. The
+  <Files> element harvests it wholesale, which matters because the payload is ~110 files —
+  the WinUI and Windows App SDK runtime, the core, and the TUN bridge in Resources\Native.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Horus VPN"
+           Manufacturer="Horus"
+           Version="$(var.Version)"
+           UpgradeCode="6d3f2a91-4f1e-4c8a-9c2b-7a5e0d8f31b4"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <!-- Upgrades in place, so a new version never stacks a second copy alongside the old. -->
+    <MajorUpgrade DowngradeErrorMessage="Уже установлена более новая версия Horus VPN." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="HorusIcon" SourceFile="$(var.PublishDir)\Horus.exe" />
+    <Property Id="ARPPRODUCTICON" Value="HorusIcon" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Horus" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ShortcutFolder" Name="Horus" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**" />
+    </ComponentGroup>
+
+    <ComponentGroup Id="Shortcuts" Directory="ShortcutFolder">
+      <Component Id="StartMenuShortcut" Guid="2f8c1b74-5a63-42d9-8e17-c0b94d6a2f58">
+        <Shortcut Id="HorusShortcut"
+                  Name="Horus VPN"
+                  Target="[INSTALLFOLDER]Horus.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveShortcutFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\Horus\VPN"
+                       Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="Horus VPN" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="Shortcuts" />
+    </Feature>
+  </Package>
+</Wix>

@@ -23,10 +23,23 @@ bld/
 [Ll]og/
 [Ll]ogs/
 
+# ...except the Windows native payload, which only lives in a directory called "bin"
+# because that is where the platform code expects it. These are shipped inputs, not build
+# output: the core, the TUN bridge and its two DLLs. Without them in the repo a clean
+# checkout cannot build the Windows head at all — GuardWindowsNativeCore fails the build —
+# so CI would never produce a release. The Android .so files are tracked for the same
+# reason. Un-ignoring a directory takes both lines; the second alone would not work.
+!Horus/Platforms/Windows/bin/
+!Horus/Platforms/Windows/bin/**
+
 # .NET Core
 project.lock.json
 project.fragment.lock.json
 artifacts/
+
+# Release workflow scratch space, also produced by running its steps locally
+publish/
+dist/
 
 # ASP.NET Scaffolding
 ScaffoldingReadMe.txt

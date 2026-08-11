@@ -26,11 +26,28 @@ namespace Horus.Protocols
         /// <summary>The core rejects a non-zero hop interval below this.</summary>
         private const int MinHopIntervalSeconds = 5;
 
-        /// <summary>Ranges that must never be routed into the tunnel.</summary>
+        /// <summary>
+        /// Multicast and broadcast, which are dropped rather than forwarded anywhere.
+        ///
+        /// Sending them down <c>direct</c> looks harmless and is not. On a host whose
+        /// "direct" is simply the OS route table — Windows, where only the node and the
+        /// resolvers have host routes around the tunnel — the core re-emits the packet, the
+        /// route table hands it straight back to the tunnel, and each pass allocates another
+        /// SOCKS5 UDP association. Windows chatters constantly on a fresh interface (SSDP,
+        /// mDNS, LLMNR), so the amplification is immediate: a thousand sessions in three
+        /// seconds, and a tunnel too busy to carry anything real. Nothing is lost by
+        /// dropping them — link-local discovery has no meaning through a tunnel.
+        /// </summary>
+        private static readonly string[] DropRanges =
+        [
+            "224.0.0.0/4", "255.255.255.255/32", "ff00::/8"
+        ];
+
+        /// <summary>Unicast ranges that must never be routed into the tunnel.</summary>
         private static readonly string[] DirectRanges =
         [
             "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-            "169.254.0.0/16", "224.0.0.0/4", "255.255.255.255/32",
+            "169.254.0.0/16",
             "::1/128", "fc00::/7", "fe80::/10"
         ];
 
@@ -99,15 +116,27 @@ namespace Horus.Protocols
         /// Order matters: the last rule is a catch-all to the proxy, so anything that must
         /// bypass the tunnel has to be matched before it.
         ///
-        /// The resolver rule is not optional. Without it the core's own DNS queries match
-        /// the catch-all and are sent through the proxy — which is exactly the thing DNS is
-        /// needed to establish. When the outbound is unhealthy that loop turns a single
-        /// failure into a stall on every lookup.
+        /// <b>Resolvers are deliberately not exempted.</b> An earlier version sent them
+        /// <c>direct</c> to keep the core's own lookups off a proxy that might not be up
+        /// yet. That is a DNS leak by construction: every query the device makes leaves in
+        /// clear over the physical link, addressed to a public resolver, while the user is
+        /// told their traffic is protected. Nothing here needs the exemption — the node is
+        /// pre-resolved before the core starts (<c>ShareLink.ResolvedHost</c>) and
+        /// <c>domainStrategy: AsIs</c> leaves proxied names to be resolved at the node — so
+        /// resolver traffic falls through to the catch-all and is carried like everything
+        /// else.
         /// </summary>
         private static object[] BuildRoutingRules(XrayConfig cfg)
         {
             var rules = new List<object>
             {
+                // Before everything else: these must not reach direct or proxy. See DropRanges.
+                new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["ip"] = DropRanges,
+                    ["outboundTag"] = BlockTag
+                },
                 new Dictionary<string, object?>
                 {
                     ["type"] = "field",
@@ -115,17 +144,6 @@ namespace Horus.Protocols
                     ["outboundTag"] = DirectTag
                 }
             };
-
-            var resolvers = ResolverAddresses(cfg.DnsServers);
-            if (resolvers.Length > 0)
-            {
-                rules.Add(new Dictionary<string, object?>
-                {
-                    ["type"] = "field",
-                    ["ip"] = resolvers,
-                    ["outboundTag"] = DirectTag
-                });
-            }
 
             rules.Add(new Dictionary<string, object?>
             {
@@ -138,10 +156,16 @@ namespace Horus.Protocols
         }
 
         /// <summary>
-        /// Pulls the dialable IP literals out of the resolver list, including the host of a
-        /// DoH URL (<c>https://1.1.1.1/dns-query</c> still connects to 1.1.1.1:443).
+        /// The dialable IP literals in the resolver list, including the host of a DoH URL
+        /// (<c>https://1.1.1.1/dns-query</c> still connects to 1.1.1.1:443).
+        ///
+        /// Nothing in the routing config uses these any more — resolver traffic is carried
+        /// like all other traffic. They are still worth naming because a platform has to
+        /// know which addresses must <i>not</i> get a host route around the tunnel: giving
+        /// one to a resolver is the same DNS leak, just written in the route table instead
+        /// of the config.
         /// </summary>
-        private static string[] ResolverAddresses(IReadOnlyList<string> servers)
+        public static string[] ResolverIps(IReadOnlyList<string> servers)
         {
             var addresses = new List<string>();
 
@@ -154,7 +178,7 @@ namespace Horus.Protocols
                     candidate = uri.Host;
 
                 if (System.Net.IPAddress.TryParse(candidate, out var ip))
-                    addresses.Add($"{ip}/32");
+                    addresses.Add(ip.ToString());
             }
 
             return [.. addresses.Distinct()];
