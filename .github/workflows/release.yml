@@ -57,6 +57,12 @@ jobs:
     needs: test
     if: inputs.platforms == 'both' || inputs.platforms == 'windows'
     runs-on: windows-latest
+    env:
+      # `secrets` is not among the contexts an `if:` expression may read — neither on a job
+      # nor on a step — so the question "is signing configured?" is answered here, where
+      # secrets are in scope, and the steps below branch on this string instead. The
+      # expression yields a boolean, which serialises to 'true' or 'false'.
+      SIGNING_ENABLED: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -100,7 +106,7 @@ jobs:
       # Skipped when the secrets are absent, which produces working but unsigned artifacts
       # rather than a failed release.
       - name: Sign the executable
-        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+        if: env.SIGNING_ENABLED == 'true'
         shell: pwsh
         env:
           CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -150,7 +156,7 @@ jobs:
             -o "dist/Horus-${{ inputs.version }}-win-x64.msi"
 
       - name: Sign the installer
-        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+        if: env.SIGNING_ENABLED == 'true'
         shell: pwsh
         env:
           CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -296,13 +302,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes=$(cat <<'EOF'
+          # Every heredoc is quoted: the notes are markdown full of backticks, which an
+          # unquoted one would run as command substitution. The Windows paragraph depends on
+          # whether the signing step ran, and the thumbprint file landing in staging is the
+          # only evidence of that this job has.
+          {
+            cat <<'EOF'
           Built from `main` by the Release workflow.
 
           **Windows (x64)** — install with the `.msi`, or unpack the portable `.zip`.
           Horus needs administrator rights to create its tunnel adapter and will ask for
-          them on launch. The build is not code-signed yet, so SmartScreen will warn on
-          first run; check the SHA-256 below before running it.
+          them on launch.
+          EOF
+            if [ -f staging/CERTIFICATE-THUMBPRINT.txt ]; then
+              cat <<'EOF'
+          The build is signed, but with a self-signed certificate that no machine trusts out
+          of the box, so Windows still warns on first run. Horus shows a banner with a button
+          that installs it, or run `install-certificate.ps1` from the package by hand. Check
+          it against `CERTIFICATE-THUMBPRINT.txt` — that is the thumbprint this build was
+          actually signed with.
+          EOF
+            else
+              cat <<'EOF'
+          This build is not code-signed, so SmartScreen will warn on first run; check the
+          SHA-256 below before running it.
+          EOF
+            fi
+            cat <<'EOF'
 
           **Android** — pick the APK for your device: `arm64-v8a` for essentially every
           phone, `x86_64` for emulators. They are separate downloads because the VPN core
@@ -310,9 +336,11 @@ jobs:
 
           Verify a download against `SHA256SUMS.txt`.
           EOF
-          )
+          } > notes.md
+          cat notes.md
+
           gh release create "v${{ inputs.version }}" staging/* \
             --title "Horus ${{ inputs.version }}" \
-            --notes "$notes" \
+            --notes-file notes.md \
             --target main \
             ${{ inputs.draft && '--draft' || '' }}
