@@ -26,6 +26,7 @@ namespace Horus.Presentation.ViewModels
         private readonly AppSession _session;
         private readonly Navigator _nav;
         private readonly PaymentViewModel _payment;
+        private readonly IPublisherTrustService _publisherTrust;
 
         [ObservableProperty] private VpnState _vpnState = VpnState.Disconnected;
         [ObservableProperty] private string _downloadSpeed = "—";
@@ -38,6 +39,48 @@ namespace Horus.Presentation.ViewModels
         /// <summary>Egress IP as the API sees it; null until /whoami answers.</summary>
         [ObservableProperty] private string? _publicIp;
 
+        // ── Publisher trust (Windows; inert everywhere else) ────────────────
+
+        /// <summary>
+        /// Shown when the build is signed with a certificate this machine does not trust.
+        /// Set once at construction: trust does not change underneath a running process,
+        /// and re-checking on every render would read the certificate stores continuously.
+        /// </summary>
+        [ObservableProperty] private bool _showPublisherWarning;
+
+        [ObservableProperty] private bool _isInstallingCertificate;
+
+        [RelayCommand]
+        private async Task InstallCertificateAsync()
+        {
+            if (IsInstallingCertificate) return;
+            IsInstallingCertificate = true;
+
+            try
+            {
+                if (await _publisherTrust.InstallAsync())
+                {
+                    ShowPublisherWarning = false;
+                    await Dialog.Alert("Сертификат установлен",
+                        "Windows больше не считает издателя неизвестным.");
+                }
+                else
+                {
+                    await Dialog.Alert("Не удалось",
+                        "Сертификат установлен, но подпись всё ещё не проходит проверку. " +
+                        "Скорее всего, он просрочен или файл изменён после подписи.");
+                }
+            }
+            catch (Exception ex)
+            {
+                await Dialog.Alert("Не удалось установить сертификат", ex.Message);
+            }
+            finally
+            {
+                IsInstallingCertificate = false;
+            }
+        }
+
         public MainViewModel(
             VpnManager vpnManager,
             ITrafficMonitorService traffic,
@@ -47,8 +90,12 @@ namespace Horus.Presentation.ViewModels
             IErrorReportingService errorReporting,
             AppSession session,
             Navigator nav,
-            PaymentViewModel payment)
+            PaymentViewModel payment,
+            IPublisherTrustService publisherTrust)
         {
+            _publisherTrust = publisherTrust;
+            _showPublisherWarning = publisherTrust.NeedsTrust;
+
             _vpnManager = vpnManager;
             _traffic = traffic;
             _subscription = subscription;

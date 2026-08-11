@@ -131,6 +131,14 @@
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	    <Link>Resources\Native\%(RecursiveDir)%(Filename)%(Extension)</Link>
 	  </None>
+
+	  <!-- Ships next to the exe: the "Установить" button runs it, and it also works on its
+	       own before the app is ever launched. It reads the certificate out of Horus.exe, so
+	       it has to sit beside it. -->
+	  <None Include="..\packaging\windows\install-certificate.ps1">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	    <Link>install-certificate.ps1</Link>
+	  </None>
 	</ItemGroup>
 
 	<!-- PrepareForBuild, not Build: the copy of @(None) items runs among Build's dependencies,

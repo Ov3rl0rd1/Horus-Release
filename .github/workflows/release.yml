@@ -96,6 +96,42 @@ jobs:
           if ($missing) { throw "Missing from the publish output:`n$($missing -join "`n")" }
           Write-Host "payload OK - $((Get-ChildItem publish/win-x64 -Recurse -File).Count) files"
 
+      # Before packaging, so the exe inside both the zip and the MSI is the signed one.
+      # Skipped when the secrets are absent, which produces working but unsigned artifacts
+      # rather than a failed release.
+      - name: Sign the executable
+        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          CERT_THUMBPRINT: ${{ secrets.WINDOWS_CERT_THUMBPRINT }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                       Where-Object FullName -like '*\x64\*' | Sort-Object FullName | Select-Object -Last 1).FullName
+          if (-not $signtool) { throw "signtool.exe not found on the runner." }
+
+          # Timestamped, so signatures stay valid after the certificate expires.
+          & $signtool sign /f $pfx /p $env:CERT_PASS /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 publish/win-x64/Horus.exe
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed ($LASTEXITCODE)" }
+
+          Remove-Item $pfx -Force
+
+          # Pin the result: a stale or swapped secret would otherwise ship a build users
+          # cannot verify against the thumbprint published with the release.
+          $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
+                    [Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile(
+                      (Resolve-Path publish/win-x64/Horus.exe)))
+          Write-Host "signed with $($cert.Subject) / $($cert.Thumbprint)"
+          if ($env:CERT_THUMBPRINT -and $cert.Thumbprint -ne ($env:CERT_THUMBPRINT -replace '\s','')) {
+            throw "Signed with $($cert.Thumbprint) but WINDOWS_CERT_THUMBPRINT says $env:CERT_THUMBPRINT."
+          }
+          "CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File $env:GITHUB_ENV -Append
+
       - name: Portable zip
         shell: pwsh
         run: |
@@ -113,21 +149,28 @@ jobs:
             packaging/windows/Horus.wxs `
             -o "dist/Horus-${{ inputs.version }}-win-x64.msi"
 
-      # No Authenticode certificate yet, so both artifacts are unsigned and SmartScreen will
-      # warn on first run. To sign, add the two secrets and drop the `if: false`.
-      - name: Sign (disabled - no certificate)
-        if: false
+      - name: Sign the installer
+        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
         shell: pwsh
-        run: |
-          $pfx = "$env:RUNNER_TEMP\cert.pfx"
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
-          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
-                       Where-Object FullName -like '*x64*' | Select-Object -Last 1).FullName
-          & $signtool sign /f $pfx /p $env:CERT_PASS /fd SHA256 `
-            /tr http://timestamp.digicert.com /td SHA256 (Get-ChildItem dist/*.msi)
         env:
           CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
           CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_B64))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                       Where-Object FullName -like '*\x64\*' | Sort-Object FullName | Select-Object -Last 1).FullName
+          & $signtool sign /f $pfx /p $env:CERT_PASS /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 (Get-ChildItem dist/*.msi).FullName
+          if ($LASTEXITCODE -ne 0) { throw "signtool failed ($LASTEXITCODE)" }
+          Remove-Item $pfx -Force
+
+      # Carried to the release notes so a user can check the certificate they are being
+      # asked to trust against the one this build was actually signed with.
+      - name: Record the thumbprint
+        if: ${{ env.CERT_THUMBPRINT != '' }}
+        shell: pwsh
+        run: Set-Content dist/CERTIFICATE-THUMBPRINT.txt $env:CERT_THUMBPRINT -NoNewline
 
       - uses: actions/upload-artifact@v4
         with:

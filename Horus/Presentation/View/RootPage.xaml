@@ -40,13 +40,13 @@
             <Grid Grid.Row="0" ColumnDefinitions="Auto,*">
 
                 <!-- ═══ WINDOWS / DESKTOP SIDEBAR ═══ -->
-                <Border Grid.Column="0" WidthRequest="230" IsVisible="{Binding IsSidebarVisible}"
-                        BackgroundColor="Transparent" Stroke="Transparent" Padding="12,16,12,14">
-                    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="4">
+                <Border Grid.Column="0" WidthRequest="268" IsVisible="{Binding IsSidebarVisible}"
+                        BackgroundColor="Transparent" Stroke="Transparent" Padding="16,20,16,18">
+                    <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="6">
 
-                        <HorizontalStackLayout Grid.Row="0" Spacing="9" Padding="8,4,0,10">
-                            <Image Source="logo_gold.png" HeightRequest="26" VerticalOptions="Center" />
-                            <Label Text="HORUS" Style="{StaticResource HzDisplay}" FontSize="14" VerticalOptions="Center" />
+                        <HorizontalStackLayout Grid.Row="0" Spacing="11" Padding="10,4,0,16">
+                            <Image Source="logo_gold.png" HeightRequest="32" VerticalOptions="Center" />
+                            <Label Text="HORUS" Style="{StaticResource HzDisplay}" FontSize="19" VerticalOptions="Center" />
                         </HorizontalStackLayout>
 
                         <VerticalStackLayout Grid.Row="1" Spacing="4">
@@ -56,10 +56,10 @@
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer Command="{Binding NavHomeCommand}" />
                                 </Border.GestureRecognizers>
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" Padding="13,0" HeightRequest="44">
-                                    <controls:IconView Grid.Column="0" Kind="Home" IconSize="19" StrokeWidth="1.9" VerticalOptions="Center"
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="13" Padding="15,0" HeightRequest="52">
+                                    <controls:IconView Grid.Column="0" Kind="Home" IconSize="22" StrokeWidth="1.9" VerticalOptions="Center"
                                         Color="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
-                                    <Label Grid.Column="1" Text="Главная" VerticalOptions="Center" FontSize="13"
+                                    <Label Grid.Column="1" Text="Главная" VerticalOptions="Center" FontSize="15.5"
                                         FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
                                         TextColor="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
                                 </Grid>
@@ -70,10 +70,10 @@
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer Command="{Binding NavServersCommand}" />
                                 </Border.GestureRecognizers>
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" Padding="13,0" HeightRequest="44">
-                                    <controls:IconView Grid.Column="0" Kind="Servers" IconSize="19" StrokeWidth="1.7" VerticalOptions="Center"
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="13" Padding="15,0" HeightRequest="52">
+                                    <controls:IconView Grid.Column="0" Kind="Servers" IconSize="22" StrokeWidth="1.7" VerticalOptions="Center"
                                         Color="{Binding TabServersActive, Converter={StaticResource ActiveTextColor}}" />
-                                    <Label Grid.Column="1" Text="Серверы" VerticalOptions="Center" FontSize="13"
+                                    <Label Grid.Column="1" Text="Серверы" VerticalOptions="Center" FontSize="15.5"
                                         FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
                                         TextColor="{Binding TabServersActive, Converter={StaticResource ActiveTextColor}}" />
                                 </Grid>
@@ -84,26 +84,31 @@
                                 <Border.GestureRecognizers>
                                     <TapGestureRecognizer Command="{Binding NavSettingsCommand}" />
                                 </Border.GestureRecognizers>
-                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" Padding="13,0" HeightRequest="44">
-                                    <controls:IconView Grid.Column="0" Kind="Settings" IconSize="19" StrokeWidth="1.9" VerticalOptions="Center"
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="13" Padding="15,0" HeightRequest="52">
+                                    <controls:IconView Grid.Column="0" Kind="Settings" IconSize="22" StrokeWidth="1.9" VerticalOptions="Center"
                                         Color="{Binding TabSettingsActive, Converter={StaticResource ActiveTextColor}}" />
-                                    <Label Grid.Column="1" Text="Настройки" VerticalOptions="Center" FontSize="13"
+                                    <Label Grid.Column="1" Text="Настройки" VerticalOptions="Center" FontSize="15.5"
                                         FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
                                         TextColor="{Binding TabSettingsActive, Converter={StaticResource ActiveTextColor}}" />
                                 </Grid>
                             </Border>
                         </VerticalStackLayout>
 
-                        <!-- Account card -->
-                        <Border Grid.Row="3" Style="{StaticResource HzCard}" Padding="13,12">
-                            <VerticalStackLayout Spacing="8">
-                                <Label Text="{Binding AccountEmail}" Style="{StaticResource HzBodyLabel}" FontSize="12"
-                                       FontAttributes="Bold" LineBreakMode="TailTruncation" />
-                                <Label Text="{Binding SubLine}" TextColor="{Binding SubLineColor}" FontSize="11"
-                                       FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
-                                <Button Text="{Binding RenewLabel}" HeightRequest="34" CornerRadius="9"
+                        <!-- Account card.
+                             Sizes were 12/11/12 with Bold on all three, which is where the
+                             mangled Cyrillic showed worst: at that size the bold face has
+                             barely three pixels of stem to work with. The account name also
+                             drops Bold — a login is data, not emphasis, and regular weight
+                             renders cleanly at any size. -->
+                        <Border Grid.Row="3" Style="{StaticResource HzCard}" Padding="16,15">
+                            <VerticalStackLayout Spacing="9">
+                                <Label Text="{Binding AccountEmail}" Style="{StaticResource HzSemiBold}" FontSize="15"
+                                       LineBreakMode="TailTruncation" />
+                                <Label Text="{Binding SubLine}" TextColor="{Binding SubLineColor}" FontSize="13.5"
+                                       FontFamily="{StaticResource FontBody}" />
+                                <Button Text="{Binding RenewLabel}" HeightRequest="42" CornerRadius="11"
                                         BackgroundColor="{StaticResource HzGoldSoft}" BorderColor="{StaticResource HzGoldBorder}"
-                                        BorderWidth="1" TextColor="{StaticResource HzGoldLight}" FontSize="12" FontAttributes="Bold"
+                                        BorderWidth="1" TextColor="{StaticResource HzGoldLight}" FontSize="14.5" FontAttributes="Bold"
                                         FontFamily="{StaticResource FontBody}" Command="{Binding OpenPayCommand}" />
                             </VerticalStackLayout>
                         </Border>

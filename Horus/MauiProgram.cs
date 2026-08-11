@@ -92,7 +92,8 @@ namespace Horus
 #elif WINDOWS
             services
                 .AddSingleton<IVpnPlatformService, WindowsVpnService>()
-                .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>();
+                .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>()
+                .AddSingleton<IPublisherTrustService, WindowsPublisherTrustService>();
 #elif IOS || MACCATALYST
             services
                 .AddSingleton<IVpnPlatformService, iOSVpnService>()
@@ -101,6 +102,11 @@ namespace Horus
             services
                 .AddSingleton<IVpnPlatformService, StubVpnPlatformService>()
                 .AddSingleton<ISplitTunnelingService, StubSplitTunnelingService>();
+#endif
+
+#if !WINDOWS
+            // Every other platform verifies package signatures itself at install time.
+            services.AddSingleton<IPublisherTrustService, StubPublisherTrustService>();
 #endif
 
             // ── Navigation + shared UI state (v2 custom root, no Shell) ──────

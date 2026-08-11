@@ -28,28 +28,39 @@ cannot drift; `Horus.Tests/SocksPortContractTests.cs` enforces that they stay ge
 one place. Windows runs the same project as a child process — see
 `Platforms/Windows/bin/README.md`.
 
-### These are stock upstream builds
+### Built without the JNI layer — this is load-bearing
 
-No `-DPKGNAME` / `-DCLSNAME` override, and the app no longer declares a
-`com/horus/vpn/VPNService` callable wrapper for hev's `JNI_OnLoad` to find. That whole
-arrangement was inert: `JNI_OnLoad` runs only when ART loads a library via
-`System.loadLibrary`, and `[DllImport]` goes through plain `dlopen`, which never calls it.
+`src/hev-jni.c` is removed before building. Horus drives the tunnel entirely through the
+library's C API, so the Java-facing half is dead weight — but leaving it in does not merely
+waste space, it prevents the app from starting at all:
 
-Consequently the app id is no longer constrained by this library. Do not load it with
-`JavaSystem.LoadLibrary` — upstream `64cc609` made `JNI_OnLoad` return `JNI_ERR` on a failed
-registration, so that path now fails loudly where it used to fail silently.
+- .NET Android loads the library with `System.loadLibrary` during runtime startup, not
+  lazily on the first `[DllImport]`. Its `JNI_OnLoad` therefore always runs.
+- `JNI_OnLoad` does `FindClass("hev/htproxy/TProxyService")` and `RegisterNatives`, and since
+  upstream `64cc609` (2026-07-30) it returns `JNI_ERR` if either fails. The pending
+  `ClassNotFoundException` then aborts the process before the first frame.
+
+The older library appeared to work only because it predated that commit: the class existed
+(it was built with `-DPKGNAME=com/horus/vpn -DCLSNAME=VPNService`) and the failed
+`RegisterNatives` — failed because `[Export]` generates ordinary Java methods, not `native`
+ones — was silently ignored.
+
+Satisfying `JNI_OnLoad` with a Java stub class is possible but pointless: it adds a class to
+the app that nothing calls, needs a ProGuard keep rule so R8 does not strip it, and ties the
+build to upstream's default class names. Removing the file removes the whole question, and
+with it any constraint on the app id.
+
+It cannot be disabled with a compiler flag — the guard is `#ifdef ANDROID` and ndk-build
+appends its own `-DANDROID` after `APP_CFLAGS`, so `-UANDROID` loses.
 
 ### Rebuilding
 
-```
-ndk-build NDK_PROJECT_PATH=<repo> APP_BUILD_SCRIPT=<repo>/Android.mk \
-          NDK_APPLICATION_MK=<repo>/Application.mk APP_MODULES=hev-socks5-tunnel
+```powershell
+packaging\android\build-hev.ps1 -Ndk <path-to-ndk>
 ```
 
-Clone with `git -c core.symlinks=true` (or `export MSYS=winsymlinks:native`): the repo keeps
-its public headers as symlinks, and a Windows checkout without them leaves one-line text
-files that fail the build with `unknown type name 'HevRBTree'`. Output lands in
-`libs/<abi>/libhev-socks5-tunnel.so`; rename it to `libhev_socks.so`.
+That script pins the upstream commit, works around the symlinked headers a Windows checkout
+mangles, removes `src/hev-jni.c`, builds, asserts the result has no `JNI_OnLoad` and does
+export the three C entry points, and copies the libraries into place.
 
-`Application.mk` builds all four ABIs and already emits 16 KB-aligned segments, which
-Android 15+ devices require.
+`Application.mk` emits 16 KB-aligned segments, which Android 15+ devices require.

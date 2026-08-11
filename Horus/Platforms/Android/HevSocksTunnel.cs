@@ -11,17 +11,13 @@ namespace Horus.Platforms.Android
     ///
     /// It used to also carry <c>[Register("com/horus/vpn/VPNService")]</c> plus
     /// <c>[Export]</c>ed stubs, to satisfy the <c>JNI_OnLoad</c> in hev's <c>hev-jni.c</c>.
-    /// That was never load-bearing: <c>JNI_OnLoad</c> is invoked by ART from
-    /// <c>System.loadLibrary</c>, while <c>[DllImport]</c> resolves through plain
-    /// <c>dlopen</c>, which does not call it. The <c>[Export]</c> stubs would not have
-    /// worked anyway — they generate ordinary Java methods in the callable wrapper, not
-    /// <c>native</c> ones, so <c>RegisterNatives</c> would have failed on them.
-    ///
-    /// Dropping them means stock upstream builds work as-is, with no
-    /// <c>-DPKGNAME</c>/<c>-DCLSNAME</c> override at build time. Note that upstream
-    /// <c>64cc609</c> (2026-07-30) made <c>JNI_OnLoad</c> return <c>JNI_ERR</c> on a failed
-    /// registration where it previously ignored the result — so if anything ever loads this
-    /// library through <c>JavaSystem.LoadLibrary</c>, it will now fail loudly. Don't.
+    /// Those are gone, and so is that <c>JNI_OnLoad</c>: the library is now built without
+    /// its JNI layer, because .NET Android loads it through <c>System.loadLibrary</c> at
+    /// runtime startup rather than lazily on the first <c>[DllImport]</c>, and a
+    /// <c>JNI_OnLoad</c> that cannot find its Java class aborts the process on launch.
+    /// The full reasoning is in <c>Platforms/Android/lib/README.md</c>; the consequence
+    /// here is that this class is plain P/Invoke with nothing Java about it, and the app id
+    /// is no longer constrained by the bridge.
     /// </summary>
     internal static class HevSocksTunnel
     {

@@ -1,4 +1,4 @@
-﻿<?xml version = "1.0" encoding = "UTF-8" ?>
+<?xml version = "1.0" encoding = "UTF-8" ?>
 <Application xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:Horus"
@@ -263,7 +263,9 @@
                 <Setter Property="BackgroundColor" Value="{StaticResource HzSurface}" />
                 <Setter Property="Stroke" Value="{StaticResource HzBorder}" />
                 <Setter Property="StrokeThickness" Value="1" />
-                <Setter Property="Padding" Value="18" />
+                <!-- Roomier on desktop: the same padding that frames a phone card leaves a
+                     1600 px window looking like a phone layout stretched across a monitor. -->
+                <Setter Property="Padding" Value="{OnPlatform Default=18, WinUI=22}" />
                 <Setter Property="StrokeShape">
                     <RoundRectangle CornerRadius="18" />
                 </Setter>
@@ -293,36 +295,46 @@
             <!-- ── Typography ──
                  FontAttributes=Bold keeps weight visible with the fallback system font
                  (before the Unbounded/Manrope .ttf files are added). -->
+            <!--
+                Two type scales, one set of styles. The phone values are the design's own and
+                must not move; the WinUI values are roughly a fifth larger.
+
+                This is not only about comfort. A phone reads at arm's length on a dense
+                display, a desktop at a metre on a ~96 dpi one, so the same point size lands
+                much smaller. Below about 13 device pixels Manrope's bold Cyrillic starts to
+                collapse under hinting — 'а' loses its bowl and reads as 'ə', 'я' as 'a' —
+                which is what made mixed Russian/English strings look broken.
+            -->
             <Style x:Key="HzDisplay" TargetType="Label">
                 <Setter Property="FontFamily" Value="{StaticResource FontDisplay}" />
                 <Setter Property="TextColor" Value="{StaticResource HzText}" />
-                <Setter Property="FontSize" Value="21" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=21, WinUI=25}" />
                 <Setter Property="FontAttributes" Value="Bold" />
             </Style>
 
             <Style x:Key="HzBodyLabel" TargetType="Label">
                 <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
                 <Setter Property="TextColor" Value="{StaticResource HzText}" />
-                <Setter Property="FontSize" Value="14" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=14, WinUI=16}" />
             </Style>
 
             <!-- Semibold body (design weight 600) -->
             <Style x:Key="HzSemiBold" TargetType="Label">
                 <Setter Property="FontFamily" Value="{StaticResource FontSemiBold}" />
                 <Setter Property="TextColor" Value="{StaticResource HzText}" />
-                <Setter Property="FontSize" Value="14" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=14, WinUI=16}" />
             </Style>
 
             <Style x:Key="HzDim" TargetType="Label">
                 <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
                 <Setter Property="TextColor" Value="{StaticResource HzTextDim}" />
-                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=13, WinUI=15}" />
             </Style>
 
             <Style x:Key="HzEyebrow" TargetType="Label">
                 <Setter Property="FontFamily" Value="{StaticResource FontBold}" />
                 <Setter Property="TextColor" Value="{StaticResource HzTextMuted}" />
-                <Setter Property="FontSize" Value="11" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=11, WinUI=12.5}" />
                 <Setter Property="FontAttributes" Value="Bold" />
                 <Setter Property="CharacterSpacing" Value="2" />
                 <Setter Property="TextTransform" Value="Uppercase" />
@@ -354,7 +366,7 @@
                 <Setter Property="FontFamily" Value="{StaticResource FontBold}" />
                 <Setter Property="BackgroundColor" Value="{StaticResource HzGold}" />
                 <Setter Property="TextColor" Value="{StaticResource HzOnGold}" />
-                <Setter Property="FontSize" Value="15" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=15, WinUI=17}" />
                 <Setter Property="FontAttributes" Value="Bold" />
                 <Setter Property="CornerRadius" Value="15" />
                 <Setter Property="HeightRequest" Value="54" />
@@ -365,7 +377,7 @@
                 <Setter Property="FontFamily" Value="{StaticResource FontBold}" />
                 <Setter Property="BackgroundColor" Value="Transparent" />
                 <Setter Property="TextColor" Value="{StaticResource HzText}" />
-                <Setter Property="FontSize" Value="14" />
+                <Setter Property="FontSize" Value="{OnPlatform Default=14, WinUI=16}" />
                 <Setter Property="FontAttributes" Value="Bold" />
                 <Setter Property="CornerRadius" Value="15" />
                 <Setter Property="HeightRequest" Value="50" />
