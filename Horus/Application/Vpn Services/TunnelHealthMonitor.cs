@@ -51,11 +51,37 @@ namespace Horus.Application
         private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(90);
 
         /// <summary>
-        /// Bytes sent with nothing received before the cheap tier escalates. Roughly a few
+        /// Bytes sent before the cheap tier will consider escalating. Roughly a few
         /// retransmitted handshakes: enough that ordinary keepalives and a single lost
         /// packet do not trigger a probe.
         /// </summary>
         private const long UnansweredBytesThreshold = 8 * 1024;
+
+        /// <summary>
+        /// How much smaller the downlink has to be than the uplink to count as "nothing
+        /// came back".
+        ///
+        /// The first version of this test asked for <c>received == 0</c>, and that was
+        /// wrong in a way only a real device showed. A tunnel whose outbound is dead does
+        /// not go silent: the far side of each stalled session eventually produces RSTs and
+        /// ICMP errors, and those flow back through the bridge as real bytes. Measured on
+        /// the failure this was written for — 25 399 bytes out in 126 packets against 3 520
+        /// bytes back in 81 packets, about 43 bytes per packet, which is resets and nothing
+        /// else. Any single byte reset the suspicion counter, so the monitor reported a
+        /// perfectly healthy tunnel for twenty minutes while 190 sessions piled up.
+        ///
+        /// Real traffic never looks like this: a downlink an eighth of the uplink does not
+        /// happen for a working connection outside of a pure upload, which is why the
+        /// packet-size check below rules that case out too.
+        /// </summary>
+        private const long StarvedDownlinkRatio = 8;
+
+        /// <summary>
+        /// Mean received-packet size below which the downlink is control traffic rather
+        /// than data. Resets and ICMP errors are tiny; even a bare TCP ACK stream carries
+        /// more once the link is really working.
+        /// </summary>
+        private const long ControlPacketSize = 96;
 
         /// <summary>Consecutive suspicious samples required before probing.</summary>
         private const int SuspicionLimit = 2;
@@ -68,7 +94,7 @@ namespace Horus.Application
 
         private CancellationTokenSource? _cts;
         private Endpoint _endpoint;
-        private long _lastTx, _lastRx;
+        private long _lastTx, _lastRx, _lastRxPackets;
         private bool _hasBaseline;
         private int _suspicion;
 
@@ -176,26 +202,44 @@ namespace Horus.Application
             long[] counters;
             try { counters = _platform.GetTunnelStats(); }
             catch { return TunnelHealth.Healthy; }
-            if (counters.Length < 4) return TunnelHealth.Healthy;
+
+            // Short array means the bridge is not running — the packets have nowhere to go.
+            // This is deliberately not read as "idle": the two used to be the same value
+            // and a dead bridge therefore looked exactly like a sleeping phone.
+            if (counters.Length < 4) return TunnelHealth.TunnelDead;
 
             var tx = counters[1];
             var rx = counters[3];
+            var rxPackets = counters[2];
 
-            if (!_hasBaseline || tx < _lastTx || rx < _lastRx)
+            if (!_hasBaseline || tx < _lastTx || rx < _lastRx || rxPackets < _lastRxPackets)
             {
-                _lastTx = tx; _lastRx = rx; _hasBaseline = true; _suspicion = 0;
+                _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets;
+                _hasBaseline = true; _suspicion = 0;
                 return TunnelHealth.Healthy;
             }
 
             var sent = tx - _lastTx;
             var received = rx - _lastRx;
-            _lastTx = tx; _lastRx = rx;
+            var receivedPackets = rxPackets - _lastRxPackets;
+            _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets;
 
-            if (received > 0) { _suspicion = 0; return TunnelHealth.Healthy; }
+            // Too little went out to conclude anything. Not evidence of health, but not
+            // evidence of failure either, and inventing a failure from an idle device is
+            // how a client ends up reconnecting all night.
             if (sent < UnansweredBytesThreshold) return TunnelHealth.Healthy;
 
-            // Sending into silence. One sample could be a slow request; two in a row is a
-            // pattern worth paying for a probe to explain.
+            var starved = received * StarvedDownlinkRatio < sent;
+
+            // A genuine large upload also starves the downlink, but its ACKs are ordinary
+            // packets. A dead outbound answers in resets, which are tiny — so the mean
+            // packet size separates the two.
+            var controlOnly = receivedPackets == 0 || received / Math.Max(receivedPackets, 1) < ControlPacketSize;
+
+            if (!starved || !controlOnly) { _suspicion = 0; return TunnelHealth.Healthy; }
+
+            // Sending into what is effectively silence. One sample could be a slow request;
+            // two in a row is a pattern worth paying for a probe to explain.
             return ++_suspicion >= SuspicionLimit ? TunnelHealth.OutboundDead : TunnelHealth.Healthy;
         }
 
@@ -247,6 +291,10 @@ namespace Horus.Application
 
         private void Raise(TunnelHealth health, string detail)
         {
+            // Logged here as well as by the manager: if the recovery that follows goes
+            // wrong, this line is the last thing that says what the monitor actually saw.
+            Diag.Write($"[health] {health}: {detail}");
+
             Stop();
             Unhealthy?.Invoke(this, new TunnelHealthEventArgs(health, detail));
         }

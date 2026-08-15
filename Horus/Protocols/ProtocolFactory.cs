@@ -41,10 +41,24 @@ namespace Horus.Protocols
 
             link.ResolvedHost = await ResolveAsync(link.Host, ct);
 
-            System.Diagnostics.Debug.WriteLine(
-                $"[Horus] {type}: {link.Host} -> {link.DialAddress}:{link.Port}" +
-                $" hop={link.PortRange ?? "none"}" +
-                (link.ResolvedHost is null ? "  (DNS FAILED — using hostname)" : ""));
+            // Handing the core a hostname produces a tunnel that is dead on arrival, and
+            // dead in a way that is almost invisible: the core starts, its SOCKS inbound
+            // accepts every session the bridge offers, and it never dials out, because its
+            // Go resolver has no nameservers here and its configured DNS servers route
+            // through the very proxy it is trying to build. Sessions pile up in the
+            // hundreds, bytes leave and only RSTs come back, and the app reports ЗАЩИЩЕНО.
+            //
+            // Observed on a real device: 190 established SOCKS sessions and not one socket
+            // to any external address. Failing here is the only honest option — the
+            // fallback loop moves to the next protocol, and if none resolves the user gets
+            // an error instead of a tunnel that silently carries nothing.
+            if (link.ResolvedHost is null)
+                throw new InvalidOperationException(
+                    $"Не удалось определить адрес узла {link.Host}. " +
+                    "Проверьте подключение к сети и попробуйте ещё раз.");
+
+            Diag.Write($"[{type}] {link.Host} -> {link.DialAddress}:{link.Port} " +
+                       $"hop={link.PortRange ?? "none"}");
 
             return new XrayConfig
             {
@@ -67,30 +81,43 @@ namespace Horus.Protocols
         /// The app's own UID is excluded from the tunnel, so resolving here goes out over
         /// the real network and works.
         ///
-        /// Returns null on failure — the hostname is then passed through unchanged rather
-        /// than failing the connect outright.
+        /// Retried, because the moment this runs is the worst one for a lookup: a reconnect
+        /// happens while the old tunnel is being torn down and the system resolver is in
+        /// flux, so a single attempt fails far more often than the network warrants.
+        ///
+        /// Returns null only after every attempt failed. The caller must then abandon the
+        /// attempt — see <see cref="CreateConfigAsync"/>.
         /// </summary>
         private static async Task<string?> ResolveAsync(string host, CancellationToken ct)
         {
             if (System.Net.IPAddress.TryParse(host, out _)) return host;
 
-            try
+            for (var attempt = 1; attempt <= 3; attempt++)
             {
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(TimeSpan.FromSeconds(5));
+                try
+                {
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(5));
 
-                var addresses = await System.Net.Dns.GetHostAddressesAsync(host, timeout.Token);
+                    var addresses = await System.Net.Dns.GetHostAddressesAsync(host, timeout.Token);
 
-                // IPv4 first: carrier IPv6 is frequently broken even where v4 is fine.
-                var v4 = addresses.FirstOrDefault(a =>
-                    a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
+                    // IPv4 first: carrier IPv6 is frequently broken even where v4 is fine.
+                    var v4 = addresses.FirstOrDefault(a =>
+                        a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
 
-                return (v4 ?? addresses.FirstOrDefault())?.ToString();
+                    var picked = (v4 ?? addresses.FirstOrDefault())?.ToString();
+                    if (picked is not null) return picked;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    Diag.Write($"[dns] {host} attempt {attempt}/3 failed: {ex.Message}");
+                }
+
+                if (attempt < 3) await Task.Delay(TimeSpan.FromSeconds(attempt), ct);
             }
-            catch
-            {
-                return null;
-            }
+
+            return null;
         }
     }
 }

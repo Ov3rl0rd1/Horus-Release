@@ -127,15 +127,16 @@ namespace Horus.Platforms.Android
         public Task SetDnsAsync(string[] dnsServers) =>
             Task.CompletedTask;
 
-        public long[] GetTunnelStats()
-        {
-            var stats = HevSocksTunnel.GetTunnelStats();
-
-            if (stats == null)
-                return new long[4] { 0, 0, 0, 0 };
-
-            return stats;
-        }
+        /// <summary>
+        /// The bridge's cumulative counters, or an <b>empty</b> array when the bridge is
+        /// not running.
+        ///
+        /// The distinction matters. This used to return four zeros in that case, which is
+        /// indistinguishable from "the device is idle" — so a health check reading it
+        /// concluded the tunnel was fine precisely when the component moving the packets
+        /// had died. Callers must treat a short array as "unknown", never as "no traffic".
+        /// </summary>
+        public long[] GetTunnelStats() => HevSocksTunnel.GetTunnelStats() ?? [];
     }
 
     public static class VpnPermissionBroker
