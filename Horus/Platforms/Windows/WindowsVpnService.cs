@@ -209,9 +209,17 @@ namespace Horus.Platforms.Windows
         /// The counters come from the adapter rather than from hev: its stats API is only
         /// reachable in-process, and this host runs it out of process.
         /// </summary>
+        /// <summary>
+        /// The adapter's cumulative counters, or an <b>empty</b> array when the adapter is
+        /// not there.
+        ///
+        /// Empty rather than four zeros, because those are two different facts: no adapter
+        /// means the tunnel is gone, while zeros mean an idle device. Returning zeros for
+        /// both made a dead tunnel read as a quiet one to anything watching the counters.
+        /// </summary>
         public long[] GetTunnelStats()
         {
-            if (!TryGetTunRow(out var row)) return [0, 0, 0, 0];
+            if (!TryGetTunRow(out var row)) return [];
 
             return [(long)row.OutUcastPkts, (long)row.OutOctets,
                     (long)row.InUcastPkts, (long)row.InOctets];

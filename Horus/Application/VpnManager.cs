@@ -314,9 +314,20 @@ namespace Horus.Application
                 return false;
             }
 
-            OnProtocolOutput(this,
-                "[preflight] Inconclusive: neither check answered. Accepting the protocol.");
-            return true;
+            // Neither check answered, which for these users usually means our own API is
+            // blocked rather than that the tunnel is broken. This used to accept the
+            // protocol on that basis, and that is how a tunnel that could not dial at all
+            // reached the user showing ЗАЩИЩЕНО. Ask the core directly instead: a SOCKS5
+            // CONNECT needs nothing of ours and its reply code says whether the core can
+            // resolve and reach anything at all.
+            var canDial = await SocksProbe.CanDialAsync(
+                socksPort, "cloudflare.com", 443, TimeSpan.FromSeconds(8), ct);
+
+            OnProtocolOutput(this, canDial
+                ? "[preflight] Both checks silent, but the core dialled out — accepting."
+                : "[preflight] Both checks silent and the core could not dial — rejecting.");
+
+            return canDial;
         }
 
         // ── Health and recovery ─────────────────────────────────────────────
@@ -640,6 +651,11 @@ namespace Horus.Application
 
         private void OnProtocolOutput(object? sender, string line)
         {
+            // Every connect, health and recovery line goes to logcat as well, on one tag.
+            // This is the whole diagnostic surface of the tunnel in a shipping build; see
+            // Diag for why the previous channel did not exist in Release.
+            Diag.Write(line);
+
             _protocolLogBuffer.AppendLine(line);
             // Also feed the rolling session log: the failure-only capture below never
             // fires for a "connected but nothing loads" session, which is the case most
