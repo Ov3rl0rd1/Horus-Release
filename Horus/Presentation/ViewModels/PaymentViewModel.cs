@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Horus.Domain.Interfaces;
 
 namespace Horus.Presentation.ViewModels
 {
@@ -14,8 +15,12 @@ namespace Horus.Presentation.ViewModels
     /// </summary>
     public partial class PaymentViewModel : ObservableObject
     {
-        public PaymentViewModel()
+        private readonly IAccountSync _accountSync;
+
+        public PaymentViewModel(IAccountSync accountSync)
         {
+            _accountSync = accountSync;
+
             Plans.Add(new PlanOption(1, "1 месяц", 199, "без скидки", null));
             Plans.Add(new PlanOption(2, "2 месяца", 378, "≈ 189 ₽/мес", null));
             Plans.Add(new PlanOption(3, "3 месяца", 499, "≈ 166 ₽/мес", "−16%"));
@@ -49,7 +54,17 @@ namespace Horus.Presentation.ViewModels
             IsVisible = true;
         }
 
-        [RelayCommand] private void Close() => IsVisible = false;
+        /// <summary>
+        /// Closing the sheet re-checks the account. Access is granted out of band today —
+        /// the user writes to support, support grants it, the user comes back — so this is
+        /// the exact moment the local copy is most likely to be out of date.
+        /// </summary>
+        [RelayCommand]
+        private void Close()
+        {
+            IsVisible = false;
+            _ = _accountSync.RefreshNowAsync();
+        }
 
         [RelayCommand]
         private void SelectPlan(PlanOption? plan)

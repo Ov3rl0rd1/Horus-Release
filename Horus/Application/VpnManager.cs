@@ -35,8 +35,18 @@ namespace Horus.Application
         private static readonly ProtocolType[] FallbackOrder =
             [ProtocolType.Hysteria2, ProtocolType.Vless, ProtocolType.OlcRtc];
 
-        /// <summary>How often the core is polled for liveness while connected.</summary>
-        private static readonly TimeSpan CoreWatchInterval = TimeSpan.FromSeconds(5);
+        /// <summary>
+        /// Backoff between automatic reconnect attempts. Deliberately reaching minutes:
+        /// the common cause of a dead tunnel is a device with no usable network, and
+        /// retrying every few seconds through that costs battery and fixes nothing.
+        /// </summary>
+        private static readonly TimeSpan[] ReconnectBackoff =
+        [
+            TimeSpan.FromSeconds(3),
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromMinutes(2)
+        ];
 
         public VpnState State { get; private set; } = VpnState.Disconnected;
         public IVpnProtocol? ActiveProtocol { get; private set; }
@@ -55,7 +65,27 @@ namespace Horus.Application
         public string? LastPreflightProxiedIp { get; private set; }
 
         private readonly System.Text.StringBuilder _protocolLogBuffer = new();
-        private CancellationTokenSource? _watchdogCts;
+        private readonly TunnelHealthMonitor _health;
+        private readonly INetworkMonitor _network;
+
+        /// <summary>
+        /// True between an explicit connect and an explicit disconnect. Everything
+        /// automatic — reconnects after a handover, after a protocol dies, after the system
+        /// reclaims the tunnel — is gated on it, so a user who pressed disconnect never has
+        /// the app quietly turn itself back on.
+        /// </summary>
+        private bool _userWantsConnection;
+
+        /// <summary>
+        /// The protocol that just failed <i>while working</i>, so the next attempt starts
+        /// after it. This is what fixes the reported case: Hysteria2 connects fine on
+        /// Wi-Fi, the phone moves to mobile where that operator blocks it, and without this
+        /// every reconnect picks Hysteria2 again because it is first in the fallback order.
+        /// </summary>
+        private ProtocolType? _demotedProtocol;
+
+        private int _reconnectAttempt;
+        private CancellationTokenSource? _reconnectCts;
 
         public VpnManager(
             IVpnPlatformService platform,
@@ -63,7 +93,9 @@ namespace Horus.Application
             IRoutingService routing,
             ITrafficMonitorService traffic,
             IApiService api,
-            IErrorReportingService errorReporting)
+            IErrorReportingService errorReporting,
+            TunnelHealthMonitor health,
+            INetworkMonitor network)
         {
             _platform = platform;
             _protocolFactory = protocolFactory;
@@ -71,10 +103,16 @@ namespace Horus.Application
             _traffic = traffic;
             _api = api;
             _errorReporting = errorReporting;
+            _health = health;
+            _network = network;
 
             // Without this, OnRevoke, another VPN app taking over, or a tunnel fault all
             // leave the UI claiming to be connected while carrying nothing.
             _platform.TunnelStateChanged += OnTunnelStateChanged;
+
+            _health.Unhealthy += OnUnhealthy;
+            _network.NetworkChanged += OnNetworkChanged;
+            _network.Start();
         }
 
         /// <summary>
@@ -86,6 +124,7 @@ namespace Horus.Application
         {
             if (State != VpnState.Disconnected) return;
 
+            _userWantsConnection = true;
             SetState(VpnState.Connecting, null);
             _protocolLogBuffer.Clear();
 
@@ -108,8 +147,12 @@ namespace Horus.Application
                               "Запустите Horus от имени администратора."
                             : "Разрешение на VPN не выдано.");
 
-                // Only try outbounds this node actually published.
-                var available = FallbackOrder.Where(p => connection.LinkFor(p) != null).ToArray();
+                // Only try outbounds this node actually published, with anything that just
+                // failed on this network moved to the back rather than dropped — the same
+                // protocol may well be the best choice again once the link changes.
+                var available = OrderProtocols(
+                    FallbackOrder.Where(p => connection.LinkFor(p) != null).ToArray());
+
                 if (available.Length == 0)
                     throw new InvalidOperationException(
                         "The server did not offer any protocol this build supports.");
@@ -146,7 +189,16 @@ namespace Horus.Application
                     ServerChanged?.Invoke(this, new ServerChangedEventArgs(previous, server));
 
                 SetState(VpnState.Connected, null);
-                StartCoreWatchdog();
+
+                // A connection that came up is proof the backoff can start over; leaving
+                // the counter high would make the next unrelated hiccup wait two minutes.
+                _reconnectAttempt = 0;
+
+                _endpoint = new TunnelHealthMonitor.Endpoint(
+                    tunnelOptions.SocksPort,
+                    tunnelOptions.NodeAddress,
+                    usedConfig is XrayConfig nodeConfig ? nodeConfig.Link.Port : 443);
+                _health.Start(_endpoint);
             }
             catch (OperationCanceledException)
             {
@@ -166,12 +218,20 @@ namespace Horus.Application
 
         public async Task DisconnectAsync()
         {
+            // Recorded before the early return: pressing disconnect while already
+            // disconnected still has to cancel a pending automatic reconnect, or the app
+            // turns itself back on seconds after the user told it not to.
+            _userWantsConnection = false;
+            _reconnectCts?.Cancel();
+            _reconnectAttempt = 0;
+            _demotedProtocol = null;
+
             if (State == VpnState.Disconnected) return;
 
             SetState(VpnState.Disconnecting, null);
             try
             {
-                StopCoreWatchdog();
+                _health.Stop();
                 _traffic.Stop();
                 await _platform.StopTunnelAsync();
                 await DetachProtocolAsync();
@@ -259,45 +319,152 @@ namespace Horus.Application
             return true;
         }
 
-        // ── Core watchdog ───────────────────────────────────────────────────
+        // ── Health and recovery ─────────────────────────────────────────────
 
         /// <summary>
-        /// xray now runs in-process, so there is no child process to watch. Poll the core
-        /// for liveness instead and tear down if it stops, rather than leaving the UI
-        /// claiming to be connected.
+        /// The tunnel stopped working. What to do depends entirely on <i>why</i>, which is
+        /// the whole reason <see cref="TunnelHealthMonitor"/> bothers to distinguish them:
+        ///
+        /// <list type="bullet">
+        /// <item><b>No internet</b> — the tunnel is not at fault and reconnecting cannot
+        /// help. Everything is left standing and we wait for the network monitor to say a
+        /// link is back. This is the case that used to burn battery reconnecting in a loop
+        /// on a train or in a lift.</item>
+        /// <item><b>Outbound dead</b> — the link is fine and the node is reachable, but
+        /// this protocol is not carrying. Demote it and reconnect, so the fallback order
+        /// starts at the next one.</item>
+        /// <item><b>Core or tunnel dead</b> — a component the system reclaimed. Rebuild the
+        /// same connection from scratch.</item>
+        /// </list>
         /// </summary>
-        private void StartCoreWatchdog()
+        private void OnUnhealthy(object? sender, TunnelHealthEventArgs e)
         {
-            StopCoreWatchdog();
-            _watchdogCts = new CancellationTokenSource();
-            _ = WatchCoreAsync(_watchdogCts.Token);
-        }
+            if (State != VpnState.Connected) return;
 
-        private void StopCoreWatchdog()
-        {
-            _watchdogCts?.Cancel();
-            _watchdogCts?.Dispose();
-            _watchdogCts = null;
-        }
+            OnProtocolOutput(this, $"[health] {e.Health}: {e.Detail}");
 
-        private async Task WatchCoreAsync(CancellationToken ct)
-        {
-            try
+            if (e.Health == TunnelHealth.NoInternet)
             {
-                using var timer = new PeriodicTimer(CoreWatchInterval);
-                while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
-                {
-                    if (State != VpnState.Connected) continue;
-                    if (XrayProtocol.IsCoreRunning) continue;
-
-                    OnProtocolOutput(this, "[xray] Core stopped unexpectedly.");
-                    await HandleUnexpectedDropAsync("Соединение с ядром потеряно.");
-                    return;
-                }
+                // Deliberately not a teardown. Killing the tunnel here would drop the
+                // user's traffic to the clear the moment connectivity returned, and on
+                // Android it would also lose the foreground service that keeps the process
+                // — and therefore the whole app — alive.
+                OnProtocolOutput(this, "[health] no usable link; holding the tunnel and waiting");
+                _health.Start(CurrentEndpoint());
+                return;
             }
-            catch (OperationCanceledException) { /* normal shutdown */ }
-            catch { /* watchdog must never take the app down */ }
+
+            if (e.Health == TunnelHealth.OutboundDead && ActiveProtocolType is { } failing)
+            {
+                _demotedProtocol = failing;
+                OnProtocolOutput(this, $"[health] demoting {failing} for the next attempt");
+            }
+
+            _ = RecoverAsync(e.Health.ToString());
         }
+
+        /// <summary>
+        /// A handover is the one event counters cannot detect: every connection through the
+        /// old link is already dead, and nothing reports it until something tries to use
+        /// one. Probing immediately turns a stall the user would notice into a reconnect
+        /// they mostly will not.
+        /// </summary>
+        private void OnNetworkChanged(object? sender, NetworkChangedEventArgs e)
+        {
+            OnProtocolOutput(this, $"[net] {e.Transport}, online={e.IsOnline}, handover={e.IsHandover}");
+
+            if (!_userWantsConnection) return;
+
+            if (!e.IsOnline) return; // nothing to do until a link exists
+
+            // Back online after a drop that we chose not to tear down.
+            if (State == VpnState.Connected) _health.ProbeNow($"network changed to {e.Transport}");
+            else if (State == VpnState.Disconnected) ScheduleReconnect("network returned", immediate: true);
+        }
+
+        /// <summary>
+        /// Tears the connection down and brings it back, with backoff. Gated on
+        /// <see cref="_userWantsConnection"/> so it can never fight a user who pressed
+        /// disconnect.
+        /// </summary>
+        private async Task RecoverAsync(string reason)
+        {
+            if (!_userWantsConnection) return;
+
+            var protocol = ActiveProtocolType?.ToString() ?? "Unknown";
+
+            // Captured before the teardown, which clears it. Without this the reconnect
+            // would come back in Auto mode and the Home card would forget the server the
+            // user picked.
+            var server = ActiveServer;
+
+            SetState(VpnState.Reconnecting, reason);
+
+            _health.Stop();
+            await SafeTeardownAsync();
+            ActiveProtocolType = null;
+            SetState(VpnState.Disconnected, reason);
+            ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, true));
+
+            ScheduleReconnect(reason, immediate: false, server);
+        }
+
+        private void ScheduleReconnect(string reason, bool immediate, ServerInfo? server = null)
+        {
+            if (!_userWantsConnection) return;
+
+            _reconnectCts?.Cancel();
+            _reconnectCts?.Dispose();
+            _reconnectCts = new CancellationTokenSource();
+            var ct = _reconnectCts.Token;
+
+            var target = server ?? ActiveServer;
+            var delay = immediate
+                ? TimeSpan.Zero
+                : ReconnectBackoff[Math.Min(_reconnectAttempt, ReconnectBackoff.Length - 1)];
+
+            OnProtocolOutput(this, $"[recover] reconnecting in {delay.TotalSeconds:F0}s ({reason})");
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (delay > TimeSpan.Zero) await Task.Delay(delay, ct).ConfigureAwait(false);
+                    if (ct.IsCancellationRequested || !_userWantsConnection) return;
+
+                    switch (State)
+                    {
+                        case VpnState.Disconnected:
+                            break;
+
+                        // Someone else already got there — a manual connect, or an earlier
+                        // scheduled attempt. Nothing to do and nothing to retry.
+                        case VpnState.Connected:
+                        case VpnState.Connecting:
+                        case VpnState.Reconnecting:
+                            return;
+
+                        // Mid-teardown or wedged in Error. Come back rather than abandoning
+                        // recovery for the rest of the session.
+                        default:
+                            ScheduleReconnect(reason, immediate: false, target);
+                            return;
+                    }
+
+                    _reconnectAttempt++;
+                    await ConnectAsync(target, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex)
+                {
+                    OnProtocolOutput(this, $"[recover] attempt failed: {ex.Message}");
+                    ScheduleReconnect(reason, immediate: false, target);
+                }
+            }, ct);
+        }
+
+        private TunnelHealthMonitor.Endpoint CurrentEndpoint() => _endpoint;
+        private TunnelHealthMonitor.Endpoint _endpoint;
 
         private void OnTunnelStateChanged(object? sender, TunnelStateChangedEventArgs e)
         {
@@ -312,6 +479,10 @@ namespace Horus.Application
         /// <see cref="VpnState.Connected"/> first is what stops this re-entering: the
         /// teardown it performs raises further tunnel-state changes, and both callers
         /// gate on being Connected.
+        ///
+        /// A revoke — the user granting the VPN slot to another app — is the one case that
+        /// must <i>not</i> come back automatically. There is nothing to come back to: the
+        /// consent is gone, and retrying would fight the other app for it.
         /// </summary>
         private async Task HandleUnexpectedDropAsync(string reason)
         {
@@ -320,11 +491,15 @@ namespace Horus.Application
             var protocol = ActiveProtocolType?.ToString() ?? "Unknown";
             SetState(VpnState.Disconnecting, reason);
 
-            StopCoreWatchdog();
+            _health.Stop();
             await SafeTeardownAsync();
             ActiveProtocolType = null;
             SetState(VpnState.Disconnected, reason);
-            ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, false));
+
+            var willRetry = _userWantsConnection;
+            ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, willRetry));
+
+            if (willRetry) ScheduleReconnect(reason, immediate: false);
         }
 
         // ── Connect helpers ─────────────────────────────────────────────────
@@ -530,6 +705,20 @@ namespace Horus.Application
         {
             try { await _errorReporting.BuildArchiveAsync(); }
             catch { /* non-fatal: the user can rebuild it from Settings */ }
+        }
+
+        /// <summary>
+        /// The fallback order with a just-failed protocol moved to the back instead of
+        /// removed. Removing it would be wrong: Hysteria2 failing on one operator's mobile
+        /// network says nothing about the Wi-Fi the phone reaches ten minutes later, and a
+        /// permanently excluded protocol is a permanently degraded connection.
+        /// </summary>
+        private ProtocolType[] OrderProtocols(ProtocolType[] available)
+        {
+            if (_demotedProtocol is not { } demoted || available.Length < 2) return available;
+            if (!available.Contains(demoted)) return available;
+
+            return [.. available.Where(p => p != demoted), demoted];
         }
 
         private void SetState(VpnState newState, string? reason)

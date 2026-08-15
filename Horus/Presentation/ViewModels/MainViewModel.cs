@@ -22,6 +22,7 @@ namespace Horus.Presentation.ViewModels
         private readonly ISubscriptionService _subscription;
         private readonly IAuthService _auth;
         private readonly IApiService _api;
+        private readonly IAccountSync _accountSync;
         private readonly IErrorReportingService _errorReporting;
         private readonly AppSession _session;
         private readonly Navigator _nav;
@@ -87,6 +88,7 @@ namespace Horus.Presentation.ViewModels
             ISubscriptionService subscription,
             IAuthService auth,
             IApiService api,
+            IAccountSync accountSync,
             IErrorReportingService errorReporting,
             AppSession session,
             Navigator nav,
@@ -101,6 +103,7 @@ namespace Horus.Presentation.ViewModels
             _subscription = subscription;
             _auth = auth;
             _api = api;
+            _accountSync = accountSync;
             _errorReporting = errorReporting;
             _session = session;
             _nav = nav;
@@ -109,6 +112,11 @@ namespace Horus.Presentation.ViewModels
             _vpnManager.StateChanged += OnVpnStateChanged;
             _traffic.TrafficUpdated += OnTrafficUpdated;
             _session.PropertyChanged += (_, __) => RaiseServerCard();
+
+            // The poll runs whether or not this screen asked for it, so pick up its result
+            // wherever it lands. Without this a subscription granted while the user watches
+            // Home updates the model and never reaches the banner.
+            _accountSync.AccountRefreshed += (_, __) => ApplyAccountSnapshot();
         }
 
         // ── Derived connection state ──────────────────────────────────────────
@@ -163,19 +171,23 @@ namespace Horus.Presentation.ViewModels
             OnPropertyChanged(nameof(IpNote));
         }
 
-        /// <summary>Reads the egress IP + subscription state. Safe to call on every Home entry.</summary>
+        /// <summary>
+        /// Reads the egress IP + subscription state. Safe to call on every Home entry.
+        ///
+        /// One request, not three: <see cref="IAccountSync"/> owns the <c>/whoami</c> call
+        /// and shares the snapshot with the auth and subscription services. This used to
+        /// make its own call for the IP and then trigger two more indirectly.
+        /// </summary>
         public async Task RefreshAccountAsync()
         {
-            try
-            {
-                var me = await _api.GetWhoAmIAsync();
-                if (me is not null) PublicIp = me.Ip;
+            await _accountSync.RefreshNowAsync();
+            ApplyAccountSnapshot();
+        }
 
-                await _subscription.CheckSubscriptionAsync();
-                await _auth.RefreshAccountAsync();
-                RaiseAll();
-            }
-            catch { /* offline — keep the last known values */ }
+        private void ApplyAccountSnapshot()
+        {
+            if (_accountSync.Last is { } me) PublicIp = me.Ip;
+            RaiseAll();
         }
 
         // ── Selected-server card ──

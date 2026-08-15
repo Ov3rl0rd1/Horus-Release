@@ -18,6 +18,19 @@ namespace Horus
         public static string SupportHandle { get; set; } = "@horus_vpn";
 
         /// <summary>
+        /// The GitHub releases page, exactly as a person would paste it from a browser.
+        /// The updater derives the API endpoint from it, so pointing this at a different
+        /// repository is all that is needed to move the release feed.
+        ///
+        /// Pre-releases are included; drafts are not. When GitHub is unreachable — which
+        /// for these users is the normal state with the tunnel down — the updater falls
+        /// back to <see cref="ApiBaseUrl"/> and reads the version out of
+        /// <c>SHA256SUMS.txt</c>. Set this to an empty string to disable the GitHub source.
+        /// </summary>
+        public static string UpdateReleasesUrl { get; set; } =
+            "https://github.com/Ov3rl0rd1/Horus-Release/releases";
+
+        /// <summary>
         /// Android package names that must always bypass the tunnel, whatever split-tunnel
         /// mode the user picks. Populated from <c>BlockedPackages</c> in appsettings.json.
         ///
