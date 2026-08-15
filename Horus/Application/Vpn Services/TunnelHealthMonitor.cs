@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
@@ -98,6 +97,9 @@ namespace Horus.Application
         private bool _hasBaseline;
         private int _suspicion;
 
+        /// <summary>The last measured counter delta, carried into the log line.</summary>
+        private string _lastSample = "no sample";
+
         /// <summary>Raised when the tunnel is not healthy. Never raised for <see cref="TunnelHealth.Healthy"/>.</summary>
         public event EventHandler<TunnelHealthEventArgs>? Unhealthy;
 
@@ -108,7 +110,12 @@ namespace Horus.Application
             _device = device;
         }
 
-        public readonly record struct Endpoint(int SocksPort, string? NodeHost, int NodePort);
+        /// <summary>
+        /// What the monitor needs to test the tunnel. Only the SOCKS port: the node's
+        /// address used to be carried here for a TCP reachability probe, which was removed
+        /// because it could not be sound for a UDP transport.
+        /// </summary>
+        public readonly record struct Endpoint(int SocksPort);
 
         public void Start(Endpoint endpoint)
         {
@@ -168,7 +175,9 @@ namespace Horus.Application
                     var probed = await ProbeAsync(ct).ConfigureAwait(false);
                     if (probed == TunnelHealth.Healthy) { _suspicion = 0; continue; }
 
-                    Raise(probed, $"{UnansweredBytesThreshold} bytes unanswered, probe says {probed}");
+                    // Report what was measured, not the constant it was compared against —
+                    // the first version logged the threshold and told us nothing.
+                    Raise(probed, $"{_lastSample} -> {probed}");
                     return;
                 }
             }
@@ -236,6 +245,8 @@ namespace Horus.Application
             // packet size separates the two.
             var controlOnly = receivedPackets == 0 || received / Math.Max(receivedPackets, 1) < ControlPacketSize;
 
+            _lastSample = $"out {sent}B, back {received}B in {receivedPackets}p";
+
             if (!starved || !controlOnly) { _suspicion = 0; return TunnelHealth.Healthy; }
 
             // Sending into what is effectively silence. One sample could be a slow request;
@@ -263,30 +274,26 @@ namespace Horus.Application
             catch { /* no answer through the proxy: fall through to the link test */ }
 
             // Nothing came back through the tunnel. Is the link itself alive?
-            if (_endpoint.NodeHost is null) return TunnelHealth.NoInternet;
-
-            var reachable = await CanReachAsync(_endpoint.NodeHost, _endpoint.NodePort, ct).ConfigureAwait(false);
-            return reachable ? TunnelHealth.OutboundDead : TunnelHealth.NoInternet;
+            //
+            // Ask the platform, do not probe. The previous version opened a TCP connection
+            // to the node and read a failure as "no internet", which is unsound: Hysteria2
+            // is QUIC over UDP, so a node serving only UDP on that port refuses every TCP
+            // connect. With Hysteria2 first in the fallback order that made the answer
+            // permanently "no internet" — the tunnel was then held, never rebuilt, and the
+            // device sat with a dead VPN indefinitely. Observed exactly that on a device
+            // whose Wi-Fi was up the whole time.
+            //
+            // NET_CAPABILITY_VALIDATED on a non-VPN network is the system's own verdict on
+            // whether traffic reaches the internet. It costs no packets, no wakeup, and it
+            // cannot be fooled by the node's choice of transport.
+            var link = ReadLink();
+            return link ? TunnelHealth.OutboundDead : TunnelHealth.NoInternet;
         }
 
-        /// <summary>
-        /// A bare TCP connect, with no HTTP and no DNS. Both are avoided on purpose: DNS is
-        /// carried by the tunnel and would fail for reasons unrelated to the link, and an
-        /// HTTP round trip costs far more than the one bit of information wanted here.
-        /// </summary>
-        private static async Task<bool> CanReachAsync(string host, int port, CancellationToken ct)
+        private bool ReadLink()
         {
-            try
-            {
-                using var client = new TcpClient();
-                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeout.CancelAfter(ProbeTimeout);
-
-                await client.ConnectAsync(host, port, timeout.Token).ConfigureAwait(false);
-                return client.Connected;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch { return false; }
+            try { return _device.Read().HasNetwork; }
+            catch { return true; } // unreadable: assume the link is fine and blame the tunnel
         }
 
         private void Raise(TunnelHealth health, string detail)
