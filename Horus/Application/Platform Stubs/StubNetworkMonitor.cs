@@ -14,10 +14,13 @@ namespace Horus.Application.PlatformStubs
     public sealed class StubNetworkMonitor : INetworkMonitor
     {
         public event EventHandler<NetworkChangedEventArgs>? NetworkChanged;
+        public event EventHandler? TunnelValidationLost;
+        public event EventHandler? DeviceWoke;
 
         public bool IsOnline => true;
         public NetworkTransport Transport => NetworkTransport.Other;
 
+        public void ReportTunnelSuspect() { }
         public void Start() { }
         public void Stop() { }
     }
