@@ -87,6 +87,19 @@ namespace Horus.Application
         private int _reconnectAttempt;
         private CancellationTokenSource? _reconnectCts;
 
+        /// <summary>
+        /// How long a tunnel may be diagnosed as "the link is down, not us" before it is
+        /// rebuilt anyway. Long enough to sit out a lift or a tunnel on a train, short
+        /// enough that a misdiagnosis costs minutes rather than the rest of the day.
+        /// </summary>
+        private static readonly TimeSpan DeadTunnelGrace = TimeSpan.FromMinutes(4);
+
+        /// <summary>Silence longer than this means the previous unhealthy episode ended.</summary>
+        private static readonly TimeSpan UnhealthyEpisodeGap = TimeSpan.FromMinutes(6);
+
+        private DateTimeOffset? _unhealthySince;
+        private DateTimeOffset? _lastUnhealthyAt;
+
         public VpnManager(
             IVpnPlatformService platform,
             ProtocolFactory protocolFactory,
@@ -194,10 +207,11 @@ namespace Horus.Application
                 // the counter high would make the next unrelated hiccup wait two minutes.
                 _reconnectAttempt = 0;
 
-                _endpoint = new TunnelHealthMonitor.Endpoint(
-                    tunnelOptions.SocksPort,
-                    tunnelOptions.NodeAddress,
-                    usedConfig is XrayConfig nodeConfig ? nodeConfig.Link.Port : 443);
+                // A connection that came up clears the dead-tunnel clock.
+                _unhealthySince = null;
+                _lastUnhealthyAt = null;
+
+                _endpoint = new TunnelHealthMonitor.Endpoint(tunnelOptions.SocksPort);
                 _health.Start(_endpoint);
             }
             catch (OperationCanceledException)
@@ -354,15 +368,41 @@ namespace Horus.Application
 
             OnProtocolOutput(this, $"[health] {e.Health}: {e.Detail}");
 
+            var now = DateTimeOffset.UtcNow;
+
+            // A gap means the previous episode ended and this is a new one.
+            if (_lastUnhealthyAt is { } last && now - last > UnhealthyEpisodeGap) _unhealthySince = null;
+            _unhealthySince ??= now;
+            _lastUnhealthyAt = now;
+
             if (e.Health == TunnelHealth.NoInternet)
             {
-                // Deliberately not a teardown. Killing the tunnel here would drop the
-                // user's traffic to the clear the moment connectivity returned, and on
+                // Holding rather than tearing down is right: killing the tunnel would drop
+                // the user's traffic to the clear the moment connectivity returned, and on
                 // Android it would also lose the foreground service that keeps the process
                 // — and therefore the whole app — alive.
-                OnProtocolOutput(this, "[health] no usable link; holding the tunnel and waiting");
-                _health.Start(CurrentEndpoint());
-                return;
+                //
+                // But holding *indefinitely* was a liveness bug. The only way out was a
+                // network-change event, and when the link never changes — Wi-Fi up the
+                // whole time, the tunnel dead underneath it — no event ever arrives and the
+                // VPN stays dead until the user notices. Observed on a real device.
+                //
+                // So the classifier gets a deadline. It is a heuristic; the invariant is
+                // not. A tunnel that has carried nothing for minutes gets rebuilt whatever
+                // the diagnosis says, because a wrong reconnect costs one attempt and a
+                // missed one costs the user their VPN.
+                var dead = now - _unhealthySince.Value;
+                if (dead < DeadTunnelGrace)
+                {
+                    OnProtocolOutput(this,
+                        $"[health] no usable link; holding for now ({dead.TotalSeconds:F0}s of " +
+                        $"{DeadTunnelGrace.TotalSeconds:F0}s)");
+                    _health.Start(CurrentEndpoint());
+                    return;
+                }
+
+                OnProtocolOutput(this,
+                    $"[health] still carrying nothing after {dead.TotalMinutes:F0} min — rebuilding anyway");
             }
 
             if (e.Health == TunnelHealth.OutboundDead && ActiveProtocolType is { } failing)
