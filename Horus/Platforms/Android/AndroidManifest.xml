@@ -33,4 +33,19 @@
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+	<!-- Self-update. REQUEST_INSTALL_PACKAGES is an app-op the user grants per app under
+	     "Install unknown apps"; sideloading the first APK grants it to the browser, not to
+	     us, so the updater asks for it once. UPDATE_PACKAGES_WITHOUT_USER_ACTION is a
+	     normal permission and is what lets setRequireUserAction(USER_ACTION_NOT_REQUIRED)
+	     be honoured — for a self-update that is enough, with no installer-of-record
+	     requirement, so updates apply with no prompt at all. -->
+	<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+	<uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+
+	<!-- Doze is what kills a long-lived tunnel: it cuts the app's network in the idle
+	     windows, and the connection dies with no event to notice it by. The exemption is
+	     also what allows the foreground service to be started from the background, which is
+	     how the Quick Settings tile and the reconnect-after-update path work at all. -->
+	<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 </manifest>

@@ -1,4 +1,5 @@
 using Horus.Application;
+using Horus.Application.Update;
 using Horus.Domain.Interfaces;
 using Horus.Presentation.Navigation;
 using Horus.Presentation.View;
@@ -70,6 +71,10 @@ namespace Horus
 
             var services = builder.Services;
 
+            // The updater and both release sources need short-lived clients with their own
+            // headers and timeouts; ApiService keeps its long-lived one with the auth handler.
+            services.AddHttpClient();
+
             // ── Core Application Services ────────────────────────────────────
             services
                 .AddSingleton<VpnManager>()
@@ -79,21 +84,39 @@ namespace Horus
                 .AddSingleton<IApiService, ApiService>()
                 .AddSingleton<IAuthService, AuthService>()
                 .AddSingleton<ISubscriptionService, SubscriptionService>()
+                .AddSingleton<IAccountSync, AccountSyncService>()
                 .AddSingleton<ITrafficMonitorService, TrafficMonitorService>()
                 .AddSingleton<IRoutingService, RoutingService>()
                 .AddSingleton<IGeoDataService, GeoDataService>()
-                .AddSingleton<IErrorReportingService, ErrorReportingService>();
+                .AddSingleton<IErrorReportingService, ErrorReportingService>()
+                .AddSingleton<TunnelHealthMonitor>();
+
+            // ── Updates ──────────────────────────────────────────────────────
+            // Both sources are registered; UpdateService tries GitHub first and falls back
+            // to the site, which is the path that actually works for a blocked user.
+            services
+                .AddSingleton<IUpdateSource, GitHubReleaseSource>()
+                .AddSingleton<IUpdateSource, SiteReleaseSource>()
+                .AddSingleton<IUpdateService, UpdateService>();
 
             // ── Platform Services ────────────────────────────────────────────
 #if ANDROID
             services
                 .AddSingleton<IVpnPlatformService, AndroidVpnService>()
-                .AddSingleton<ISplitTunnelingService, AndroidSplitTunnelingService>();
+                .AddSingleton<ISplitTunnelingService, AndroidSplitTunnelingService>()
+                .AddSingleton<INetworkMonitor, AndroidNetworkMonitor>()
+                .AddSingleton<IUserNotifier, Platforms.Android.Update.AndroidUserNotifier>()
+                .AddSingleton<IDeviceConditions, Platforms.Android.Update.AndroidDeviceConditions>()
+                .AddSingleton<IUpdateInstaller, Platforms.Android.Update.AndroidUpdateInstaller>();
 #elif WINDOWS
             services
                 .AddSingleton<IVpnPlatformService, WindowsVpnService>()
                 .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>()
-                .AddSingleton<IPublisherTrustService, WindowsPublisherTrustService>();
+                .AddSingleton<INetworkMonitor, WindowsNetworkMonitor>()
+                .AddSingleton<IPublisherTrustService, WindowsPublisherTrustService>()
+                .AddSingleton<IUserNotifier, Platforms.Windows.Update.WindowsUserNotifier>()
+                .AddSingleton<IDeviceConditions, Platforms.Windows.Update.WindowsDeviceConditions>()
+                .AddSingleton<IUpdateInstaller, Platforms.Windows.Update.WindowsUpdateInstaller>();
 #elif IOS || MACCATALYST
             services
                 .AddSingleton<IVpnPlatformService, iOSVpnService>()
@@ -102,6 +125,15 @@ namespace Horus
             services
                 .AddSingleton<IVpnPlatformService, StubVpnPlatformService>()
                 .AddSingleton<ISplitTunnelingService, StubSplitTunnelingService>();
+#endif
+
+#if !ANDROID && !WINDOWS
+            // Store platforms update themselves; there is nothing here to replace.
+            services
+                .AddSingleton<INetworkMonitor, Application.PlatformStubs.StubNetworkMonitor>()
+                .AddSingleton<IUserNotifier, Application.PlatformStubs.StubUserNotifier>()
+                .AddSingleton<IDeviceConditions, Application.PlatformStubs.StubDeviceConditions>()
+                .AddSingleton<IUpdateInstaller, Application.PlatformStubs.StubUpdateInstaller>();
 #endif
 
 #if !WINDOWS
@@ -152,8 +184,17 @@ namespace Horus
                 if (root.TryGetProperty("SupportEmail", out var email))
                     AppConfiguration.SupportEmail = email.GetString() ?? AppConfiguration.SupportEmail;
 
-                if (root.TryGetProperty("SupportHandle", out var handle))
+                // SupportHandleTG is the current key; SupportHandle is the older spelling.
+                // Without the first, appsettings said "@horusping" while every screen kept
+                // showing the built-in default "@horus_vpn" — a support handle that does
+                // not exist.
+                if (root.TryGetProperty("SupportHandleTG", out var tg))
+                    AppConfiguration.SupportHandle = tg.GetString() ?? AppConfiguration.SupportHandle;
+                else if (root.TryGetProperty("SupportHandle", out var handle))
                     AppConfiguration.SupportHandle = handle.GetString() ?? AppConfiguration.SupportHandle;
+
+                if (root.TryGetProperty("UpdateReleasesUrl", out var releases))
+                    AppConfiguration.UpdateReleasesUrl = releases.GetString() ?? AppConfiguration.UpdateReleasesUrl;
 
                 if (root.TryGetProperty("BlockedPackages", out var blocked)
                     && blocked.ValueKind == JsonValueKind.Array)

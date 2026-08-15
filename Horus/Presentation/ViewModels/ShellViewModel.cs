@@ -18,6 +18,7 @@ namespace Horus.Presentation.ViewModels
         private readonly Navigator _nav;
         private readonly IAuthService _auth;
         private readonly IApiService _api;
+        private readonly IAccountSync _accountSync;
 
         public Navigator Nav => _nav;
         public MainViewModel Main { get; }
@@ -30,6 +31,7 @@ namespace Horus.Presentation.ViewModels
             Navigator nav,
             IAuthService auth,
             IApiService api,
+            IAccountSync accountSync,
             MainViewModel main,
             ServersViewModel servers,
             SettingsViewModel settings,
@@ -39,6 +41,7 @@ namespace Horus.Presentation.ViewModels
             _nav = nav;
             _auth = auth;
             _api = api;
+            _accountSync = accountSync;
             Main = main;
             Servers = servers;
             Settings = settings;
@@ -48,6 +51,10 @@ namespace Horus.Presentation.ViewModels
             _nav.PropertyChanged += OnNavChanged;
             _auth.AuthStateChanged += OnAuthChanged;
             _api.SessionExpired += OnSessionExpired;
+
+            // The sidebar's subscription line is driven by the same poll as the Home
+            // banner, so it updates without the user touching anything.
+            _accountSync.AccountRefreshed += (_, __) => RaiseAccount();
         }
 
         /// <summary>
@@ -206,7 +213,9 @@ namespace Horus.Presentation.ViewModels
             if (IsHome)
             {
                 if (Main.QuickServers.Count == 0) await Main.LoadQuickServersAsync();
-                // Cheap, and the egress IP changes whenever the tunnel does.
+                // Cheap, and the egress IP changes whenever the tunnel does. Coalesced
+                // with whatever the background poll is doing, so a fast tab switch does
+                // not stack up requests.
                 await Main.RefreshAccountAsync();
             }
             else if (IsServers && !Servers.HasLoaded) await Servers.LoadCommand.ExecuteAsync(null);

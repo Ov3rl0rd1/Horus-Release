@@ -16,4 +16,13 @@ namespace Horus.Domain.Events
     public record ProtocolFallbackEventArgs(string FromProtocol, string ToProtocol, string Reason);
     public record BinaryUpdateEventArgs(string BinaryName, string FromVersion, string ToVersion);
     public record ErrorReportSentEventArgs(bool Success, string? FailureReason);
+
+    /// <summary>
+    /// The physical link changed. <paramref name="IsHandover"/> distinguishes swapping one
+    /// working network for another — Wi-Fi to mobile, the case that needs an immediate
+    /// re-check — from simply going offline, where the only correct action is to wait.
+    /// </summary>
+    public record NetworkChangedEventArgs(NetworkTransport Transport, bool IsOnline, bool IsHandover);
+
+    public record TunnelHealthEventArgs(TunnelHealth Health, string Detail);
 }

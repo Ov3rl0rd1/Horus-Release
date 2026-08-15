@@ -37,6 +37,19 @@
     <Compile Include="..\Horus\Protocols\SocksPortAllocator.cs" Link="Linked\SocksPortAllocator.cs" />
     <Compile Include="..\Horus\Domain\Models\TunnelOption.cs" Link="Linked\TunnelOption.cs" />
     <Compile Include="..\Horus\Protocols\XrayConfigBuilder.cs" Link="Linked\XrayConfigBuilder.cs" />
+
+    <!--
+      The update path. Every one of these decides something whose failure is silent: a
+      version that compares wrong never offers an update, a checksum parsed wrong rejects a
+      good download, and a policy that reads a condition backwards spends a user's mobile
+      data or restarts their VPN mid-evening. None of it is observable in a manual test
+      inside a reasonable amount of time, which is exactly what makes it worth pinning here.
+    -->
+    <Compile Include="..\Horus\Domain\Models\AppVersion.cs" Link="Linked\AppVersion.cs" />
+    <Compile Include="..\Horus\Domain\Models\UpdateModels.cs" Link="Linked\UpdateModels.cs" />
+    <Compile Include="..\Horus\Application\Update\Sha256Sums.cs" Link="Linked\Sha256Sums.cs" />
+    <Compile Include="..\Horus\Application\Update\UpdatePolicy.cs" Link="Linked\UpdatePolicy.cs" />
+    <Compile Include="..\Horus\Application\Update\GitHubApi.cs" Link="Linked\GitHubApi.cs" />
   </ItemGroup>
 
 </Project>

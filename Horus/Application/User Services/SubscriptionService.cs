@@ -21,23 +21,34 @@ namespace Horus.Application
 
         public event EventHandler<SubscriptionChangedEventArgs>? SubscriptionChanged;
 
-        public async Task<SubscriptionInfo> CheckSubscriptionAsync()
+        /// <summary>
+        /// Fetches <c>/whoami</c> and applies it. Prefer <see cref="ApplyAsync"/> when a
+        /// snapshot is already in hand — this overload exists for callers that have none.
+        /// </summary>
+        public async Task<SubscriptionInfo> CheckSubscriptionAsync() =>
+            await ApplyAsync(await _api.GetWhoAmIAsync());
+
+        public async Task<SubscriptionInfo> ApplyAsync(WhoAmIResponse? me)
         {
             // /whoami is authoritative; the persisted expiry keeps the UI honest offline.
-            var me = await _api.GetWhoAmIAsync();
             if (me is not null)
                 await _storage.UpdateSubscriptionAsync(me.SubscriptionExpiresAt);
 
             var expiry = me?.SubscriptionExpiresAt ?? _storage.Subscription();
 
+            var previous = _current;
             _current = new SubscriptionInfo
             {
                 APIKey = _storage.Session() ?? string.Empty,
                 ExpireAt = expiry ?? DateTime.MinValue
             };
 
-            SubscriptionChanged?.Invoke(this,
-                new SubscriptionChangedEventArgs(_current, !_current.IsActive));
+            // Only announce an actual change. The poll runs every 20 s while a grant is
+            // awaited, and re-raising an unchanged expiry that often would have every
+            // subscriber redrawing on a timer.
+            if (previous is null || previous.ExpireAt != _current.ExpireAt)
+                SubscriptionChanged?.Invoke(this,
+                    new SubscriptionChangedEventArgs(_current, !_current.IsActive));
 
             return _current;
         }

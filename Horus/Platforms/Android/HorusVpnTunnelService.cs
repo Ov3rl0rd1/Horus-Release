@@ -31,6 +31,16 @@ namespace Horus.Platforms.Android
 
         private ParcelFileDescriptor? _tunFd;
 
+        /// <summary>
+        /// The live instance, so the network monitor can push the underlying network onto
+        /// it. Weakly held is unnecessary — the service outlives everything that uses this,
+        /// and it is cleared in <see cref="OnDestroy"/>.
+        /// </summary>
+        private static HorusVpnTunnelService? _instance;
+
+        /// <summary>Remembered so a service restart can re-apply it without a new callback.</summary>
+        private static Network? _underlying;
+
         public static TunnelState CurrentState { get; private set; } = TunnelState.Unknown;
         public static event EventHandler<TunnelStateChangedEventArgs>? TunnelStateChanged;
 
@@ -60,6 +70,39 @@ namespace Horus.Platforms.Android
             intent.SetAction(ActionStop);
             global::Android.App.Application.Context.StartService(intent);
             return _stopTcs.Task;
+        }
+
+        /// <summary>
+        /// Tells the system which physical network is carrying the tunnel. Called on every
+        /// handover by <see cref="AndroidNetworkMonitor"/>.
+        ///
+        /// Passing null hands the decision back to the system rather than asserting "no
+        /// network", which is the correct thing to do while offline: asserting an empty
+        /// array marks the VPN as having no connectivity, and some system components take
+        /// that as licence to tear it down.
+        /// </summary>
+        internal static void SetUnderlyingNetwork(Network? network)
+        {
+            _underlying = network;
+            _instance?.ApplyUnderlyingNetwork();
+        }
+
+        private void ApplyUnderlyingNetwork()
+        {
+            if (_tunFd is null) return; // nothing established yet; CreateTunnel will apply it
+            SetUnderlyingNetworks(_underlying is null ? null : [_underlying]);
+        }
+
+        public override void OnCreate()
+        {
+            base.OnCreate();
+            _instance = this;
+        }
+
+        public override void OnDestroy()
+        {
+            if (ReferenceEquals(_instance, this)) _instance = null;
+            base.OnDestroy();
         }
 
         public override StartCommandResult OnStartCommand(Intent? intent, StartCommandFlags flags, int startId)
@@ -131,6 +174,11 @@ namespace Horus.Platforms.Android
 
                 _tunFd = builder.Establish()
                     ?? throw new InvalidOperationException("VpnService.Builder.Establish() returned null.");
+
+                // Immediately, not only on the next handover: whatever the monitor last saw
+                // is the link this tunnel is being built on, and leaving it unset until
+                // something changes means the first session of every connect is misattributed.
+                ApplyUnderlyingNetwork();
 
                 HevSocksTunnel.StartTunnel(_tunFd.Fd, options.SocksPort);
 
