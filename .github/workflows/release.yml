@@ -79,10 +79,17 @@ jobs:
       # runtime is present, and "install this other thing first" loses users at the door.
       # UseMonoRuntime=false because the MAUI default would pull a Mono pack that does not
       # exist for win-x64.
+      #
+      # TargetFrameworks is pinned because -f only narrows the *build*: restore still
+      # evaluates every framework in the project, so it reached net10.0-android and failed
+      # with NETSDK1147 on a runner that only has the maui-windows workload. Passing it on
+      # the command line makes it a global property, which the project cannot reassign, so
+      # restore sees exactly one framework.
       - name: Publish
         run: >
           dotnet publish Horus/Horus.csproj
           -f net10.0-windows10.0.19041.0 -c Release -r win-x64
+          -p:TargetFrameworks=net10.0-windows10.0.19041.0
           -p:SelfContained=true -p:UseMonoRuntime=false
           -p:ApplicationDisplayVersion=${{ inputs.version }}
           -p:ApplicationVersion=${{ inputs.version_code }}
@@ -233,10 +240,16 @@ jobs:
       # HorusDistribution=true turns the release checklist into build errors: Release config,
       # not debuggable, really signed, apk not aab. It exists because a warning-only version
       # of the same check is how a debuggable, debug-signed APK once reached bin/Release.
+      #
+      # TargetFrameworks pinned for the same reason as the Windows job. It happens to be
+      # redundant today — the project already drops the iOS and Windows frameworks when it
+      # evaluates on Linux — but that is a condition inside the csproj, and relying on it
+      # means changing that condition silently breaks CI restore.
       - name: Publish ${{ matrix.abi }}
         run: >
           dotnet publish Horus/Horus.csproj
           -f net10.0-android -c Release -r ${{ matrix.rid }}
+          -p:TargetFrameworks=net10.0-android
           -p:HorusDistribution=true
           -p:AndroidPackageFormat=apk
           -p:ApplicationDisplayVersion=${{ inputs.version }}
