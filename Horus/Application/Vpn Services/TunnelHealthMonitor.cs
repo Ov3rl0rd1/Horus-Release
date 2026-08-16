@@ -90,6 +90,7 @@ namespace Horus.Application
         private readonly IVpnPlatformService _platform;
         private readonly IApiService _api;
         private readonly IDeviceConditions _device;
+        private readonly INetworkMonitor _network;
 
         private CancellationTokenSource? _cts;
         private Endpoint _endpoint;
@@ -103,11 +104,13 @@ namespace Horus.Application
         /// <summary>Raised when the tunnel is not healthy. Never raised for <see cref="TunnelHealth.Healthy"/>.</summary>
         public event EventHandler<TunnelHealthEventArgs>? Unhealthy;
 
-        public TunnelHealthMonitor(IVpnPlatformService platform, IApiService api, IDeviceConditions device)
+        public TunnelHealthMonitor(
+            IVpnPlatformService platform, IApiService api, IDeviceConditions device, INetworkMonitor network)
         {
             _platform = platform;
             _api = api;
             _device = device;
+            _network = network;
         }
 
         /// <summary>
@@ -160,7 +163,7 @@ namespace Horus.Application
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    await Task.Delay(CurrentInterval(), ct).ConfigureAwait(false);
+                    await WaitAsync(CurrentInterval(), ct).ConfigureAwait(false);
 
                     var cheap = CheckCounters();
                     if (cheap == TunnelHealth.Healthy) continue;
@@ -192,6 +195,39 @@ namespace Horus.Application
         {
             try { return _device.Read().IsInteractive ? ActiveInterval : IdleInterval; }
             catch { return ActiveInterval; }
+        }
+
+        /// <summary>
+        /// Sleeps until the interval elapses or someone calls <see cref="WakeNow"/>.
+        ///
+        /// A plain delay was why waking the phone did not help: the loop was already
+        /// several seconds into a 90-second sleep chosen while the screen was off, and
+        /// nothing could shorten it. The first check after the user picked the phone up
+        /// could be a minute and a half late, and two samples are needed before a probe —
+        /// which is the "rebuilt two or three minutes after I turned the screen on" the
+        /// device actually showed.
+        /// </summary>
+        private async Task WaitAsync(TimeSpan interval, CancellationToken ct)
+        {
+            var wake = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Interlocked.Exchange(ref _wake, wake);
+
+            using var registration = ct.Register(() => wake.TrySetResult());
+            await Task.WhenAny(wake.Task, Task.Delay(interval, ct)).ConfigureAwait(false);
+
+            ct.ThrowIfCancellationRequested();
+        }
+
+        private TaskCompletionSource? _wake;
+
+        /// <summary>
+        /// Cuts the current wait short so the next check happens immediately. Called when
+        /// the device wakes: that is the moment a stale tunnel starts costing the user
+        /// something, and the moment it is worth spending a probe on.
+        /// </summary>
+        public void WakeNow()
+        {
+            Interlocked.Exchange(ref _wake, null)?.TrySetResult();
         }
 
         // ── Cheap tier ──────────────────────────────────────────────────────
@@ -251,7 +287,16 @@ namespace Horus.Application
 
             // Sending into what is effectively silence. One sample could be a slow request;
             // two in a row is a pattern worth paying for a probe to explain.
-            return ++_suspicion >= SuspicionLimit ? TunnelHealth.OutboundDead : TunnelHealth.Healthy;
+            if (++_suspicion < SuspicionLimit)
+            {
+                // On the first suspicion, hand the question to the platform: it will
+                // re-run its own validation through the tunnel and answer with a
+                // capability change, which usually lands before our second sample does.
+                _network.ReportTunnelSuspect();
+                return TunnelHealth.Healthy;
+            }
+
+            return TunnelHealth.OutboundDead;
         }
 
         // ── Expensive tier ──────────────────────────────────────────────────

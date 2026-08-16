@@ -125,6 +125,13 @@ namespace Horus.Application
 
             _health.Unhealthy += OnUnhealthy;
             _network.NetworkChanged += OnNetworkChanged;
+
+            // The two push signals. Neither costs a timer, and between them they cover the
+            // cases a periodic check is worst at: the platform noticing the tunnel stopped
+            // carrying, and the user coming back to a device that broke while it slept.
+            _network.TunnelValidationLost += OnTunnelValidationLost;
+            _network.DeviceWoke += OnDeviceWoke;
+
             _network.Start();
         }
 
@@ -412,6 +419,45 @@ namespace Horus.Application
             }
 
             _ = RecoverAsync(e.Health.ToString());
+        }
+
+        /// <summary>
+        /// Android withdrew <c>NET_CAPABILITY_VALIDATED</c> from our tunnel: its own probe
+        /// through the VPN stopped reaching the internet.
+        ///
+        /// This is as authoritative as it gets and it arrives without us asking, so it is
+        /// acted on directly rather than being fed back through the counter heuristics.
+        /// The link underneath is still checked, because a phone that has simply lost
+        /// signal produces this too and reconnecting would be pointless.
+        /// </summary>
+        private void OnTunnelValidationLost(object? sender, EventArgs e)
+        {
+            if (State != VpnState.Connected) return;
+
+            if (!_network.IsOnline)
+            {
+                OnProtocolOutput(this, "[health] tunnel lost validation, but the link is down too — waiting");
+                return;
+            }
+
+            OnProtocolOutput(this, "[health] the system says the tunnel no longer reaches the internet");
+            OnUnhealthy(this, new TunnelHealthEventArgs(
+                TunnelHealth.OutboundDead, "platform withdrew VALIDATED from the tunnel"));
+        }
+
+        /// <summary>
+        /// The user is back. Whatever broke while the phone slept broke unobserved and
+        /// costs nothing until now — so this is the moment to look, and looking here is
+        /// what replaces checking all night.
+        /// </summary>
+        private void OnDeviceWoke(object? sender, EventArgs e)
+        {
+            if (State != VpnState.Connected) return;
+
+            // Cut the current sleep short. The loop had picked a 90-second interval while
+            // the screen was off, and waiting it out was most of the delay the user saw.
+            _health.WakeNow();
+            _network.ReportTunnelSuspect();
         }
 
         /// <summary>

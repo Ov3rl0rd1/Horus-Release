@@ -30,8 +30,26 @@ namespace Horus.Platforms.Windows
 
         public event EventHandler<NetworkChangedEventArgs>? NetworkChanged;
 
+        /// <summary>
+        /// Never raised on Windows: there is no equivalent of Android's continuous network
+        /// validation, so nothing here can push a "the tunnel stopped working" verdict.
+        /// Detection on this platform stays with the counter checks.
+        /// </summary>
+        public event EventHandler? TunnelValidationLost;
+
+        /// <summary>
+        /// Not raised. Resuming from sleep brings the adapters back, and that already
+        /// arrives as an address-availability change — so the wake case is covered by the
+        /// subscription above without taking a dependency on
+        /// <c>Microsoft.Win32.SystemEvents</c> for a second path to the same event.
+        /// </summary>
+        public event EventHandler? DeviceWoke;
+
         public bool IsOnline { get; private set; }
         public NetworkTransport Transport { get; private set; } = NetworkTransport.None;
+
+        /// <summary>No platform revalidation to ask for; the health monitor probes instead.</summary>
+        public void ReportTunnelSuspect() { }
 
         public void Start()
         {
