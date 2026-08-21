@@ -64,6 +64,7 @@ namespace Horus.Protocols
             {
                 Link = link,
                 LogFilePath = DiagnosticPaths.XrayLog,
+                LogLevel = Horus.Application.UserPreferences.XrayLogLevel,
 
                 // Chosen per attempt rather than fixed at 1080. The fallback loop stops the
                 // core between attempts, so a retry re-picks the same port unless something

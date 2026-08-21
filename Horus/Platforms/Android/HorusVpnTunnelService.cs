@@ -2,6 +2,7 @@ using Android.App;
 using Android.Content;
 using Android.Net;
 using Android.OS;
+using Horus.Application;
 using Horus.Domain.Events;
 using Horus.Domain.Models;
 using SplitTunnelingMode = Horus.Domain.Models.SplitTunnelingMode;
@@ -32,14 +33,14 @@ namespace Horus.Platforms.Android
         private ParcelFileDescriptor? _tunFd;
 
         /// <summary>
-        /// The live instance, so the network monitor can push the underlying network onto
+        /// The live instance, so the network monitor can push the underlying networks onto
         /// it. Weakly held is unnecessary — the service outlives everything that uses this,
         /// and it is cleared in <see cref="OnDestroy"/>.
         /// </summary>
         private static HorusVpnTunnelService? _instance;
 
         /// <summary>Remembered so a service restart can re-apply it without a new callback.</summary>
-        private static Network? _underlying;
+        private static Network[]? _underlying;
 
         public static TunnelState CurrentState { get; private set; } = TunnelState.Unknown;
         public static event EventHandler<TunnelStateChangedEventArgs>? TunnelStateChanged;
@@ -57,7 +58,7 @@ namespace Horus.Platforms.Android
         internal static Task StartTunnelAsync(TunnelOptions options)
         {
             _pendingOptions = options;
-            _startTcs = new TaskCompletionSource<bool>();
+            _startTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var intent = new Intent(global::Android.App.Application.Context, typeof(HorusVpnTunnelService));
             global::Android.App.Application.Context.StartForegroundService(intent);
             return _startTcs.Task;
@@ -65,7 +66,7 @@ namespace Horus.Platforms.Android
 
         internal static Task StopTunnelAsync()
         {
-            _stopTcs = new TaskCompletionSource<bool>();
+            _stopTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             var intent = new Intent(global::Android.App.Application.Context, typeof(HorusVpnTunnelService));
             intent.SetAction(ActionStop);
             global::Android.App.Application.Context.StartService(intent);
@@ -73,24 +74,34 @@ namespace Horus.Platforms.Android
         }
 
         /// <summary>
-        /// Tells the system which physical network is carrying the tunnel. Called on every
-        /// handover by <see cref="AndroidNetworkMonitor"/>.
+        /// Tells the system which physical networks are carrying the tunnel, in priority
+        /// order — index 0 is preferred. Called on every handover by
+        /// <see cref="AndroidNetworkMonitor"/>.
         ///
-        /// Passing null hands the decision back to the system rather than asserting "no
-        /// network", which is the correct thing to do while offline: asserting an empty
-        /// array marks the VPN as having no connectivity, and some system components take
-        /// that as licence to tear it down.
+        /// <para>Null and empty are not the same thing and the difference matters. Null
+        /// hands the decision back to the system, which is correct while offline: asserting
+        /// an empty array marks the VPN as having no connectivity, and some system
+        /// components take that as licence to tear it down. Empty is therefore never passed
+        /// on — it is normalised to null in <see cref="ApplyUnderlyingNetwork"/>.</para>
         /// </summary>
-        internal static void SetUnderlyingNetwork(Network? network)
+        internal static void SetUnderlyingNetwork(Network[]? networks)
         {
-            _underlying = network;
+            _underlying = networks;
             _instance?.ApplyUnderlyingNetwork();
         }
 
         private void ApplyUnderlyingNetwork()
         {
             if (_tunFd is null) return; // nothing established yet; CreateTunnel will apply it
-            SetUnderlyingNetworks(_underlying is null ? null : [_underlying]);
+
+            try
+            {
+                SetUnderlyingNetworks(_underlying is { Length: > 0 } ? _underlying : null);
+            }
+            catch (Exception ex)
+            {
+                Diag.Warn("tun", $"setUnderlyingNetworks failed: {ex.Message}");
+            }
         }
 
         public override void OnCreate()
@@ -102,6 +113,7 @@ namespace Horus.Platforms.Android
         public override void OnDestroy()
         {
             if (ReferenceEquals(_instance, this)) _instance = null;
+            Diag.Info("tun", "service destroyed");
             base.OnDestroy();
         }
 
@@ -114,24 +126,115 @@ namespace Horus.Platforms.Android
                 return StartCommandResult.NotSticky;
             }
 
-            EnsureNotificationChannel();
-            StartForeground(NotificationId, BuildNotification("Подключение…"));
-
-            // A restarted service arrives with a null Intent and stale static state, so
-            // there is nothing useful to resume — Sticky would leave a permanent
-            // "Подключение…" notification attached to no tunnel.
-            if (_pendingOptions == null)
+            // Foreground first, and within five seconds of being started, or the system
+            // kills the service outright. Everything expensive happens after this returns.
+            if (!TryStartForeground())
             {
+                _startTcs?.TrySetException(new InvalidOperationException(
+                    "Система не разрешила запустить фоновую службу VPN."));
+                StopSelf();
+                return StartCommandResult.NotSticky;
+            }
+
+            // A null intent means the system restarted us after the process died. Static
+            // state went with it, so there is nothing to resume — but if the user never
+            // turned the VPN off, the right move is to run the whole connect path again
+            // rather than sit here with a notification attached to no tunnel.
+            if (_pendingOptions is null)
+            {
+                if (intent is null && VpnIntent.Active) return ResumeAfterProcessDeath();
+
+                Diag.Info("tun", $"start with no options (intent? {intent is not null}); stopping");
                 StopSelf();
                 return StartCommandResult.NotSticky;
             }
 
             Task.Run(CreateTunnel);
-            return StartCommandResult.NotSticky;
+
+            // Sticky: if the process is reclaimed while the tunnel is up, Android brings the
+            // service back and the branch above rebuilds the connection. This is the single
+            // change that turns "the VPN was off in the morning" into "it came back".
+            return StartCommandResult.Sticky;
+        }
+
+        /// <summary>
+        /// Rebuilds a connection the system asked us to resume.
+        ///
+        /// <para>Budgeted on purpose. A connect that fails immediately would otherwise
+        /// become a restart loop — service starts, fails, stops, Android restarts it — that
+        /// costs far more battery than the leak any of this was meant to fix.
+        /// <see cref="VpnIntent.TryConsumeRestart"/> allows a few attempts inside a rolling
+        /// window and then stands down, leaving the user a notification instead. Same
+        /// reasoning as NekoBox refusing to restart a child process that exits within a
+        /// second of starting.</para>
+        /// </summary>
+        private StartCommandResult ResumeAfterProcessDeath()
+        {
+            if (!VpnIntent.TryConsumeRestart())
+            {
+                UpdateNotification("Не удалось восстановить подключение");
+                StopForeground(StopForegroundFlags.Detach);
+                StopSelf();
+                return StartCommandResult.NotSticky;
+            }
+
+            Diag.Warn("tun", "restarted by the system; re-running connect");
+            UpdateNotification("Восстановление подключения…");
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var ok = await BackgroundVpnControl.TryConnectAsync().ConfigureAwait(false);
+                    if (!ok)
+                    {
+                        Diag.Error("tun", "post-restart reconnect failed");
+                        UpdateNotification("Не удалось восстановить подключение");
+                        StopSelf();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Diag.Error("tun", $"post-restart reconnect threw: {ex.Message}");
+                    StopSelf();
+                }
+            });
+
+            return StartCommandResult.Sticky;
+        }
+
+        /// <summary>
+        /// Enters the foreground, reporting failure rather than throwing.
+        ///
+        /// <para>Android 12+ can refuse a background start outright
+        /// (<c>ForegroundServiceStartNotAllowedException</c>), and 14+ can reject the
+        /// declared service type. Both used to take the process down from a background
+        /// thread with nothing written anywhere; a false return lets the caller stop
+        /// cleanly and say why.</para>
+        /// </summary>
+        private bool TryStartForeground()
+        {
+            try
+            {
+                EnsureNotificationChannel();
+                StartForeground(NotificationId, BuildNotification("Подключение…"));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Diag.Error("tun", $"startForeground refused: {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
         }
 
         public override void OnRevoke()
         {
+            // The user handed the VPN slot to another app, or turned Horus off in system
+            // settings. Clearing the intent is what stops every automatic path from
+            // fighting that decision for the rest of the device's life.
+            Diag.User("tun", "VPN revoked by the system");
+            VpnIntent.Clear();
+
             CloseTunnel();
             base.OnRevoke();
         }
@@ -141,7 +244,7 @@ namespace Horus.Platforms.Android
             var options = _pendingOptions;
             if (options == null)
             {
-                _startTcs?.SetException(new InvalidOperationException("No tunnel options provided."));
+                _startTcs?.TrySetException(new InvalidOperationException("No tunnel options provided."));
                 return;
             }
 
@@ -184,12 +287,14 @@ namespace Horus.Platforms.Android
 
                 UpdateNotification("Подключено");
                 SetState(TunnelState.Started);
-                _startTcs?.SetResult(true);
+                Diag.Info("tun", $"established, mtu {options.Mtu}, socks {options.SocksPort}");
+                _startTcs?.TrySetResult(true);
             }
             catch (Exception ex)
             {
+                Diag.Error("tun", $"establish failed: {ex.Message}");
                 SetState(TunnelState.Error);
-                _startTcs?.SetException(ex);
+                _startTcs?.TrySetException(ex);
             }
         }
 
@@ -257,7 +362,11 @@ namespace Horus.Platforms.Android
         {
             SetState(TunnelState.Stopping);
 
-            HevSocksTunnel.StopTunnel();
+            // A false here means the bridge thread did not unwind, so a later start would
+            // put a second reader on the same TUN fd. HevSocksTunnel.StartTunnel refuses in
+            // that case; logging it is what makes the resulting failed connect explicable.
+            if (!HevSocksTunnel.StopTunnel())
+                Diag.Error("tun", "bridge did not stop cleanly; next connect will be refused until it does");
 
             try
             {
@@ -266,9 +375,13 @@ namespace Horus.Platforms.Android
             }
             catch { }
 
+            // Cleared so a later start cannot pick up options belonging to a connection
+            // that is already gone.
+            _pendingOptions = null;
+
             StopForeground(StopForegroundFlags.Remove);
             SetState(TunnelState.Stopped);
-            _stopTcs?.SetResult(true);
+            _stopTcs?.TrySetResult(true);
         }
 
         private void EnsureNotificationChannel()
@@ -295,10 +408,20 @@ namespace Horus.Platforms.Android
             return builder.Build();
         }
 
+        /// <summary>
+        /// Repaints the ongoing notification. Only ever called on a state change — never on
+        /// a timer. Rebuilding a Notification and handing it to SystemUI once a second is
+        /// one of the larger avoidable battery costs in a VPN client, and there is nothing
+        /// here worth paying it for.
+        /// </summary>
         private void UpdateNotification(string text)
         {
-            var nm = (NotificationManager?)GetSystemService(NotificationService);
-            nm?.Notify(NotificationId, BuildNotification(text));
+            try
+            {
+                var nm = (NotificationManager?)GetSystemService(NotificationService);
+                nm?.Notify(NotificationId, BuildNotification(text));
+            }
+            catch (Exception ex) { Diag.Warn("tun", $"notification update failed: {ex.Message}"); }
         }
 
         private static void SetState(TunnelState state)

@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Horus.Application;
+using Horus.Application.Diagnostics;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 using Horus.Presentation.Navigation;
@@ -38,7 +40,12 @@ namespace Horus.Presentation.ViewModels
         public string SupportHandle => AppConfiguration.SupportHandle;
 
         // ── Connection toggles (placeholders — not yet enforced) ──
-        [ObservableProperty] private bool _autoStart = true;
+        /// <summary>
+        /// Bring the tunnel back after a reboot. Backed by <see cref="UserPreferences"/>
+        /// because BootReceiver reads it from a broadcast, where there is no DI scope and
+        /// no ViewModel — this property was previously bound to nothing at all.
+        /// </summary>
+        [ObservableProperty] private bool _autoStart = UserPreferences.AutoStartOnBoot;
         public string SplitTunnelingValue =>
             SplitTunnelingMode == SplitTunnelingMode.Disabled ? "выкл" : "включён";
 
@@ -69,7 +76,20 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void SetModeCustom() => SplitTunnelingMode = SplitTunnelingMode.Blacklist;
 
         // ── Connection ────────────────────────────────────────────────────────
-        [ObservableProperty] private bool _autoConnect;
+        /// <summary>Connect when the app launches, if the VPN was on when it last stopped.</summary>
+        [ObservableProperty] private bool _autoConnect = UserPreferences.AutoConnectOnLaunch;
+
+        /// <summary>Verbose diagnostics. Applies on the next connect — both native
+        /// components read their log level from a config rendered at start-up.</summary>
+        [ObservableProperty] private bool _verboseLogging = UserPreferences.VerboseLogging;
+
+        // ── Diagnostics surface ───────────────────────────────────────────
+
+        /// <summary>True when the previous session ended in an unhandled exception.</summary>
+        [ObservableProperty] private bool _hasLastCrash;
+
+        /// <summary>When it happened, for the row subtitle.</summary>
+        [ObservableProperty] private string _lastCrashSummary = string.Empty;
         [ObservableProperty] private bool _killSwitch;
         [ObservableProperty] private string _customDns = "1.1.1.1, 8.8.8.8";
 
@@ -104,6 +124,8 @@ namespace Horus.Presentation.ViewModels
 
         public async Task InitializeAsync()
         {
+            RefreshCrashState();
+
             // Account info
             if (_auth.CurrentUser != null)
             {
@@ -372,6 +394,24 @@ namespace Horus.Presentation.ViewModels
         }
 
         // ── Navigation (custom root, no Shell) ──
+        partial void OnAutoStartChanged(bool value)
+        {
+            UserPreferences.AutoStartOnBoot = value;
+            Diag.User("settings", $"auto-start on boot: {value}");
+        }
+
+        partial void OnAutoConnectChanged(bool value)
+        {
+            UserPreferences.AutoConnectOnLaunch = value;
+            Diag.User("settings", $"auto-connect on launch: {value}");
+        }
+
+        partial void OnVerboseLoggingChanged(bool value)
+        {
+            UserPreferences.VerboseLogging = value;
+            Diag.User("settings", $"verbose logging: {value}");
+        }
+
         [RelayCommand] private void GoSplit() => _nav.Go(AppScreen.Split);
         [RelayCommand] private void BackToSettings() => _nav.Go(AppScreen.Settings);
         [RelayCommand] private void OpenPay() => _payment.Open();
@@ -411,6 +451,74 @@ namespace Horus.Presentation.ViewModels
             {
                 IsBusy = false;
             }
+        }
+
+        /// <summary>
+        /// Shows what the app currently believes, as text.
+        ///
+        /// <para>Deliberately a dialog with a copy button rather than a screen: most people
+        /// reporting a problem are already in a chat window, and a screenshot or a paste is
+        /// the whole interaction. The same content goes into the archive as
+        /// <c>state.txt</c>.</para>
+        /// </summary>
+        [RelayCommand]
+        private async Task ShowStateAsync()
+        {
+            string text;
+            try { text = StateSnapshot.BuildText(); }
+            catch (Exception ex) { text = $"Не удалось собрать состояние: {ex.Message}"; }
+
+            var copy = await Dialog.Confirm("Состояние", text, "Копировать", "Закрыть");
+            if (!copy) return;
+
+            await Clipboard.Default.SetTextAsync(text);
+            ShowStatus("Состояние скопировано.");
+        }
+
+        /// <summary>
+        /// Surfaces the previous session's crash and offers to clear the record.
+        ///
+        /// <para>The record is kept across sessions on purpose — an unhandled exception at
+        /// 3 a.m. is invisible by morning, and the user has no way to know there was
+        /// anything to report. Clearing is explicit so acknowledging it does not also
+        /// discard the detail before the archive is collected.</para>
+        /// </summary>
+        [RelayCommand]
+        private async Task ShowLastCrashAsync()
+        {
+            var (crashed, at, summary) = CrashHandler.LastCrash();
+            if (!crashed)
+            {
+                ShowStatus("Сбоев не зафиксировано.");
+                RefreshCrashState();
+                return;
+            }
+
+            var body =
+                $"Время: {at?.ToLocalTime():dd.MM.yyyy HH:mm:ss}\n\n{summary}\n\n" +
+                "Подробности попадут в архив «Собрать логи».";
+
+            var clear = await Dialog.Confirm("Последний сбой", body, "Очистить", "Закрыть");
+            if (!clear) return;
+
+            CrashHandler.ClearLastCrash();
+            RefreshCrashState();
+            ShowStatus("Запись о сбое удалена.");
+        }
+
+        /// <summary>Re-reads the crash record so the row appears or disappears.</summary>
+        public void RefreshCrashState()
+        {
+            var (crashed, at, summary) = CrashHandler.LastCrash();
+            HasLastCrash = crashed;
+            LastCrashSummary = crashed
+                ? $"{at?.ToLocalTime():dd.MM HH:mm} — {Shorten(summary)}"
+                : string.Empty;
+
+            static string Shorten(string? text) =>
+                string.IsNullOrWhiteSpace(text) ? "неизвестная ошибка"
+                : text.Length <= 60 ? text
+                : text[..60] + "…";
         }
 
         /// <summary>Rolling connection log, for testers who would rather paste text than

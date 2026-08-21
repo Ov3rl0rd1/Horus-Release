@@ -46,6 +46,7 @@ misc:
   task-stack-size: 81920
   log-file: {logFile.Replace('\\', '/')}
   log-level: {logLevel}
+  log-max-size: {MaxLogBytes}
 tunnel:
   name: {TunnelName}
   multi-queue: false
@@ -57,6 +58,20 @@ socks5:
   address: 127.0.0.1
   udp: 'udp'
 """;
+
+        /// <summary>
+        /// Cap on the log file, in bytes, enforced inside the bridge.
+        ///
+        /// <para>Upstream's logger appends forever. A session here can last weeks, and
+        /// at the verbose level a user is asked to turn on when something is wrong there
+        /// is nothing to stop it filling the device. The bridge truncates in place on
+        /// reaching this — see packaging/android/hev-patches for why truncation rather
+        /// than rotation. A stock upstream build simply ignores the key.</para>
+        ///
+        /// <para>2 MiB: far more than a healthy session at the shipping level ever
+        /// writes, and small enough to be harmless if verbose logging is left on.</para>
+        /// </summary>
+        public const int MaxLogBytes = 2 * 1024 * 1024;
 
         /// <summary>
         /// At <c>warn</c> a healthy-looking but dead tunnel writes an empty log, which is

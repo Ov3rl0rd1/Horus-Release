@@ -1,3 +1,4 @@
+using Horus.Application.Diagnostics;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
@@ -87,6 +88,33 @@ namespace Horus.Application
 
         private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(6);
 
+        /// <summary>
+        /// Neutral targets, tried before anything of ours.
+        ///
+        /// <para>The probe used to go straight to the Horus API through the proxy, which
+        /// made the health of the tunnel depend on the health of our backend — an API that
+        /// is blocked, down or merely slow produced "OutboundDead" and an unnecessary
+        /// rebuild of a perfectly good tunnel. The connect-time preflight already knew
+        /// better and fell back to a bare SOCKS5 dial; this is that same correction applied
+        /// to the periodic check.</para>
+        ///
+        /// <para>The first entry is a hostname on purpose, so a success also proves the core
+        /// can resolve — the half that breaks silently. The second is a literal address, so
+        /// a failure of the first can be attributed to DNS rather than to the tunnel.</para>
+        /// </summary>
+        private static readonly (string Host, int Port)[] NeutralTargets =
+        [
+            ("cloudflare.com", 443),
+            ("1.1.1.1", 443)
+        ];
+
+        /// <summary>
+        /// 0 or 1. Stops overlapping probes: several network events in quick succession
+        /// used to each start their own six-second request, and whichever finished first
+        /// decided the tunnel's fate.
+        /// </summary>
+        private int _probing;
+
         private readonly IVpnPlatformService _platform;
         private readonly IApiService _api;
         private readonly IDeviceConditions _device;
@@ -123,6 +151,7 @@ namespace Horus.Application
         public void Start(Endpoint endpoint)
         {
             Stop();
+            StateSnapshot.Register("health", 15, Describe);
             _endpoint = endpoint;
             _hasBaseline = false;
             _suspicion = 0;
@@ -147,11 +176,25 @@ namespace Horus.Application
             var ct = _cts?.Token ?? CancellationToken.None;
             if (ct.IsCancellationRequested) return;
 
+            // One at a time. Without this, a burst of network events each started a probe
+            // and they raced to classify the same tunnel.
+            if (Interlocked.CompareExchange(ref _probing, 1, 0) != 0)
+            {
+                Diag.Trace("health", $"probe already in flight, skipping: {reason}");
+                return;
+            }
+
             _ = Task.Run(async () =>
             {
-                var health = await ProbeAsync(ct).ConfigureAwait(false);
-                if (health != TunnelHealth.Healthy) Raise(health, reason);
-                else _suspicion = 0;
+                try
+                {
+                    var health = await ProbeAsync(ct).ConfigureAwait(false);
+                    if (health != TunnelHealth.Healthy) Raise(health, reason);
+                    else _suspicion = 0;
+                }
+                catch (OperationCanceledException) { /* stopped */ }
+                catch (Exception ex) { Diag.Warn("health", $"probe threw: {ex.Message}"); }
+                finally { Interlocked.Exchange(ref _probing, 0); }
             }, ct);
         }
 
@@ -213,7 +256,13 @@ namespace Horus.Application
             Interlocked.Exchange(ref _wake, wake);
 
             using var registration = ct.Register(() => wake.TrySetResult());
-            await Task.WhenAny(wake.Task, Task.Delay(interval, ct)).ConfigureAwait(false);
+
+            // Aligned to the interval boundary rather than started wherever this iteration
+            // happened to finish, so the platform can coalesce this wakeup with others
+            // instead of servicing it at an arbitrary offset. Advancing by whole intervals
+            // also stops a slow check from dragging every later one out of alignment.
+            var deadline = Cadence.AlignToNext(Cadence.NowMs(), (long)interval.TotalMilliseconds);
+            await Cadence.WaitUntilAsync(deadline, wake.Task, ct).ConfigureAwait(false);
 
             ct.ThrowIfCancellationRequested();
         }
@@ -305,6 +354,26 @@ namespace Horus.Application
         {
             if (!XrayProtocol.IsCoreRunning) return TunnelHealth.CoreDead;
 
+            // Cheapest and most neutral first: a SOCKS5 CONNECT costs one round trip, needs
+            // nothing of ours, and its reply code is the core's own statement about whether
+            // it reached the target.
+            foreach (var (host, port) in NeutralTargets)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (await SocksProbe.CanDialAsync(
+                        _endpoint.SocksPort, host, port, ProbeTimeout, ct).ConfigureAwait(false))
+                {
+                    Diag.Trace("health", $"probe ok via {host}:{port}");
+                    return TunnelHealth.Healthy;
+                }
+
+                Diag.Trace("health", $"probe failed via {host}:{port}");
+            }
+
+            // Both neutral targets refused. Before condemning the tunnel, try our own API
+            // through the proxy: a network that blocks these two specifically is unusual
+            // but not impossible, and a false OutboundDead costs the user a rebuild.
             try
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -339,6 +408,16 @@ namespace Horus.Application
         {
             try { return _device.Read().HasNetwork; }
             catch { return true; } // unreadable: assume the link is fine and blame the tunnel
+        }
+
+        private IEnumerable<KeyValuePair<string, string?>> Describe()
+        {
+            yield return new("running", (_cts is { IsCancellationRequested: false }).ToString());
+            yield return new("interval", CurrentInterval().TotalSeconds + "s");
+            yield return new("suspicion", $"{_suspicion}/{SuspicionLimit}");
+            yield return new("lastSample", _lastSample);
+            yield return new("probeInFlight", (Volatile.Read(ref _probing) != 0).ToString());
+            yield return new("socksPort", _endpoint.SocksPort.ToString());
         }
 
         private void Raise(TunnelHealth health, string detail)

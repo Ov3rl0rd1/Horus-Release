@@ -32,10 +32,11 @@ namespace Horus.Platforms.Windows
 
         /// <summary>
         /// Never raised on Windows: there is no equivalent of Android's continuous network
-        /// validation, so nothing here can push a "the tunnel stopped working" verdict.
-        /// Detection on this platform stays with the counter checks.
+        /// validation or of ConnectivityDiagnosticsManager, so nothing here can push a
+        /// "the tunnel stopped working" verdict. Detection on this platform stays with the
+        /// counter checks in TunnelHealthMonitor.
         /// </summary>
-        public event EventHandler? TunnelValidationLost;
+        public event EventHandler<string>? TunnelSuspect;
 
         /// <summary>
         /// Not raised. Resuming from sleep brings the adapters back, and that already
@@ -44,6 +45,13 @@ namespace Horus.Platforms.Windows
         /// <c>Microsoft.Win32.SystemEvents</c> for a second path to the same event.
         /// </summary>
         public event EventHandler? DeviceWoke;
+
+        /// <summary>
+        /// Never raised on Windows: there is no Doze, and a desktop that suspends stops
+        /// executing rather than throttling, so there is no window in which pausing
+        /// housekeeping would buy anything.
+        /// </summary>
+        public event EventHandler<bool>? DeviceIdleChanged;
 
         public bool IsOnline { get; private set; }
         public NetworkTransport Transport { get; private set; } = NetworkTransport.None;
