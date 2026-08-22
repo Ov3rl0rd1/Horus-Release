@@ -63,6 +63,9 @@ namespace Horus.Application.Diagnostics
 
         private static readonly JsonSerializerOptions Json = new() { WriteIndented = false };
 
+        /// <summary>No byte-order mark. See the write path for why that matters here.</summary>
+        private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
         /// <summary>
         /// Process-wide. A static singleton rather than a DI registration because the crash
         /// handler, the boot receiver and the Quick Settings tile all need it from contexts
@@ -245,7 +248,11 @@ namespace Horus.Application.Diagnostics
                         sb.Append('\n');
                     }
 
-                    File.AppendAllText(path, sb.ToString(), Encoding.UTF8);
+                    // UTF8Encoding(false), not Encoding.UTF8: the latter emits a byte-order
+                    // mark when it creates the file, and a BOM in front of the first record
+                    // makes it unparseable to a strict JSON Lines reader. Confirmed on
+                    // device — the first line of every log failed to parse.
+                    File.AppendAllText(path, sb.ToString(), Utf8NoBom);
 
                     var highest = batch[^1].Seq;
                     if (highest > Volatile.Read(ref _lastWrittenSeq))

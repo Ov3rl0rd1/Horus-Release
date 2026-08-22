@@ -350,9 +350,16 @@ namespace Horus.Protocols
         /// is signalling-based, so it carries a room rather than an address, and it has no
         /// streamSettings at all.
         ///
-        /// The API does not hand out <c>olcrtc://</c> links yet, so this is unreachable in
-        /// practice; the mapping assumes the link carries the same four values the node
-        /// registers (<c>olcrtc_provider</c>, <c>_transport</c>, <c>_room_id</c>, <c>_room_key</c>).
+        /// The four values come from the node's own registration
+        /// (<c>olcrtc_provider</c>, <c>_transport</c>, <c>_room_id</c>, <c>_room_key</c>)
+        /// and reach the app as a structured block rather than a URI —
+        /// <see cref="ShareLinkParser.FromOlcRtc"/> projects it onto a link so everything
+        /// downstream sees one shape.
+        ///
+        /// <para>The defaults are what the node registers when it has nothing better to
+        /// say. They are kept because a node that announces a room but omits a transport
+        /// should still be dialable, and getting them wrong fails loudly at handshake
+        /// rather than silently carrying nothing.</para>
         /// </summary>
         private static Dictionary<string, object?> BuildOlcRtc(XrayConfig cfg)
         {
@@ -360,12 +367,19 @@ namespace Horus.Protocols
 
             var settings = new Dictionary<string, object?>
             {
-                ["provider"] = link.Params.TryGetValue("provider", out var p) ? p : "wbstream",
-                ["transport"] = link.Params.TryGetValue("transport", out var t) ? t : "vp8channel",
-                ["roomId"] = link.Params.TryGetValue("roomId", out var r) ? r
-                    : link.Params.TryGetValue("room", out var r2) ? r2 : link.Host,
+                ["provider"] = link.Params.TryGetValue("provider", out var p) && !string.IsNullOrWhiteSpace(p)
+                    ? p : "wbstream",
+                ["transport"] = link.Params.TryGetValue("transport", out var t) && !string.IsNullOrWhiteSpace(t)
+                    ? t : "vp8channel",
+                ["roomId"] = link.Params.TryGetValue("roomid", out var r) && !string.IsNullOrWhiteSpace(r)
+                    ? r : link.Host,
                 ["key"] = link.Credential
             };
+
+            // The account's stable identity on the node. Sent when the API supplied it so
+            // the node's telemetry can attribute the session; older nodes ignore it.
+            if (link.Params.TryGetValue("uuid", out var uuid) && !string.IsNullOrWhiteSpace(uuid))
+                settings["uuid"] = uuid;
 
             if (link.Params.TryGetValue("dnsServer", out var dns))
                 settings["dnsServer"] = dns;

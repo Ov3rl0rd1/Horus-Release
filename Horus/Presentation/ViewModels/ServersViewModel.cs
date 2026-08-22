@@ -53,7 +53,10 @@ namespace Horus.Presentation.ViewModels
             HasError = false;
             try
             {
-                var servers = await _subscription.GetAvailableServersAsync();
+                // Measured here and nowhere else. The probe costs a TCP connect per
+                // candidate, and this is the one screen where the answer is worth that —
+                // the Home screen only needs names.
+                var servers = await _subscription.GetAvailableServersAsync(measureLatency: true);
                 _all = servers?.ToList() ?? new List<ServerInfo>();
             }
             catch
@@ -140,11 +143,25 @@ namespace Horus.Presentation.ViewModels
         public string Name => string.IsNullOrWhiteSpace(Server.Name) ? Server.Country : Server.Name;
         public string City => Server.City;
         public int Load => Server.CurrentLoad;
-        public string SubText => string.IsNullOrWhiteSpace(City)
-            ? $"нагрузка {Load}%"
-            : $"{City} · нагрузка {Load}%";
 
-        // Latency (from mock/dev data; null until a real probe exists → pill hidden)
+        /// <summary>
+        /// Occupancy as a percentage of capacity.
+        ///
+        /// <para>Measured on <c>reserved_count</c>, not on who is online: reserved is what
+        /// the API checks before letting anyone bind, so it is what decides whether this
+        /// node can be picked at all. A node can read 90% here with nobody connected.</para>
+        /// </summary>
+        public int LoadPercent => Server.MaxClients > 0
+            ? Math.Clamp(Server.ReservedCount * 100 / Server.MaxClients, 0, 100)
+            : 0;
+
+        public string SubText => string.IsNullOrWhiteSpace(City)
+            ? $"загрузка {LoadPercent}%"
+            : $"{City} · загрузка {LoadPercent}%";
+
+        // Latency, measured by LatencyProbe when this screen loads. Null means the node
+        // did not answer within the probe budget — which is a different fact from "slow",
+        // so the pill is hidden rather than showing a made-up large number.
         public int? Ping => Server.PingMs;
         public bool HasPing => Server.PingMs.HasValue;
         public string PingText => Server.PingMs is { } p ? $"{p} мс" : "";

@@ -77,11 +77,30 @@ namespace Horus.Application
         private const long StarvedDownlinkRatio = 8;
 
         /// <summary>
-        /// Mean received-packet size below which the downlink is control traffic rather
-        /// than data. Resets and ICMP errors are tiny; even a bare TCP ACK stream carries
-        /// more once the link is really working.
+        /// Mean received-packet size below which the downlink might be control traffic
+        /// rather than data.
+        ///
+        /// <para>Necessary but not sufficient — see <see cref="BulkSendPacketSize"/>. A
+        /// device measured mid-upload produced 78 bytes per received packet, comfortably
+        /// under this, purely because a delayed-ACK stream is small. Judging on this alone
+        /// would have called a healthy tunnel dead.</para>
         /// </summary>
         private const long ControlPacketSize = 96;
+
+        /// <summary>
+        /// Mean <i>sent</i> packet size above which the uplink is a bulk transfer.
+        ///
+        /// <para>This is what separates the two cases that otherwise look identical from
+        /// the counters. Measured on the failure this monitor was built for: 25 399 bytes
+        /// out in 126 packets, about 200 bytes each — small, because a dead outbound is
+        /// retransmitting requests that never complete. Measured mid-upload on a healthy
+        /// tunnel: 659 809 bytes out against 8 807 back, with segments near the MTU.</para>
+        ///
+        /// <para>Both look starved and both answer in small packets; only the size of what
+        /// is being <i>sent</i> tells them apart. 600 sits between 200 and ~1400 with room
+        /// on either side.</para>
+        /// </summary>
+        private const long BulkSendPacketSize = 600;
 
         /// <summary>Consecutive suspicious samples required before probing.</summary>
         private const int SuspicionLimit = 2;
@@ -122,7 +141,7 @@ namespace Horus.Application
 
         private CancellationTokenSource? _cts;
         private Endpoint _endpoint;
-        private long _lastTx, _lastRx, _lastRxPackets;
+        private long _lastTx, _lastRx, _lastRxPackets, _lastTxPackets;
         private bool _hasBaseline;
         private int _suspicion;
 
@@ -302,13 +321,15 @@ namespace Horus.Application
             // and a dead bridge therefore looked exactly like a sleeping phone.
             if (counters.Length < 4) return TunnelHealth.TunnelDead;
 
+            var txPackets = counters[0];
             var tx = counters[1];
-            var rx = counters[3];
             var rxPackets = counters[2];
+            var rx = counters[3];
 
-            if (!_hasBaseline || tx < _lastTx || rx < _lastRx || rxPackets < _lastRxPackets)
+            if (!_hasBaseline || tx < _lastTx || rx < _lastRx
+                || rxPackets < _lastRxPackets || txPackets < _lastTxPackets)
             {
-                _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets;
+                _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets; _lastTxPackets = txPackets;
                 _hasBaseline = true; _suspicion = 0;
                 return TunnelHealth.Healthy;
             }
@@ -316,7 +337,8 @@ namespace Horus.Application
             var sent = tx - _lastTx;
             var received = rx - _lastRx;
             var receivedPackets = rxPackets - _lastRxPackets;
-            _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets;
+            var sentPackets = txPackets - _lastTxPackets;
+            _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets; _lastTxPackets = txPackets;
 
             // Too little went out to conclude anything. Not evidence of health, but not
             // evidence of failure either, and inventing a failure from an idle device is
@@ -325,14 +347,22 @@ namespace Horus.Application
 
             var starved = received * StarvedDownlinkRatio < sent;
 
-            // A genuine large upload also starves the downlink, but its ACKs are ordinary
-            // packets. A dead outbound answers in resets, which are tiny — so the mean
-            // packet size separates the two.
-            var controlOnly = receivedPackets == 0 || received / Math.Max(receivedPackets, 1) < ControlPacketSize;
+            // A dead outbound answers in resets and ICMP errors, which are tiny.
+            var controlOnly = receivedPackets == 0
+                || received / Math.Max(receivedPackets, 1) < ControlPacketSize;
 
-            _lastSample = $"out {sent}B, back {received}B in {receivedPackets}p";
+            // …but so is a delayed-ACK stream, so this test alone condemns a healthy
+            // upload. What actually differs is the uplink: a bulk transfer sends
+            // MTU-sized segments, a stalled outbound retransmits small requests. Only
+            // when BOTH the answer is control-sized and the traffic being sent is not
+            // bulk is the sample worth suspecting.
+            var meanSent = sentPackets > 0 ? sent / sentPackets : 0;
+            var bulkUpload = meanSent >= BulkSendPacketSize;
 
-            if (!starved || !controlOnly) { _suspicion = 0; return TunnelHealth.Healthy; }
+            _lastSample = $"out {sent}B in {sentPackets}p ({meanSent}B/p), " +
+                          $"back {received}B in {receivedPackets}p";
+
+            if (!starved || !controlOnly || bulkUpload) { _suspicion = 0; return TunnelHealth.Healthy; }
 
             // Sending into what is effectively silence. One sample could be a slow request;
             // two in a row is a pattern worth paying for a probe to explain.

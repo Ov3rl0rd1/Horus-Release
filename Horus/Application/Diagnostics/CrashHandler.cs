@@ -28,6 +28,8 @@ namespace Horus.Application.Diagnostics
     {
         private const long MaxCrashLogBytes = 128 * 1024;
 
+        private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
         private static readonly object Sync = new();
         private static bool _installed;
 
@@ -86,7 +88,10 @@ namespace Horus.Application.Diagnostics
                     .ToString();
 
                 var path = DiagnosticPaths.CrashLog;
-                File.AppendAllText(path, text, Encoding.UTF8);
+
+                // No BOM: this file is read back by LastCrash and shipped in the archive,
+                // and a mark in front of the first record is noise in both.
+                File.AppendAllText(path, text, Utf8NoBom);
                 DiagnosticPaths.CapFromFront(path, MaxCrashLogBytes);
             }
             catch { /* nothing useful left to do */ }

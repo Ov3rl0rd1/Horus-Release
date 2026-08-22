@@ -28,7 +28,7 @@
                         <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
                             <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
                                 <Label Text="Автоподключение" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
-                                <Label Text="Включать защиту при запуске приложения" Style="{StaticResource HzDim}" FontSize="12" />
+                                <Label Text="Включать защиту даже после ручного отключения" Style="{StaticResource HzDim}" FontSize="12" />
                             </VerticalStackLayout>
                             <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding AutoConnect}" />
                         </Grid>

@@ -55,6 +55,28 @@ namespace Horus.Platforms.Android
         /// <summary>The contents of <c>native.txt</c> in the diagnostics archive.</summary>
         public static string Report() => _cached ?? Build();
 
+        /// <summary>
+        /// Libraries this project ships, as opposed to the ones .NET Android packs.
+        ///
+        /// <para>Without this filter the inventory covered every file in
+        /// <c>nativeLibraryDir</c>, and on Android that includes each managed assembly
+        /// repackaged as <c>lib_Something.dll.so</c>. Measured on device: 445 entries,
+        /// 30 KB of output, a SHA-256 pass over ~445 files including a 55 MB core — and the
+        /// forty lines of the state snapshot that answer a support question buried under
+        /// hashes of Newtonsoft.</para>
+        ///
+        /// <para>Matching by name rather than by excluding <c>lib_*.dll.so</c>: the
+        /// question this file answers is "which build of OUR core is running", and a
+        /// whitelist cannot be widened by a change in how .NET packages assemblies.</para>
+        /// </summary>
+        private static bool IsOurs(string path)
+        {
+            var name = Path.GetFileName(path);
+
+            return name.Equals("libxray.so", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("libhev_socks.so", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string Build()
         {
             var lines = new List<string>();
@@ -67,7 +89,7 @@ namespace Horus.Platforms.Android
 
                 lines.Add($"nativeLibraryDir={dir}");
 
-                foreach (var path in Directory.GetFiles(dir, "*.so").OrderBy(x => x))
+                foreach (var path in Directory.GetFiles(dir, "*.so").Where(IsOurs).OrderBy(x => x))
                 {
                     var name = Path.GetFileName(path);
                     try

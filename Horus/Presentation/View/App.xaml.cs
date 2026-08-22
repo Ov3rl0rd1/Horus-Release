@@ -69,11 +69,17 @@ namespace Horus
                 Diag.Error("app", $"startup error: {ex.Message}", ex.ToString());
             }
 
-            // After startup, never before: the connect path needs the session and the
-            // server list that EnsureStartedAsync fetches. Declines quietly unless both the
-            // preference and the persisted intent agree — see VpnManager.TryAutoConnectAsync.
-            try { await _services.GetRequiredService<VpnManager>().TryAutoConnectAsync(); }
-            catch (Exception ex) { Diag.Warn("app", $"auto-connect failed: {ex.Message}"); }
+            // After startup, never before, and the ordering is load-bearing: every route
+            // into the API needs the session that EnsureStartedAsync restores, and a
+            // connect attempted before it lands fails with "no session" while still
+            // advancing the reconnect backoff.
+            //
+            // This is also the safety net for a tunnel that died with its process. The
+            // system does not always restart a sticky foreground service — measured on a
+            // real device, it did not restart it at all — so this is what actually brings
+            // the VPN back for a user who never turned it off.
+            try { await _services.GetRequiredService<VpnManager>().TryRestoreOrAutoConnectAsync(); }
+            catch (Exception ex) { Diag.Warn("app", $"startup connect failed: {ex.Message}"); }
         }
     }
 }

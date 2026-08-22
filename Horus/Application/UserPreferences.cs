@@ -33,9 +33,12 @@ namespace Horus.Application
         }
 
         /// <summary>
-        /// Connect when the app is launched and the tunnel is not already up. Only fires
-        /// when <see cref="VpnIntent.Active"/> agrees, so opening the app after an explicit
-        /// disconnect does not quietly reconnect.
+        /// Connect on every launch, <b>including</b> one after an explicit disconnect.
+        ///
+        /// <para>Deliberately narrower than it sounds, because restoring a tunnel the user
+        /// never turned off is a separate thing and is not gated on this — see
+        /// <c>VpnManager.TryRestoreOrAutoConnectAsync</c>. What this adds is "always start
+        /// protected", which only matters for someone who did disconnect.</para>
         ///
         /// <para>Defaults to false: a launch is a deliberate act and hijacking it surprises
         /// people who opened the app to change a setting.</para>

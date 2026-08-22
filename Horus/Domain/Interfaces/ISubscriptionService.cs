@@ -19,7 +19,16 @@ namespace Horus.Domain.Interfaces
         Task<SubscriptionInfo> ApplyAsync(WhoAmIResponse? me);
 
         /// <summary>Server catalogue from <c>GET /servers/best</c> (least-loaded first, capacity available).</summary>
-        Task<IReadOnlyList<ServerInfo>> GetAvailableServersAsync();
+        /// <summary>
+        /// Candidate nodes, newest capacity figures from the API.
+        ///
+        /// <para>Set <paramref name="measureLatency"/> to have each one TCP-probed and
+        /// <see cref="ServerInfo.PingMs"/> filled in, ordered fastest-first. Off by
+        /// default: only the server picker needs the measurement, and it costs a
+        /// connection attempt per node.</para>
+        /// </summary>
+        Task<IReadOnlyList<ServerInfo>> GetAvailableServersAsync(
+            bool measureLatency = false, CancellationToken ct = default);
 
         event EventHandler<SubscriptionChangedEventArgs> SubscriptionChanged;
     }

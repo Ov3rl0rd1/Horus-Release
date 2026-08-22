@@ -408,19 +408,21 @@ namespace Horus.Presentation.ViewModels
         }
 #endif
 
-        /// <summary>Auto mode → least-loaded server; otherwise the chosen one. Display only.</summary>
-        private async Task<ServerInfo?> ResolveServerAsync()
-        {
-            if (!_session.IsAutoSelect && _session.SelectedServer is { } chosen)
-                return chosen;
-
-            try
-            {
-                var servers = await _subscription.GetAvailableServersAsync();
-                return servers?.OrderBy(s => s.CurrentLoad).FirstOrDefault();
-            }
-            catch { return null; }
-        }
+        /// <summary>
+        /// The server to bind to, or null to leave the binding alone.
+        ///
+        /// <para>Null in Auto mode, and that is the point. Binding is a reservation on a
+        /// node, so naming one here would move the account on <i>every</i> connect —
+        /// costing a re-provision and throwing away the stability the binding exists to
+        /// provide. "Auto" means the user does not care which node, not that they want a
+        /// new one each time; an account with no binding at all is still auto-picked by
+        /// the connect endpoint.</para>
+        ///
+        /// <para>This used to return the least-loaded node it could find, which was
+        /// harmless when the API ignored the argument and is not now.</para>
+        /// </summary>
+        private Task<ServerInfo?> ResolveServerAsync() =>
+            Task.FromResult(_session.IsAutoSelect ? null : _session.SelectedServer);
 
         // ── Event handlers ──
         private void OnVpnStateChanged(object? sender, VpnStateChangedEventArgs e)

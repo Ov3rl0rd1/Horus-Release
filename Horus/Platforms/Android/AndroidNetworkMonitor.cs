@@ -62,7 +62,11 @@ namespace Horus.Platforms.Android
 
         private Network? _tunnel;
         private bool _tunnelValidated;
-        private long _rankedFirstHandle = -1;
+        /// <summary>
+        /// The last ranking published, as an ordered list of network handles. Comparing
+        /// against this is what makes a repeated capability change free.
+        /// </summary>
+        private long[] _publishedRanking = [];
         private NetworkTransport _transport = NetworkTransport.None;
         private DateTimeOffset _lastCapabilityWork = DateTimeOffset.MinValue;
 
@@ -293,7 +297,7 @@ namespace Horus.Platforms.Android
                 _networks.Clear();
                 _default = null;
                 _tunnel = null;
-                _rankedFirstHandle = -1;
+                _publishedRanking = [];
                 _transport = NetworkTransport.None;
             }
         }
@@ -409,16 +413,38 @@ namespace Horus.Platforms.Android
             lock (_sync)
             {
                 var order = Rank();
+                var ranking = order.Select(e => e.Network.NetworkHandle).ToArray();
+
+                // Nothing the tunnel can act on has changed, so there is nothing to do.
+                //
+                // This guard is the whole point of the method. The 15-second throttle on
+                // capability changes is bypassed whenever a network's VALIDATED or metered
+                // flag differs from the cached one, and a secondary link — mobile sitting
+                // behind an active Wi-Fi — flaps those constantly. Measured on device:
+                // 134 publishes in 26 minutes on a network that never changed, each one a
+                // binder call into setUnderlyingNetworks. Roughly 7300 a day, for nothing.
+                //
+                // Comparing the whole ranking rather than just its head also means a
+                // reordering below first place still gets through, which matters because
+                // that array is the fallback order the system uses when the head dies.
+                if (_publishedRanking.AsSpan().SequenceEqual(ranking))
+                {
+                    Diag.Trace("net", $"{reason}: ranking unchanged, not republishing");
+                    return;
+                }
+
+                var previousFirst = _publishedRanking.Length > 0 ? _publishedRanking[0] : -1;
+                var currentFirst = ranking.Length > 0 ? ranking[0] : -1;
+
+                // A handover is specifically the link carrying traffic being replaced by a
+                // different one. A second network merely appearing alongside it is not,
+                // and treating it as one costs a probe every time mobile wakes up.
+                handover = currentFirst != -1 && previousFirst != -1 && previousFirst != currentFirst;
+
                 ranked = [.. order.Select(e => e.Network)];
                 online = ranked.Length > 0;
-
-                var first = order.Count > 0 ? order[0] : (Entry?)null;
-                var firstHandle = first?.Network.NetworkHandle ?? -1;
-
-                handover = online && _rankedFirstHandle != -1 && _rankedFirstHandle != firstHandle;
-
-                _rankedFirstHandle = firstHandle;
-                _transport = transport = first?.Transport ?? NetworkTransport.None;
+                _publishedRanking = ranking;
+                _transport = transport = order.Count > 0 ? order[0].Transport : NetworkTransport.None;
             }
 
             PushUnderlying(ranked.Length > 0 ? ranked : null);

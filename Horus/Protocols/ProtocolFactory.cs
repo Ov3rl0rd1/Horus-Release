@@ -30,35 +30,39 @@ namespace Horus.Protocols
             return Create();
         }
 
+        /// <summary>
+        /// Turns one endpoint the node published into a config the core can run.
+        ///
+        /// <para>Takes a <see cref="ConnectionCandidate"/> rather than a protocol name
+        /// because a node may publish several endpoints of the same protocol — the API
+        /// returns <c>vless</c> as an array — and the fallback loop needs to try each of
+        /// them, not just the first.</para>
+        /// </summary>
         public async Task<ProtocolConfig> CreateConfigAsync(
-            ProtocolType type, ServerConnection connection, CancellationToken ct = default)
+            ConnectionCandidate candidate, CancellationToken ct = default)
         {
-            var raw = connection.LinkFor(type)
-                ?? throw new NotSupportedException($"The server did not offer a {type} endpoint.");
+            ArgumentNullException.ThrowIfNull(candidate);
 
-            var link = ShareLinkParser.Parse(raw);
-            ShareLinkParser.Validate(link);
+            var link = candidate.Protocol == ProtocolType.OlcRtc
+                ? BuildOlcRtcLink(candidate)
+                : ParseLink(candidate);
 
-            link.ResolvedHost = await ResolveAsync(link.Host, ct);
+            // olcRTC dials the provider's signalling service, not the node, so there is no
+            // node address to pre-resolve and nothing to fail on. Every other protocol
+            // must be handed a literal address — see ResolveNodeAsync.
+            if (candidate.Protocol == ProtocolType.OlcRtc)
+            {
+                Diag.Write($"[{candidate.Protocol}] room via " +
+                           $"{link.Params.GetValueOrDefault("provider")}/" +
+                           $"{link.Params.GetValueOrDefault("transport")} on {link.Host}");
+            }
+            else
+            {
+                await ResolveNodeAsync(link, ct);
 
-            // Handing the core a hostname produces a tunnel that is dead on arrival, and
-            // dead in a way that is almost invisible: the core starts, its SOCKS inbound
-            // accepts every session the bridge offers, and it never dials out, because its
-            // Go resolver has no nameservers here and its configured DNS servers route
-            // through the very proxy it is trying to build. Sessions pile up in the
-            // hundreds, bytes leave and only RSTs come back, and the app reports ЗАЩИЩЕНО.
-            //
-            // Observed on a real device: 190 established SOCKS sessions and not one socket
-            // to any external address. Failing here is the only honest option — the
-            // fallback loop moves to the next protocol, and if none resolves the user gets
-            // an error instead of a tunnel that silently carries nothing.
-            if (link.ResolvedHost is null)
-                throw new InvalidOperationException(
-                    $"Не удалось определить адрес узла {link.Host}. " +
-                    "Проверьте подключение к сети и попробуйте ещё раз.");
-
-            Diag.Write($"[{type}] {link.Host} -> {link.DialAddress}:{link.Port} " +
-                       $"hop={link.PortRange ?? "none"}");
+                Diag.Write($"[{candidate.Protocol}] {link.Host} -> {link.DialAddress}:{link.Port} " +
+                           $"hop={link.PortRange ?? "none"}");
+            }
 
             return new XrayConfig
             {
@@ -71,6 +75,50 @@ namespace Horus.Protocols
                 // else took it meanwhile — which is exactly when moving is the right answer.
                 SocksPort = SocksPortAllocator.Allocate()
             };
+        }
+
+        private static ShareLink ParseLink(ConnectionCandidate candidate)
+        {
+            var raw = candidate.Link
+                ?? throw new NotSupportedException(
+                    $"The {candidate.Protocol} candidate carries no share link.");
+
+            var link = ShareLinkParser.Parse(raw);
+            ShareLinkParser.Validate(link);
+            return link;
+        }
+
+        private static ShareLink BuildOlcRtcLink(ConnectionCandidate candidate)
+        {
+            var endpoint = candidate.OlcRtc
+                ?? throw new NotSupportedException("The olcRTC candidate carries no parameters.");
+
+            return ShareLinkParser.FromOlcRtc(endpoint);
+        }
+
+        /// <summary>
+        /// Pre-resolves the node address, and fails the attempt when it cannot.
+        ///
+        /// <para>Handing the core a hostname produces a tunnel that is dead on arrival, and
+        /// dead in a way that is almost invisible: the core starts, its SOCKS inbound
+        /// accepts every session the bridge offers, and it never dials out, because its Go
+        /// resolver has no nameservers here and its configured DNS servers route through
+        /// the very proxy it is trying to build. Sessions pile up in the hundreds, bytes
+        /// leave and only RSTs come back, and the app reports ЗАЩИЩЕНО.</para>
+        ///
+        /// <para>Observed on a real device: 190 established SOCKS sessions and not one
+        /// socket to any external address. Failing here is the only honest option — the
+        /// fallback loop moves to the next endpoint, and if none resolves the user gets an
+        /// error instead of a tunnel that silently carries nothing.</para>
+        /// </summary>
+        private async Task ResolveNodeAsync(ShareLink link, CancellationToken ct)
+        {
+            link.ResolvedHost = await ResolveAsync(link.Host, ct);
+
+            if (link.ResolvedHost is null)
+                throw new InvalidOperationException(
+                    $"Не удалось определить адрес узла {link.Host}. " +
+                    "Проверьте подключение к сети и попробуйте ещё раз.");
         }
 
         /// <summary>
