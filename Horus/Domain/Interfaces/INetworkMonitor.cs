@@ -21,15 +21,17 @@ namespace Horus.Domain.Interfaces
         event EventHandler<NetworkChangedEventArgs>? NetworkChanged;
 
         /// <summary>
-        /// The operating system has decided the tunnel itself no longer reaches the
-        /// internet.
+        /// The operating system believes the tunnel is not carrying traffic. The string is
+        /// the reason, and it ends up in the log.
         ///
-        /// This is the one genuine push signal for a dead tunnel. Android validates every
-        /// network it manages, the VPN included, by fetching a known URL through it; when
-        /// that stops working the network loses <c>NET_CAPABILITY_VALIDATED</c> and this
-        /// fires. No timer, no probe of ours, and the verdict is the platform's own.
+        /// <para>Two sources feed this, and both are the platform's own verdict rather than
+        /// a guess of ours. Android validates every network it manages — the VPN included —
+        /// by fetching a known URL through it; when that stops working the network loses
+        /// <c>NET_CAPABILITY_VALIDATED</c>. Separately, <c>ConnectivityDiagnosticsManager</c>
+        /// reports suspected data stalls from TCP and DNS telemetry the system is already
+        /// collecting. Neither costs a timer or a packet of ours.</para>
         /// </summary>
-        event EventHandler? TunnelValidationLost;
+        event EventHandler<string>? TunnelSuspect;
 
         /// <summary>
         /// The user came back to the device — screen on, unlocked, or idle mode ending.
@@ -41,6 +43,17 @@ namespace Horus.Domain.Interfaces
         /// </summary>
         event EventHandler? DeviceWoke;
 
+        /// <summary>
+        /// The platform entered or left its idle state — Doze on Android. True on entering.
+        ///
+        /// <para>This is the only warning the app gets that nothing will be watching for a
+        /// while, and the core has background loops that do not otherwise know. Distinct
+        /// from <see cref="DeviceWoke"/>, which fires on the screen coming on: the device
+        /// leaves Doze without anyone looking at it, and the screen comes on without the
+        /// device ever having been in Doze.</para>
+        /// </summary>
+        event EventHandler<bool>? DeviceIdleChanged;
+
         /// <summary>Any usable non-VPN network right now.</summary>
         bool IsOnline { get; }
 
@@ -50,7 +63,7 @@ namespace Horus.Domain.Interfaces
         /// <summary>
         /// Tells the platform we suspect the tunnel is not carrying, which makes it
         /// re-validate immediately instead of on its own schedule. The answer arrives as
-        /// <see cref="TunnelValidationLost"/> — this turns a weak local hunch into an
+        /// <see cref="TunnelSuspect"/> — this turns a weak local hunch into an
         /// authoritative verdict within a second or two, without us probing anything.
         /// </summary>
         void ReportTunnelSuspect();

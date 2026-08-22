@@ -38,6 +38,46 @@ namespace Horus.Protocols
         /// <summary>True while the core reports a live instance.</summary>
         public static bool IsCoreRunning => XrayInterop.IsRunning();
 
+        /// <summary>
+        /// Drops pooled transport sessions so the next request dials fresh ones, and reports
+        /// how many went. Returns -1 when the core could not be asked.
+        ///
+        /// <para>Called on a network handover, where the sessions are already dead and only
+        /// the transport does not know it yet. Far cheaper than the reconnect it replaces:
+        /// the instance and the TUN stay up.</para>
+        /// </summary>
+        public static int ResetConnections()
+        {
+            if (!IsCoreRunning) return 0;
+
+            var closed = XrayInterop.ResetConnections();
+            if (closed >= 0) Diag.Info("xray", $"reset {closed} pooled session(s)");
+            else Diag.Warn("xray", "reset connections unsupported by this core build");
+            return closed;
+        }
+
+        /// <summary>Hands freed memory back to the OS. Best-effort and asynchronous.</summary>
+        public static void ForceGc() => XrayInterop.ForceGc();
+
+        /// <summary>
+        /// Pauses or resumes the core's background housekeeping, tracking Doze.
+        ///
+        /// <para>Logged at info rather than trace because the wiring is easy to get wrong
+        /// and impossible to verify from the outside: two lines a day is a cheap way to
+        /// prove from a bug report that the idle signal is reaching the core.</para>
+        /// </summary>
+        public static void SetPaused(bool paused)
+        {
+            if (!IsCoreRunning) return;
+
+            var ok = paused ? XrayInterop.Sleep() : XrayInterop.Wake();
+            if (ok) Diag.Info("xray", paused ? "housekeeping paused (doze)" : "housekeeping resumed");
+            else Diag.Warn("xray", "sleep/wake unsupported by this core build");
+        }
+
+        /// <summary>Whether the core has housekeeping paused; null when it cannot say.</summary>
+        public static bool? IsPaused => XrayInterop.IsPaused();
+
         public event EventHandler<VpnStatusChangedEventArgs>? StatusChanged;
         public event EventHandler<TrafficStatisticsEventArgs>? StatisticsUpdated;
         public event EventHandler<ProtocolErrorEventArgs>? ErrorOccurred;

@@ -31,6 +31,9 @@
     <Compile Include="..\Horus\Domain\Models\ShareLink.cs" Link="Linked\ShareLink.cs" />
     <Compile Include="..\Horus\Domain\Models\XrayConfig.cs" Link="Linked\XrayConfig.cs" />
     <Compile Include="..\Horus\Domain\Models\ServerConnection.cs" Link="Linked\ServerConnection.cs" />
+    <!-- BoundServer.ToServerInfo() ties the two together, so the connect model cannot be
+         linked without it. -->
+    <Compile Include="..\Horus\Domain\Models\ServerInfo.cs" Link="Linked\ServerInfo.cs" />
     <Compile Include="..\Horus\Domain\Models\ApiConsts.cs" Link="Linked\ApiConsts.cs" />
     <Compile Include="..\Horus\Protocols\ShareLinkParser.cs" Link="Linked\ShareLinkParser.cs" />
     <Compile Include="..\Horus\Protocols\HevTunnelConfig.cs" Link="Linked\HevTunnelConfig.cs" />

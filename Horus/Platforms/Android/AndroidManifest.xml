@@ -3,7 +3,29 @@
 	<!-- No package= attribute: $(ApplicationId) from Horus.csproj is the single source of
 	     truth. It must stay com.horus.vpn — libhev_socks.so resolves its JNI entry points
 	     against the class com/horus/vpn/VPNService. -->
-	<application android:allowBackup="false" android:icon="@mipmap/appicon" android:supportsRtl="true" android:label="Horus" android:extractNativeLibs="true">
+	<application android:allowBackup="false" android:icon="@mipmap/appicon" android:supportsRtl="true" android:label="Horus" android:extractNativeLibs="true"
+		android:largeHeap="true"
+		android:memtagMode="off"
+		android:gwpAsanMode="never"
+		android:allowNativeHeapPointerTagging="false"
+		android:pageSizeCompat="enabled">
+		<!--
+		  The four attributes above are not cosmetic.
+
+		  memtagMode / gwpAsanMode / allowNativeHeapPointerTagging: libxray.so is xray-core,
+		  which is Go, linked into this process. ARM MTE, pointer tagging and GWP-ASan all
+		  hand the Go allocator pointers it does not expect, and on ARMv8.5+ hardware
+		  (Pixel 8 and newer) that surfaces as rare, unreproducible SIGSEGVs inside the core
+		  — a native crash no managed handler ever sees. RethinkDNS hit exactly this and
+		  documents it as celzero/rethink-app#786.
+
+		  largeHeap: the MAUI runtime, the Go heap and a ~55 MB native library share one
+		  address space. The default heap limit is not generous enough for that.
+
+		  pageSizeCompat: Android 15+ devices may use 16 KB pages. hev is already built with
+		  16 KB-aligned segments (see Platforms/Android/lib/README.md); this covers the rest.
+		-->
+
 		<!-- Must match [Service(Name = …)] on HorusVpnTunnelService character for character,
 		     or the manifest merger emits two <service> elements and fails. ${applicationId}
 		     is not substituted before that validation runs, so the name is spelled out. -->
@@ -11,13 +33,27 @@
 			android:name="com.horus.vpn.HorusVpnTunnelService"
 			android:permission="android.permission.BIND_VPN_SERVICE"
 			android:exported="false"
-			android:foregroundServiceType="specialUse">
+			android:foregroundServiceType="specialUse"
+			android:stopWithTask="false">
 			<intent-filter>
 				<action android:name="android.net.VpnService" />
 			</intent-filter>
 			<property
 				android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
 				android:value="vpn" />
+
+			<!-- Declaring these is what un-greys "Always-on VPN" and "Block connections
+			     without VPN" in Settings → Network → VPN → Horus. Always-on is the single
+			     most reliable survival mechanism on Android, because the system itself
+			     becomes responsible for starting the service — it outlives OEM task
+			     killers, low-memory kills and reboots without any code of ours running.
+			     BootReceiver deliberately stands down when it is enabled. -->
+			<meta-data
+				android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+				android:value="true" />
+			<meta-data
+				android:name="android.net.VpnService.SUPPORTS_LOCKDOWN"
+				android:value="true" />
 		</service>
 	</application>
 	<!-- Required to enumerate launchable apps for the split-tunnelling picker. Without it
@@ -33,6 +69,17 @@
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+	<!-- Normal permission, no prompt. Needed for ConnectivityManager.requestNetwork and
+	     registerBestMatchingNetworkCallback, which report THE default physical network
+	     rather than every network matching the request. registerDefaultNetworkCallback is
+	     not an option: since Android P it returns our own VPN interface, so it goes quiet
+	     exactly when the link underneath changes. -->
+	<uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+
+	<!-- Bringing the tunnel back after a reboot. See BootReceiver for the checks that
+	     stop it from fighting Always-on VPN or a user who turned the VPN off. -->
+	<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
 	<!-- Self-update. REQUEST_INSTALL_PACKAGES is an app-op the user grants per app under
 	     "Install unknown apps"; sideloading the first APK grants it to the browser, not to

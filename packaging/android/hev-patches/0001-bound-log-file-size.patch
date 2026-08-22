@@ -1,0 +1,179 @@
+diff --git a/src/hev-config.c b/src/hev-config.c
+index 3f29ff0..4b28d02 100644
+--- a/src/hev-config.c
++++ b/src/hev-config.c
+@@ -37,6 +37,7 @@ static int mapdns_netmask;
+ static int mapdns_cache_size;
+ 
+ static char log_file[1024];
++static int log_max_size;
+ static char pid_file[1024];
+ static int max_session_count;
+ static int task_stack_size;
+@@ -380,6 +381,8 @@ hev_config_parse_misc (yaml_document_t *doc, yaml_node_t *base)
+             strncpy (log_file, value, 1024 - 1);
+         else if (0 == strcmp (key, "log-level"))
+             log_level = hev_config_parse_log_level (value);
++        else if (0 == strcmp (key, "log-max-size"))
++            log_max_size = strtol (value, NULL, 10);
+         else if (0 == strcmp (key, "limit-nofile"))
+             limit_nofile = strtol (value, NULL, 10);
+     }
+@@ -486,6 +489,9 @@ hev_config_reset (void)
+     udp_read_write_timeout = 60000;
+     limit_nofile = 65535;
+     log_level = HEV_LOGGER_WARN;
++    /* 2 MiB. Large enough that a session at the shipping log level never
++     * reaches it, small enough that a verbose one cannot fill a device. */
++    log_max_size = 2 * 1024 * 1024;
+ }
+ 
+ int
+@@ -730,3 +736,9 @@ hev_config_get_misc_log_level (void)
+ {
+     return log_level;
+ }
++
++int
++hev_config_get_misc_log_max_size (void)
++{
++    return log_max_size;
++}
+diff --git a/src/hev-config.h b/src/hev-config.h
+index 25821ef..b341a21 100644
+--- a/src/hev-config.h
++++ b/src/hev-config.h
+@@ -60,5 +60,6 @@ int hev_config_get_misc_limit_nofile (void);
+ const char *hev_config_get_misc_pid_file (void);
+ const char *hev_config_get_misc_log_file (void);
+ int hev_config_get_misc_log_level (void);
++int hev_config_get_misc_log_max_size (void);
+ 
+ #endif /* __HEV_CONFIG_H__ */
+diff --git a/src/hev-main.c b/src/hev-main.c
+index 9d90c5a..6184d7b 100644
+--- a/src/hev-main.c
++++ b/src/hev-main.c
+@@ -48,6 +48,10 @@ hev_socks5_tunnel_main_inner (int tun_fd)
+     res = hev_config_get_misc_udp_recv_buffer_size ();
+     hev_socks5_set_udp_recv_buffer_size (res);
+ 
++    /* Before init, so a file left over from a previous run counts towards the
++     * cap rather than starting with a fresh allowance. */
++    hev_logger_set_max_size (hev_config_get_misc_log_max_size ());
++
+     res = hev_logger_init (log_level, log_file);
+     if (res < 0)
+         goto exit;
+diff --git a/src/misc/hev-logger.c b/src/misc/hev-logger.c
+index 3d536df..b62a807 100644
+--- a/src/misc/hev-logger.c
++++ b/src/misc/hev-logger.c
+@@ -20,6 +20,52 @@
+ 
+ static int fd = -1;
+ static HevLoggerLevel req_level;
++static size_t max_size;
++static size_t written;
++
++void
++hev_logger_set_max_size (size_t size)
++{
++    max_size = size;
++}
++
++/*
++ * Keep the log from growing without bound.
++ *
++ * A tunnel embedded in a mobile client can stay up for weeks, and at the
++ * verbose level that a user is asked to turn on when something is wrong, this
++ * file grows the whole time. There is nothing here that would ever stop it.
++ *
++ * The file is truncated in place rather than rotated to a .1 generation, which
++ * is the usual answer, because it has two independent writers: hev-logger and
++ * hev-socks5-core's own logger are both handed the same path and each holds its
++ * own descriptor. Renaming from one of them would leave the other appending to
++ * the renamed inode forever. Truncation has no such problem -- both fds are
++ * O_APPEND, so the kernel re-seeks each write to the (now zero) end of file and
++ * both writers simply carry on.
++ *
++ * The cost is that the discarded history is gone rather than kept for one more
++ * generation. That is acceptable here because the host already keeps the
++ * previous session's log alongside the current one; this bound only has to stop
++ * a single session running away.
++ *
++ * The counter is a plain static. With multi-queue enabled two threads could
++ * race it, and the worst outcome is a second truncation immediately after the
++ * first -- harmless, and not worth a lock on the logging path.
++ */
++static void
++hev_logger_bound (size_t added)
++{
++    written += added;
++
++    if (!max_size || written < max_size)
++        return;
++
++    if (ftruncate (fd, 0) == 0) {
++        /* ignore return value */
++    }
++    written = 0;
++}
+ 
+ int
+ hev_logger_init (HevLoggerLevel level, const char *path)
+@@ -39,6 +85,12 @@ hev_logger_init (HevLoggerLevel level, const char *path)
+     if (fd < 0)
+         return -1;
+ 
++    /* Start from what is already there, so an existing file counts towards the
++     * cap instead of being allowed a fresh allowance on every restart. */
++    written = lseek (fd, 0, SEEK_END);
++    if (written == (size_t)-1)
++        written = 0;
++
+     return 0;
+ }
+ 
+@@ -112,7 +164,7 @@ hev_logger_log (HevLoggerLevel level, const char *fmt, ...)
+     iov[3].iov_base = "\n";
+     iov[3].iov_len = 1;
+ 
+-    if (writev (fd, iov, 4)) {
+-        /* ignore return value */
+-    }
++    len = writev (fd, iov, 4);
++    if (len > 0)
++        hev_logger_bound (len);
+ }
+diff --git a/src/misc/hev-logger.h b/src/misc/hev-logger.h
+index 9a1c070..c51d1cd 100644
+--- a/src/misc/hev-logger.h
++++ b/src/misc/hev-logger.h
+@@ -10,6 +10,10 @@
+ #ifndef __HEV_LOGGER_H__
+ #define __HEV_LOGGER_H__
+ 
++/* size_t, for hev_logger_set_max_size. This header declared no includes of
++ * its own, so callers were relying on whatever they happened to include first. */
++#include <stddef.h>
++
+ #define LOG_D(fmt...) hev_logger_log (HEV_LOGGER_DEBUG, fmt)
+ #define LOG_I(fmt...) hev_logger_log (HEV_LOGGER_INFO, fmt)
+ #define LOG_W(fmt...) hev_logger_log (HEV_LOGGER_WARN, fmt)
+@@ -31,6 +35,15 @@ typedef enum
+ } HevLoggerLevel;
+ 
+ int hev_logger_init (HevLoggerLevel level, const char *path);
++
++/**
++ * hev_logger_set_max_size:
++ * @size: bytes, or 0 for unlimited
++ *
++ * Truncate the log once it passes @size. Call before hev_logger_init so the
++ * bound also covers a file left over from a previous run.
++ */
++void hev_logger_set_max_size (size_t size);
+ void hev_logger_fini (void);
+ 
+ int hev_logger_enabled (HevLoggerLevel level);

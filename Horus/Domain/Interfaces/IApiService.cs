@@ -37,11 +37,35 @@ namespace Horus.Domain.Interfaces
         Task<bool> LogoutOtherDevicesAsync(CancellationToken ct = default);
 
         // ── Servers ──────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Candidate nodes to measure: the least-loaded one with free capacity in each
+        /// country. Binds nothing — the client probes these and then calls
+        /// <see cref="SelectServerAsync"/>.
+        ///
+        /// <para>Returns null when the request did not complete, and an empty list when the
+        /// API genuinely has nothing to offer. The two mean different things to the UI.</para>
+        /// </summary>
         Task<IReadOnlyList<ServerInfo>?> GetServersAsync(CancellationToken ct = default);
 
         /// <summary>
-        /// Asks the API to pick and bind a server, returning its per-protocol share links.
-        /// Takes no server id — selection is server-side.
+        /// Reserves a slot on <paramref name="serverId"/> and binds the account to it, or
+        /// picks the least-loaded node when it is null.
+        ///
+        /// <para>This is where capacity is enforced, so it is where a full node is refused:
+        /// a node with no free slot throws rather than silently binding somewhere else.
+        /// Idempotent when the account is already on that node.</para>
+        /// </summary>
+        /// <exception cref="SubscriptionExpiredException">The subscription has lapsed.</exception>
+        /// <exception cref="InvalidOperationException">No such node, or it is full.</exception>
+        Task<BoundServer> SelectServerAsync(int? serverId = null, CancellationToken ct = default);
+
+        /// <summary>
+        /// Connection endpoints for the node the account is bound to.
+        ///
+        /// <para>Binds by auto-pick if the account has no node yet, so a first connect works
+        /// without a prior <see cref="SelectServerAsync"/> — but it will not move an
+        /// account that is already bound, which is what makes server choice explicit.</para>
         /// </summary>
         Task<ServerConnection> GetServerConnectionAsync(CancellationToken ct = default);
 

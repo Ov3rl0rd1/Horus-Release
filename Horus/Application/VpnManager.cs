@@ -1,3 +1,4 @@
+using Horus.Application.Diagnostics;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
@@ -20,6 +21,7 @@ namespace Horus.Application
         private readonly IRoutingService _routing;
         private readonly ITrafficMonitorService _traffic;
         private readonly IApiService _api;
+        private readonly IAuthService _auth;
         private readonly IErrorReportingService _errorReporting;
 
         /// <summary>
@@ -77,6 +79,35 @@ namespace Horus.Application
         private bool _userWantsConnection;
 
         /// <summary>
+        /// The gate every automatic path reads.
+        ///
+        /// <para>Two sources, and both have to agree. The in-memory flag is the fast one,
+        /// set the moment the user presses connect. <see cref="VpnIntent"/> is the durable
+        /// one, and it is the one that can be cleared from outside this class — a revoke
+        /// arrives at the tunnel service, not here, and without consulting the persisted
+        /// value the manager would keep trying to reconnect into a VPN slot another app now
+        /// holds.</para>
+        /// </summary>
+        private bool WantsConnection => _userWantsConnection && VpnIntent.Active;
+
+        /// <summary>
+        /// Whether a connect can succeed at all right now.
+        ///
+        /// <para>Every route into the API needs a session, and at process start there is a
+        /// window where the intent has been restored but the session has not been read back
+        /// from storage yet. The network monitor starts in this constructor and its first
+        /// callbacks arrive within milliseconds, so without this gate the debounced recovery
+        /// fires into that window: observed twice on device as
+        /// <c>attempt failed: Нет активной сессии</c>, three seconds after launch.</para>
+        ///
+        /// <para>The cost was not just a wasted attempt. The backoff ladder is advanced
+        /// before the attempt runs, so a failure that had nothing to do with the network
+        /// pushed the next real try from 3 seconds out to 10 — and on a cold start after a
+        /// reboot, where the session is always loaded late, that would happen every time.</para>
+        /// </summary>
+        private bool CanAttemptConnection => _auth.IsAuthenticated;
+
+        /// <summary>
         /// The protocol that just failed <i>while working</i>, so the next attempt starts
         /// after it. This is what fixes the reported case: Hysteria2 connects fine on
         /// Wi-Fi, the phone moves to mobile where that operator blocks it, and without this
@@ -100,12 +131,29 @@ namespace Horus.Application
         private DateTimeOffset? _unhealthySince;
         private DateTimeOffset? _lastUnhealthyAt;
 
+        /// <summary>
+        /// Every "look at the tunnel" request funnels through here so a burst of network
+        /// events becomes one action. A lift or a train tunnel used to produce a probe per
+        /// transition — five to ten concurrent six-second probes racing to declare the
+        /// tunnel dead. See <see cref="RecoveryTrigger"/>.
+        /// </summary>
+        private readonly RecoveryTrigger _recovery;
+
+        /// <summary>
+        /// Set when a network change replaced the link carrying the tunnel, consumed by the
+        /// debounced recovery. A handover is the one case where the sessions are known to be
+        /// dead rather than merely suspected, so it earns a cheap targeted response the
+        /// other triggers do not.
+        /// </summary>
+        private int _handoverPending;
+
         public VpnManager(
             IVpnPlatformService platform,
             ProtocolFactory protocolFactory,
             IRoutingService routing,
             ITrafficMonitorService traffic,
             IApiService api,
+            IAuthService auth,
             IErrorReportingService errorReporting,
             TunnelHealthMonitor health,
             INetworkMonitor network)
@@ -115,6 +163,7 @@ namespace Horus.Application
             _routing = routing;
             _traffic = traffic;
             _api = api;
+            _auth = auth;
             _errorReporting = errorReporting;
             _health = health;
             _network = network;
@@ -123,38 +172,95 @@ namespace Horus.Application
             // leave the UI claiming to be connected while carrying nothing.
             _platform.TunnelStateChanged += OnTunnelStateChanged;
 
+            _recovery = new RecoveryTrigger(OnRecoveryDue);
+
             _health.Unhealthy += OnUnhealthy;
             _network.NetworkChanged += OnNetworkChanged;
 
             // The two push signals. Neither costs a timer, and between them they cover the
             // cases a periodic check is worst at: the platform noticing the tunnel stopped
             // carrying, and the user coming back to a device that broke while it slept.
-            _network.TunnelValidationLost += OnTunnelValidationLost;
+            _network.TunnelSuspect += OnTunnelSuspect;
             _network.DeviceWoke += OnDeviceWoke;
+            _network.DeviceIdleChanged += OnDeviceIdleChanged;
+
+            // A crash or a system kill leaves the intent set but nothing running. Adopting
+            // it here is what lets the sticky service restart, the boot receiver and the
+            // after-update path all reuse the ordinary connect path rather than each
+            // carrying their own idea of whether the VPN should be on.
+            _userWantsConnection = VpnIntent.Active;
+
+            StateSnapshot.Register("vpn", 10, DescribeState);
 
             _network.Start();
         }
 
         /// <summary>
-        /// Connects through whichever server the API binds the account to. The
-        /// <paramref name="server"/> argument is what the UI displays — server
-        /// <i>selection</i> is server-side (<c>GET /servers/connect</c> takes no id).
+        /// What the app believed at the moment a diagnostics archive was collected. Most
+        /// support exchanges are spent establishing exactly these facts.
+        /// </summary>
+        private IEnumerable<KeyValuePair<string, string?>> DescribeState()
+        {
+            yield return new("state", State.ToString());
+            yield return new("userWantsConnection", _userWantsConnection.ToString());
+            yield return new("tunnelState", _platform.CurrentState.ToString());
+            yield return new("protocol", ActiveProtocolType?.ToString());
+            yield return new("demoted", _demotedProtocol?.ToString());
+            yield return new("server", ActiveServer?.Name);
+            yield return new("reconnectAttempt", _reconnectAttempt.ToString());
+            yield return new("pendingRecovery", _recovery.Pending);
+            yield return new("unhealthySince", _unhealthySince?.ToLocalTime().ToString("HH:mm:ss"));
+            yield return new("socksPort", _endpoint.SocksPort.ToString());
+            yield return new("coreRunning", XrayProtocol.IsCoreRunning.ToString());
+            yield return new("coreVersion", XrayProtocol.CoreVersion);
+            yield return new("corePaused", XrayProtocol.IsPaused?.ToString() ?? "unsupported");
+            yield return new("preflightDirectIp", LastPreflightDirectIp);
+            yield return new("preflightProxiedIp", LastPreflightProxiedIp);
+
+            long[] counters;
+            try { counters = _platform.GetTunnelStats(); } catch { counters = []; }
+            yield return new("tunnelCounters", counters.Length >= 4
+                ? $"txp {counters[0]}, tx {counters[1]}B, rxp {counters[2]}, rx {counters[3]}B"
+                : "bridge not running");
+
+            foreach (var kv in VpnIntent.Describe()) yield return new("intent." + kv.Key, kv.Value);
+            foreach (var kv in UserPreferences.Describe()) yield return new("pref." + kv.Key, kv.Value);
+        }
+
+        /// <summary>
+        /// Connects, binding the account to <paramref name="server"/> first when one was
+        /// chosen.
+        ///
+        /// <para>Selection and connection are now two calls, not one. The API used to pick
+        /// a node as a side effect of handing out links, which meant the app could not
+        /// honour a user's choice at all; <c>POST /servers/select</c> reserves the slot and
+        /// <c>GET /servers/connect</c> only reads back what the account is bound to. Passing
+        /// null means "leave the binding alone" — the connect endpoint still auto-picks for
+        /// an account that has never been bound.</para>
         /// </summary>
         public async Task ConnectAsync(ServerInfo? server = null, CancellationToken ct = default)
         {
             if (State != VpnState.Disconnected) return;
 
             _userWantsConnection = true;
+            VpnIntent.Set();
             SetState(VpnState.Connecting, null);
             _protocolLogBuffer.Clear();
 
             // Once per connect, not per attempt: the fallback loop would otherwise wipe the
             // failing protocol's log on its way to trying the next one, which is exactly the
             // log needed to explain why the first one failed.
-            DiagnosticPaths.Truncate(DiagnosticPaths.XrayLog);
+            //
+            // Rotated rather than deleted. Deleting meant a session that died was
+            // diagnosable right up until the app restarted and connected, at which point
+            // the only record of what went wrong was erased — losing exactly the log worth
+            // having.
+            DiagnosticPaths.Rotate(DiagnosticPaths.XrayLog);
 
             try
             {
+                await BindServerIfNeededAsync(server, ct);
+
                 var connection = await _api.GetServerConnectionAsync(ct);
 
                 bool granted = await _platform.RequestPermissionsAsync();
@@ -167,18 +273,18 @@ namespace Horus.Application
                               "Запустите Horus от имени администратора."
                             : "Разрешение на VPN не выдано.");
 
-                // Only try outbounds this node actually published, with anything that just
-                // failed on this network moved to the back rather than dropped — the same
-                // protocol may well be the best choice again once the link changes.
-                var available = OrderProtocols(
-                    FallbackOrder.Where(p => connection.LinkFor(p) != null).ToArray());
+                // Only what this node actually published, in our preference order, with
+                // anything that just failed on this network moved to the back rather than
+                // dropped — the same protocol may well be the best choice again once the
+                // link changes.
+                var available = OrderCandidates(connection.Candidates());
 
-                if (available.Length == 0)
+                if (available.Count == 0)
                     throw new InvalidOperationException(
-                        "The server did not offer any protocol this build supports.");
+                        "Сервер не предложил ни одного поддерживаемого способа подключения.");
 
                 var (protocol, usedType, usedConfig) =
-                    await ConnectWithFallbackAsync(connection, available, ct);
+                    await ConnectWithFallbackAsync(available, ct);
 
                 ActiveProtocol = protocol;
                 ActiveProtocolType = usedType;
@@ -203,8 +309,12 @@ namespace Horus.Application
                 if (_traffic is TrafficMonitorService tms) tms.Reset();
                 _traffic.Start();
 
+                // The API is the authority on which node this actually is. In Auto mode
+                // nothing was passed in, and even when it was, the connect response carries
+                // a display name the ping catalogue does not have — so prefer it and fall
+                // back to the caller's idea only if the API said nothing.
                 var previous = ActiveServer;
-                ActiveServer = server;
+                ActiveServer = connection.Server?.ToServerInfo() ?? server;
                 if (previous != null && server != null)
                     ServerChanged?.Invoke(this, new ServerChangedEventArgs(previous, server));
 
@@ -213,6 +323,10 @@ namespace Horus.Application
                 // A connection that came up is proof the backoff can start over; leaving
                 // the counter high would make the next unrelated hiccup wait two minutes.
                 _reconnectAttempt = 0;
+
+                // …and proof the service is viable, so a later system restart gets a full
+                // budget rather than inheriting the failures that preceded this success.
+                VpnIntent.ResetRestartBudget();
 
                 // A connection that came up clears the dead-tunnel clock.
                 _unhealthySince = null;
@@ -243,6 +357,8 @@ namespace Horus.Application
             // disconnected still has to cancel a pending automatic reconnect, or the app
             // turns itself back on seconds after the user told it not to.
             _userWantsConnection = false;
+            VpnIntent.Clear();
+            _recovery.Cancel();
             _reconnectCts?.Cancel();
             _reconnectAttempt = 0;
             _demotedProtocol = null;
@@ -422,27 +538,27 @@ namespace Horus.Application
         }
 
         /// <summary>
-        /// Android withdrew <c>NET_CAPABILITY_VALIDATED</c> from our tunnel: its own probe
-        /// through the VPN stopped reaching the internet.
+        /// The platform believes the tunnel has stopped carrying — either it withdrew
+        /// <c>NET_CAPABILITY_VALIDATED</c> after its own probe through the VPN failed, or
+        /// <c>ConnectivityDiagnosticsManager</c> reported a suspected data stall.
         ///
-        /// This is as authoritative as it gets and it arrives without us asking, so it is
-        /// acted on directly rather than being fed back through the counter heuristics.
-        /// The link underneath is still checked, because a phone that has simply lost
-        /// signal produces this too and reconnecting would be pointless.
+        /// This is as authoritative as it gets and it arrives without us asking, so it goes
+        /// straight through rather than being fed back into the counter heuristics. The
+        /// link underneath is still checked, because a phone that has simply lost signal
+        /// produces the same signal and reconnecting would be pointless.
         /// </summary>
-        private void OnTunnelValidationLost(object? sender, EventArgs e)
+        private void OnTunnelSuspect(object? sender, string reason)
         {
             if (State != VpnState.Connected) return;
 
             if (!_network.IsOnline)
             {
-                OnProtocolOutput(this, "[health] tunnel lost validation, but the link is down too — waiting");
+                OnProtocolOutput(this, $"[health] {reason}, but the link is down too — waiting");
                 return;
             }
 
-            OnProtocolOutput(this, "[health] the system says the tunnel no longer reaches the internet");
-            OnUnhealthy(this, new TunnelHealthEventArgs(
-                TunnelHealth.OutboundDead, "platform withdrew VALIDATED from the tunnel"));
+            OnProtocolOutput(this, $"[health] {reason}");
+            OnUnhealthy(this, new TunnelHealthEventArgs(TunnelHealth.OutboundDead, reason));
         }
 
         /// <summary>
@@ -461,22 +577,134 @@ namespace Horus.Application
         }
 
         /// <summary>
+        /// The device entered or left Doze.
+        ///
+        /// <para>Passed straight to the core, which has housekeeping loops that would
+        /// otherwise keep waking the device all night to tidy structures nothing is
+        /// touching. Not gated on <see cref="VpnState.Connected"/>: the loops belong to the
+        /// core, not to the tunnel, and they keep running between a teardown and the next
+        /// connect.</para>
+        ///
+        /// <para>Entering Doze deliberately does <i>not</i> stop the health monitor. Doze
+        /// is exactly when a tunnel dies unobserved, and its idle cadence is already 60
+        /// seconds with aligned wakeups.</para>
+        /// </summary>
+        private void OnDeviceIdleChanged(object? sender, bool idle)
+        {
+            XrayProtocol.SetPaused(idle);
+        }
+
+        /// <summary>
         /// A handover is the one event counters cannot detect: every connection through the
-        /// old link is already dead, and nothing reports it until something tries to use
-        /// one. Probing immediately turns a stall the user would notice into a reconnect
-        /// they mostly will not.
+        /// old link is already dead, and nothing reports it until something tries to use one.
+        ///
+        /// <para>Routed through <see cref="_recovery"/> rather than acted on directly. These
+        /// events do not arrive one at a time: a lift, a train tunnel or the edge of Wi-Fi
+        /// coverage produces five to ten transitions in twenty seconds, and this used to
+        /// start a six-second probe for every one of them. The debounce turns that burst
+        /// into a single check once the link settles.</para>
         /// </summary>
         private void OnNetworkChanged(object? sender, NetworkChangedEventArgs e)
         {
             OnProtocolOutput(this, $"[net] {e.Transport}, online={e.IsOnline}, handover={e.IsHandover}");
 
-            if (!_userWantsConnection) return;
-
+            if (!WantsConnection) return;
             if (!e.IsOnline) return; // nothing to do until a link exists
 
-            // Back online after a drop that we chose not to tear down.
-            if (State == VpnState.Connected) _health.ProbeNow($"network changed to {e.Transport}");
-            else if (State == VpnState.Disconnected) ScheduleReconnect("network returned", immediate: true);
+            if (e.IsHandover) Interlocked.Exchange(ref _handoverPending, 1);
+
+            _recovery.Request($"network {e.Transport}{(e.IsHandover ? " (handover)" : "")}");
+        }
+
+        /// <summary>
+        /// What the debounce eventually fires. By this point the link has been stable for
+        /// <see cref="RecoveryTrigger.Debounce"/>, so the state read here is worth acting on
+        /// — unlike the state during the burst that queued it.
+        /// </summary>
+        private Task OnRecoveryDue(string reason)
+        {
+            if (!WantsConnection) return Task.CompletedTask;
+
+            var handover = Interlocked.Exchange(ref _handoverPending, 0) == 1;
+
+            switch (State)
+            {
+                case VpnState.Connected:
+                    // Drop the sessions before probing. Everything established over the old
+                    // link is already dead, and without this the transport would sit on the
+                    // dead path until an idle timeout measured in minutes — so the probe
+                    // that follows would be measuring a connection nothing was going to
+                    // rescue, and would conclude the tunnel needs rebuilding. Resetting
+                    // costs one call and leaves the instance and the TUN standing; the
+                    // probe's own dial is then what establishes the replacement.
+                    if (handover) XrayProtocol.ResetConnections();
+
+                    _health.ProbeNow(reason);
+                    break;
+
+                // Back online after a drop we chose not to tear down, or after a failed
+                // attempt. Immediate, because the debounce has already provided the wait.
+                case VpnState.Disconnected:
+                    if (!CanAttemptConnection)
+                    {
+                        // Startup has not restored the session yet. Dropping the request is
+                        // right rather than deferring it: App.OnStart calls
+                        // TryRestoreOrAutoConnectAsync once the session is in place, which
+                        // covers exactly this case and does it without burning an attempt.
+                        Diag.Info("recover", $"no session yet, leaving {reason} to startup");
+                        break;
+                    }
+
+                    ScheduleReconnect(reason, immediate: true);
+                    break;
+
+                // Mid-flight. Whatever is running will reach a terminal state and the
+                // ordinary paths take it from there.
+                default:
+                    break;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Brings the tunnel back at startup, for either of two distinct reasons.
+        ///
+        /// <para><b>Restore.</b> <see cref="VpnIntent"/> says the user turned the VPN on and
+        /// never turned it off, yet nothing is running — so it died with the process and the
+        /// user was never told. This is the safety net under a system that declined to
+        /// restart the sticky service, and it is not gated on any preference: the user
+        /// already asked, and asking again by leaving them unprotected is not a choice they
+        /// made.</para>
+        ///
+        /// <para><b>Auto-connect.</b> The user asked for every launch to start protected,
+        /// even one after an explicit disconnect. That is what
+        /// <see cref="UserPreferences.AutoConnectOnLaunch"/> means, and it is off by
+        /// default because hijacking a launch surprises someone who opened the app to
+        /// change a setting.</para>
+        ///
+        /// <para>Must be called <i>after</i> the session has been restored — see
+        /// <see cref="CanAttemptConnection"/> for what happens when something tries earlier.</para>
+        /// </summary>
+        public async Task TryRestoreOrAutoConnectAsync(CancellationToken ct = default)
+        {
+            if (State != VpnState.Disconnected) return;
+
+            var restoring = VpnIntent.Active;
+            if (!restoring && !UserPreferences.AutoConnectOnLaunch) return;
+
+            if (!CanAttemptConnection)
+            {
+                Diag.Warn("connect", "startup connect skipped: no session");
+                return;
+            }
+
+            Diag.Info("connect", restoring
+                ? "restoring tunnel — intent survived, nothing was running"
+                : "auto-connect on launch");
+
+            try { await ConnectAsync(ActiveServer, ct); }
+            catch (Exception ex) { Diag.Warn("connect", $"startup connect failed: {ex.Message}"); }
         }
 
         /// <summary>
@@ -486,7 +714,7 @@ namespace Horus.Application
         /// </summary>
         private async Task RecoverAsync(string reason)
         {
-            if (!_userWantsConnection) return;
+            if (!WantsConnection) return;
 
             var protocol = ActiveProtocolType?.ToString() ?? "Unknown";
 
@@ -508,7 +736,7 @@ namespace Horus.Application
 
         private void ScheduleReconnect(string reason, bool immediate, ServerInfo? server = null)
         {
-            if (!_userWantsConnection) return;
+            if (!WantsConnection) return;
 
             _reconnectCts?.Cancel();
             _reconnectCts?.Dispose();
@@ -527,7 +755,7 @@ namespace Horus.Application
                 try
                 {
                     if (delay > TimeSpan.Zero) await Task.Delay(delay, ct).ConfigureAwait(false);
-                    if (ct.IsCancellationRequested || !_userWantsConnection) return;
+                    if (ct.IsCancellationRequested || !WantsConnection) return;
 
                     switch (State)
                     {
@@ -555,10 +783,30 @@ namespace Horus.Application
                 catch (Exception ex)
                 {
                     OnProtocolOutput(this, $"[recover] attempt failed: {ex.Message}");
+
+                    // The backoff ladder exists to stop us hammering a network that is not
+                    // working. A missing session is not that, so it must not cost a rung —
+                    // otherwise an unrelated failure at startup makes the next genuine
+                    // attempt wait ten seconds, then thirty.
+                    if (IsSessionFailure(ex))
+                        _reconnectAttempt = Math.Max(0, _reconnectAttempt - 1);
+
                     ScheduleReconnect(reason, immediate: false, target);
                 }
             }, ct);
         }
+
+        /// <summary>
+        /// Whether the failure is about who we are rather than about the network.
+        ///
+        /// <para>Matched on type where possible. The string check covers
+        /// <c>RequireSession</c>, which throws a plain
+        /// <see cref="InvalidOperationException"/> before any request is made — narrow
+        /// enough not to swallow a real transport error.</para>
+        /// </summary>
+        private static bool IsSessionFailure(Exception ex) =>
+            ex is UnauthorizedAccessException
+            || (ex is InvalidOperationException && ex.Message.Contains("сесси", StringComparison.OrdinalIgnoreCase));
 
         private TunnelHealthMonitor.Endpoint CurrentEndpoint() => _endpoint;
         private TunnelHealthMonitor.Endpoint _endpoint;
@@ -593,7 +841,10 @@ namespace Horus.Application
             ActiveProtocolType = null;
             SetState(VpnState.Disconnected, reason);
 
-            var willRetry = _userWantsConnection;
+            // Consults the persisted intent as well: a revoke clears it from inside the
+            // tunnel service, and retrying then would mean fighting whichever app the user
+            // just handed the VPN slot to.
+            var willRetry = WantsConnection;
             ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, willRetry));
 
             if (willRetry) ScheduleReconnect(reason, immediate: false);
@@ -602,37 +853,23 @@ namespace Horus.Application
         // ── Connect helpers ─────────────────────────────────────────────────
 
         private async Task<(IVpnProtocol Protocol, ProtocolType Type, ProtocolConfig Config)> ConnectWithFallbackAsync(
-            ServerConnection connection, ProtocolType[] available, CancellationToken ct)
+            IReadOnlyList<ConnectionCandidate> available, CancellationToken ct)
         {
             Exception? lastEx = null;
 
-            for (int i = 0; i < available.Length; i++)
+            for (int i = 0; i < available.Count; i++)
             {
-                var protocolType = available[i];
+                var candidate = available[i];
+                var protocolType = candidate.Protocol;
                 IVpnProtocol? protocol = null;
 
                 try
                 {
-                    var config = await _protocolFactory.CreateConfigAsync(protocolType, connection, ct);
+                    var config = await _protocolFactory.CreateConfigAsync(candidate, ct);
                     protocol = _protocolFactory.Create(protocolType);
                     Attach(protocol);
 
-                    if (config is XrayConfig xc)
-                    {
-                        OnProtocolOutput(this,
-                            $"[{protocolType}] {xc.Link.Host} -> {xc.Link.DialAddress}:{xc.Link.Port}" +
-                            (xc.Link.ResolvedHost is null ? " (DNS FAILED, using hostname)" : ""));
-
-                        // Public handshake parameters only — never the credential. These are
-                        // what a server-side provisioning mistake corrupts, and comparing
-                        // them against a known-good link is the fastest way to spot it.
-                        OnProtocolOutput(this, xc.Link.Protocol == ProtocolType.Vless
-                            ? $"[{protocolType}] sni={xc.Link.Sni} fp={xc.Link.Fingerprint} " +
-                              $"flow={xc.Link.Flow ?? "-"} pbk={xc.Link.PublicKey} sid={xc.Link.ShortId} " +
-                              $"net={xc.Link.Network} sec={xc.Link.Security}"
-                            : $"[{protocolType}] sni={xc.Link.Sni} alpn=[{string.Join(',', xc.Link.Alpn)}] " +
-                              $"obfs={xc.Link.Obfs ?? "-"} hop={xc.Link.PortRange ?? "-"}");
-                    }
+                    if (config is XrayConfig xc) LogHandshakeParameters(protocolType, xc);
 
                     await protocol.ConnectAsync(config, ct);
 
@@ -650,7 +887,7 @@ namespace Horus.Application
 
                     if (lastEx != null)
                         ProtocolFallback?.Invoke(this, new ProtocolFallbackEventArgs(
-                            available[i - 1].ToString(), protocolType.ToString(), lastEx.Message));
+                            available[i - 1].ToString(), candidate.ToString(), lastEx.Message));
 
                     return (protocol, protocolType, config);
                 }
@@ -670,12 +907,13 @@ namespace Horus.Application
                     _errorReporting.RecordConnectionFailure(
                         protocolType.ToString(), ex.Message, protocolLog);
 
-                    if (i == available.Length - 1)
+                    if (i == available.Count - 1)
                     {
                         LastProtocolLog = protocolLog;
                         await TryBuildFailureArchiveAsync();
                         throw new InvalidOperationException(
-                            $"Не удалось подключиться ни по одному протоколу ({string.Join(", ", available)}). " +
+                            "Не удалось подключиться ни одним способом " +
+                            $"({string.Join(", ", available.Select(c => c.ToString()))}). " +
                             $"Последняя ошибка: {ex.Message}", ex);
                     }
 
@@ -743,10 +981,11 @@ namespace Horus.Application
             Diag.Write(line);
 
             _protocolLogBuffer.AppendLine(line);
-            // Also feed the rolling session log: the failure-only capture below never
-            // fires for a "connected but nothing loads" session, which is the case most
-            // in need of a log.
-            _errorReporting.AppendLog(line);
+
+            // Deliberately NOT also calling _errorReporting.AppendLog here. It forwards to
+            // Diag, so doing both wrote every protocol line twice — 45% of the event log
+            // measured on a device, halving both the useful history in the ring buffer and
+            // the time before the 512 KB file rotates.
             ProtocolOutputReceived?.Invoke(this, line);
         }
 
@@ -792,7 +1031,17 @@ namespace Horus.Application
         private static string[] OffTunnelAddresses(ProtocolConfig config) =>
             NodeAddress(config) is { } node ? [node] : [];
 
-        /// <summary>The node's literal IP, or null when pre-resolution failed.</summary>
+        /// <summary>
+        /// The node's literal IP, or null when there is not one.
+        ///
+        /// <para>Null in two different situations, and both are handled the same way on
+        /// purpose. Pre-resolution can fail — in which case the connect has already been
+        /// abandoned before reaching here. Or the protocol has no node address at all:
+        /// olcRTC reaches a signalling provider rather than the node, so there is nothing
+        /// to route around the tunnel. On Android neither matters, because the app's whole
+        /// UID is excluded; 🔧 on Windows an olcRTC outbound would need the provider's
+        /// address bypassed, which the API does not publish.</para>
+        /// </summary>
         private static string? NodeAddress(ProtocolConfig config) =>
             config is XrayConfig xc && System.Net.IPAddress.TryParse(xc.Link.DialAddress, out var ip)
                 ? ip.ToString()
@@ -810,17 +1059,91 @@ namespace Horus.Application
         }
 
         /// <summary>
-        /// The fallback order with a just-failed protocol moved to the back instead of
-        /// removed. Removing it would be wrong: Hysteria2 failing on one operator's mobile
-        /// network says nothing about the Wi-Fi the phone reaches ten minutes later, and a
-        /// permanently excluded protocol is a permanently degraded connection.
+        /// Logs the public half of the handshake parameters.
+        ///
+        /// <para>Never the credential. These are the values a server-side provisioning
+        /// mistake corrupts, and comparing them against a known-good endpoint is the
+        /// fastest way to spot one — which only works if they are safe to paste into a
+        /// support chat.</para>
         /// </summary>
-        private ProtocolType[] OrderProtocols(ProtocolType[] available)
+        private void LogHandshakeParameters(ProtocolType protocolType, XrayConfig config)
         {
-            if (_demotedProtocol is not { } demoted || available.Length < 2) return available;
-            if (!available.Contains(demoted)) return available;
+            var link = config.Link;
 
-            return [.. available.Where(p => p != demoted), demoted];
+            if (protocolType == ProtocolType.OlcRtc)
+            {
+                // Signalling-based: no address, no SNI, nothing resolved. The room id is
+                // omitted deliberately — paired with the key it is a credential.
+                OnProtocolOutput(this,
+                    $"[{protocolType}] provider={link.Params.GetValueOrDefault("provider")} " +
+                    $"transport={link.Params.GetValueOrDefault("transport")} node={link.Host}");
+                return;
+            }
+
+            OnProtocolOutput(this,
+                $"[{protocolType}] {link.Host} -> {link.DialAddress}:{link.Port}" +
+                (link.ResolvedHost is null ? " (DNS FAILED, using hostname)" : ""));
+
+            OnProtocolOutput(this, protocolType == ProtocolType.Vless
+                ? $"[{protocolType}] sni={link.Sni} fp={link.Fingerprint} " +
+                  $"flow={link.Flow ?? "-"} pbk={link.PublicKey} sid={link.ShortId} " +
+                  $"net={link.Network} sec={link.Security}"
+                : $"[{protocolType}] sni={link.Sni} alpn=[{string.Join(',', link.Alpn)}] " +
+                  $"obfs={link.Obfs ?? "-"} hop={link.PortRange ?? "-"}");
+        }
+
+        /// <summary>
+        /// Reserves a slot on the chosen node, when the user chose one.
+        ///
+        /// <para>Skipped for auto: asking the API to auto-pick on every connect would move
+        /// an account off a node it is happily bound to, which costs a re-provision and
+        /// loses the stability the binding exists to provide. A user who wants a different
+        /// node says so on the Servers screen, and that is the only thing that moves them.</para>
+        ///
+        /// <para>Skipped too when the account is already on that node — <c>select</c> is
+        /// idempotent, but a round trip on every connect is not free on a mobile link.</para>
+        /// </summary>
+        private async Task BindServerIfNeededAsync(ServerInfo? server, CancellationToken ct)
+        {
+            if (server is null) return;
+            if (ActiveServer?.Id == server.Id) return;
+
+            Diag.Info("connect", $"binding to server {server.Id} ({server.Location})");
+            var bound = await _api.SelectServerAsync(server.Id, ct);
+
+            // The API's name is the authoritative one: the ping catalogue has no display
+            // name at all, so this is the first point at which the node can be called
+            // anything better than its city.
+            OnProtocolOutput(this, $"[api] bound to {bound.Name} ({bound.Location})");
+        }
+
+        /// <summary>
+        /// The node's endpoints in the order they should be tried.
+        ///
+        /// <para>Primary key is this build's preference (see <see cref="FallbackOrder"/>),
+        /// not the node's: olcRTC is capable of getting through where the others cannot,
+        /// but it is a video-codec transport with timers running at frame rate, so paying
+        /// for it before knowing it is needed would cost every user battery to help a few.
+        /// The fallback loop reaches it when the cheaper options fail, which is exactly
+        /// when it earns its cost.</para>
+        ///
+        /// <para>A just-failed protocol is moved to the back rather than removed. Removing
+        /// it would be wrong: Hysteria2 failing on one operator's mobile network says
+        /// nothing about the Wi-Fi the phone reaches ten minutes later, and a permanently
+        /// excluded protocol is a permanently degraded connection.</para>
+        /// </summary>
+        private List<ConnectionCandidate> OrderCandidates(IReadOnlyList<ConnectionCandidate> offered)
+        {
+            var ordered = offered
+                .Where(c => FallbackOrder.Contains(c.Protocol))
+                .OrderBy(c => Array.IndexOf(FallbackOrder, c.Protocol))
+                .ToList();
+
+            if (_demotedProtocol is not { } demoted || ordered.Count < 2) return ordered;
+            if (ordered.All(c => c.Protocol == demoted)) return ordered;
+
+            return [.. ordered.Where(c => c.Protocol != demoted),
+                    .. ordered.Where(c => c.Protocol == demoted)];
         }
 
         private void SetState(VpnState newState, string? reason)

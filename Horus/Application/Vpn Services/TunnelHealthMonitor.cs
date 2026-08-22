@@ -1,3 +1,4 @@
+using Horus.Application.Diagnostics;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
@@ -76,16 +77,62 @@ namespace Horus.Application
         private const long StarvedDownlinkRatio = 8;
 
         /// <summary>
-        /// Mean received-packet size below which the downlink is control traffic rather
-        /// than data. Resets and ICMP errors are tiny; even a bare TCP ACK stream carries
-        /// more once the link is really working.
+        /// Mean received-packet size below which the downlink might be control traffic
+        /// rather than data.
+        ///
+        /// <para>Necessary but not sufficient — see <see cref="BulkSendPacketSize"/>. A
+        /// device measured mid-upload produced 78 bytes per received packet, comfortably
+        /// under this, purely because a delayed-ACK stream is small. Judging on this alone
+        /// would have called a healthy tunnel dead.</para>
         /// </summary>
         private const long ControlPacketSize = 96;
+
+        /// <summary>
+        /// Mean <i>sent</i> packet size above which the uplink is a bulk transfer.
+        ///
+        /// <para>This is what separates the two cases that otherwise look identical from
+        /// the counters. Measured on the failure this monitor was built for: 25 399 bytes
+        /// out in 126 packets, about 200 bytes each — small, because a dead outbound is
+        /// retransmitting requests that never complete. Measured mid-upload on a healthy
+        /// tunnel: 659 809 bytes out against 8 807 back, with segments near the MTU.</para>
+        ///
+        /// <para>Both look starved and both answer in small packets; only the size of what
+        /// is being <i>sent</i> tells them apart. 600 sits between 200 and ~1400 with room
+        /// on either side.</para>
+        /// </summary>
+        private const long BulkSendPacketSize = 600;
 
         /// <summary>Consecutive suspicious samples required before probing.</summary>
         private const int SuspicionLimit = 2;
 
         private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(6);
+
+        /// <summary>
+        /// Neutral targets, tried before anything of ours.
+        ///
+        /// <para>The probe used to go straight to the Horus API through the proxy, which
+        /// made the health of the tunnel depend on the health of our backend — an API that
+        /// is blocked, down or merely slow produced "OutboundDead" and an unnecessary
+        /// rebuild of a perfectly good tunnel. The connect-time preflight already knew
+        /// better and fell back to a bare SOCKS5 dial; this is that same correction applied
+        /// to the periodic check.</para>
+        ///
+        /// <para>The first entry is a hostname on purpose, so a success also proves the core
+        /// can resolve — the half that breaks silently. The second is a literal address, so
+        /// a failure of the first can be attributed to DNS rather than to the tunnel.</para>
+        /// </summary>
+        private static readonly (string Host, int Port)[] NeutralTargets =
+        [
+            ("cloudflare.com", 443),
+            ("1.1.1.1", 443)
+        ];
+
+        /// <summary>
+        /// 0 or 1. Stops overlapping probes: several network events in quick succession
+        /// used to each start their own six-second request, and whichever finished first
+        /// decided the tunnel's fate.
+        /// </summary>
+        private int _probing;
 
         private readonly IVpnPlatformService _platform;
         private readonly IApiService _api;
@@ -94,7 +141,7 @@ namespace Horus.Application
 
         private CancellationTokenSource? _cts;
         private Endpoint _endpoint;
-        private long _lastTx, _lastRx, _lastRxPackets;
+        private long _lastTx, _lastRx, _lastRxPackets, _lastTxPackets;
         private bool _hasBaseline;
         private int _suspicion;
 
@@ -123,6 +170,7 @@ namespace Horus.Application
         public void Start(Endpoint endpoint)
         {
             Stop();
+            StateSnapshot.Register("health", 15, Describe);
             _endpoint = endpoint;
             _hasBaseline = false;
             _suspicion = 0;
@@ -147,11 +195,25 @@ namespace Horus.Application
             var ct = _cts?.Token ?? CancellationToken.None;
             if (ct.IsCancellationRequested) return;
 
+            // One at a time. Without this, a burst of network events each started a probe
+            // and they raced to classify the same tunnel.
+            if (Interlocked.CompareExchange(ref _probing, 1, 0) != 0)
+            {
+                Diag.Trace("health", $"probe already in flight, skipping: {reason}");
+                return;
+            }
+
             _ = Task.Run(async () =>
             {
-                var health = await ProbeAsync(ct).ConfigureAwait(false);
-                if (health != TunnelHealth.Healthy) Raise(health, reason);
-                else _suspicion = 0;
+                try
+                {
+                    var health = await ProbeAsync(ct).ConfigureAwait(false);
+                    if (health != TunnelHealth.Healthy) Raise(health, reason);
+                    else _suspicion = 0;
+                }
+                catch (OperationCanceledException) { /* stopped */ }
+                catch (Exception ex) { Diag.Warn("health", $"probe threw: {ex.Message}"); }
+                finally { Interlocked.Exchange(ref _probing, 0); }
             }, ct);
         }
 
@@ -213,7 +275,13 @@ namespace Horus.Application
             Interlocked.Exchange(ref _wake, wake);
 
             using var registration = ct.Register(() => wake.TrySetResult());
-            await Task.WhenAny(wake.Task, Task.Delay(interval, ct)).ConfigureAwait(false);
+
+            // Aligned to the interval boundary rather than started wherever this iteration
+            // happened to finish, so the platform can coalesce this wakeup with others
+            // instead of servicing it at an arbitrary offset. Advancing by whole intervals
+            // also stops a slow check from dragging every later one out of alignment.
+            var deadline = Cadence.AlignToNext(Cadence.NowMs(), (long)interval.TotalMilliseconds);
+            await Cadence.WaitUntilAsync(deadline, wake.Task, ct).ConfigureAwait(false);
 
             ct.ThrowIfCancellationRequested();
         }
@@ -253,13 +321,15 @@ namespace Horus.Application
             // and a dead bridge therefore looked exactly like a sleeping phone.
             if (counters.Length < 4) return TunnelHealth.TunnelDead;
 
+            var txPackets = counters[0];
             var tx = counters[1];
-            var rx = counters[3];
             var rxPackets = counters[2];
+            var rx = counters[3];
 
-            if (!_hasBaseline || tx < _lastTx || rx < _lastRx || rxPackets < _lastRxPackets)
+            if (!_hasBaseline || tx < _lastTx || rx < _lastRx
+                || rxPackets < _lastRxPackets || txPackets < _lastTxPackets)
             {
-                _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets;
+                _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets; _lastTxPackets = txPackets;
                 _hasBaseline = true; _suspicion = 0;
                 return TunnelHealth.Healthy;
             }
@@ -267,7 +337,8 @@ namespace Horus.Application
             var sent = tx - _lastTx;
             var received = rx - _lastRx;
             var receivedPackets = rxPackets - _lastRxPackets;
-            _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets;
+            var sentPackets = txPackets - _lastTxPackets;
+            _lastTx = tx; _lastRx = rx; _lastRxPackets = rxPackets; _lastTxPackets = txPackets;
 
             // Too little went out to conclude anything. Not evidence of health, but not
             // evidence of failure either, and inventing a failure from an idle device is
@@ -276,14 +347,22 @@ namespace Horus.Application
 
             var starved = received * StarvedDownlinkRatio < sent;
 
-            // A genuine large upload also starves the downlink, but its ACKs are ordinary
-            // packets. A dead outbound answers in resets, which are tiny — so the mean
-            // packet size separates the two.
-            var controlOnly = receivedPackets == 0 || received / Math.Max(receivedPackets, 1) < ControlPacketSize;
+            // A dead outbound answers in resets and ICMP errors, which are tiny.
+            var controlOnly = receivedPackets == 0
+                || received / Math.Max(receivedPackets, 1) < ControlPacketSize;
 
-            _lastSample = $"out {sent}B, back {received}B in {receivedPackets}p";
+            // …but so is a delayed-ACK stream, so this test alone condemns a healthy
+            // upload. What actually differs is the uplink: a bulk transfer sends
+            // MTU-sized segments, a stalled outbound retransmits small requests. Only
+            // when BOTH the answer is control-sized and the traffic being sent is not
+            // bulk is the sample worth suspecting.
+            var meanSent = sentPackets > 0 ? sent / sentPackets : 0;
+            var bulkUpload = meanSent >= BulkSendPacketSize;
 
-            if (!starved || !controlOnly) { _suspicion = 0; return TunnelHealth.Healthy; }
+            _lastSample = $"out {sent}B in {sentPackets}p ({meanSent}B/p), " +
+                          $"back {received}B in {receivedPackets}p";
+
+            if (!starved || !controlOnly || bulkUpload) { _suspicion = 0; return TunnelHealth.Healthy; }
 
             // Sending into what is effectively silence. One sample could be a slow request;
             // two in a row is a pattern worth paying for a probe to explain.
@@ -305,6 +384,26 @@ namespace Horus.Application
         {
             if (!XrayProtocol.IsCoreRunning) return TunnelHealth.CoreDead;
 
+            // Cheapest and most neutral first: a SOCKS5 CONNECT costs one round trip, needs
+            // nothing of ours, and its reply code is the core's own statement about whether
+            // it reached the target.
+            foreach (var (host, port) in NeutralTargets)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                if (await SocksProbe.CanDialAsync(
+                        _endpoint.SocksPort, host, port, ProbeTimeout, ct).ConfigureAwait(false))
+                {
+                    Diag.Trace("health", $"probe ok via {host}:{port}");
+                    return TunnelHealth.Healthy;
+                }
+
+                Diag.Trace("health", $"probe failed via {host}:{port}");
+            }
+
+            // Both neutral targets refused. Before condemning the tunnel, try our own API
+            // through the proxy: a network that blocks these two specifically is unusual
+            // but not impossible, and a false OutboundDead costs the user a rebuild.
             try
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -339,6 +438,16 @@ namespace Horus.Application
         {
             try { return _device.Read().HasNetwork; }
             catch { return true; } // unreadable: assume the link is fine and blame the tunnel
+        }
+
+        private IEnumerable<KeyValuePair<string, string?>> Describe()
+        {
+            yield return new("running", (_cts is { IsCancellationRequested: false }).ToString());
+            yield return new("interval", CurrentInterval().TotalSeconds + "s");
+            yield return new("suspicion", $"{_suspicion}/{SuspicionLimit}");
+            yield return new("lastSample", _lastSample);
+            yield return new("probeInFlight", (Volatile.Read(ref _probing) != 0).ToString());
+            yield return new("socksPort", _endpoint.SocksPort.ToString());
         }
 
         private void Raise(TunnelHealth health, string detail)

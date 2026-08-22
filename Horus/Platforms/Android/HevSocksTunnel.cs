@@ -1,4 +1,5 @@
 using Android.Util;
+using Horus.Application;
 using Horus.Domain.Models;
 using Horus.Protocols;
 using System.Runtime.InteropServices;
@@ -39,18 +40,22 @@ namespace Horus.Platforms.Android
         {
             if (_hevThread != null)
             {
-                Log.Warn(HEV_TAG, "Trying to start tunnel again!");
-                return;
+                // Either a live tunnel, or one StopTunnel could not join. Both mean a
+                // second reader on the same fd, so this is a hard refusal rather than a
+                // warning — the caller surfaces it as a failed connect, which is recoverable,
+                // instead of a half-working tunnel, which is not diagnosable.
+                throw new InvalidOperationException(
+                    "\u041f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0438\u0439 \u0442\u0443\u043d\u043d\u0435\u043b\u044c \u0435\u0449\u0451 \u043d\u0435 \u043e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 \u043d\u0435\u0441\u043a\u043e\u043b\u044c\u043a\u043e \u0441\u0435\u043a\u0443\u043d\u0434.");
             }
 
             var logFile = DiagnosticPaths.HevLog;
-            DiagnosticPaths.Truncate(logFile);
+            DiagnosticPaths.Rotate(logFile);
 
             // The native side takes a byte count, not a character count. Marshalling the
             // string ourselves keeps the two in agreement once the config carries a path
             // that is not pure ASCII.
             var config = System.Text.Encoding.UTF8.GetBytes(
-                HevTunnelConfig.Build(logFile, HevTunnelConfig.DefaultLogLevel, socksPort));
+                HevTunnelConfig.Build(logFile, UserPreferences.HevLogLevel, socksPort));
 
             _hevThread = new Thread(() =>
             {
@@ -74,20 +79,40 @@ namespace Horus.Platforms.Android
             _hevThread.Start();
         }
 
-        public static void StopTunnel()
+        /// <summary>
+        /// Stops the bridge and reports whether it actually went away.
+        ///
+        /// <para><b>False means the previous instance is still running.</b> The old version
+        /// cleared the field regardless of whether the join succeeded, so a bridge that had
+        /// not unwound within three seconds was forgotten about — and the next connect
+        /// happily started a second one, with two readers on the same TUN fd. The symptom
+        /// would be a tunnel that carries a fraction of its packets, which is far harder to
+        /// diagnose than a connect that refuses to proceed.</para>
+        ///
+        /// <para>Callers must not start a new tunnel on a false. In practice the join
+        /// returns in milliseconds; a timeout means something is genuinely wrong.</para>
+        /// </summary>
+        public static bool StopTunnel()
         {
-            if (_hevThread == null)
+            var thread = _hevThread;
+            if (thread == null)
             {
                 Log.Warn(HEV_TAG, "Trying to stop non existing tunnel!");
-                return;
+                return true;
             }
 
             hev_socks5_tunnel_quit();
 
             // quit() unblocks main_from_str; give the loop a moment to unwind so a
             // reconnect does not race a still-running instance onto the same fd.
-            _hevThread.Join(TimeSpan.FromSeconds(3));
+            if (!thread.Join(TimeSpan.FromSeconds(3)))
+            {
+                Diag.Error("tun", "hev-socks5-tunnel did not exit within 3s; not starting another");
+                return false;
+            }
+
             _hevThread = null;
+            return true;
         }
 
         public static long[]? GetTunnelStats()

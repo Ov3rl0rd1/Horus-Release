@@ -6,7 +6,7 @@
     Upstream publishes Android *executables*, not the shared library, so this is built from
     source every time; there is no stock binary to download.
 
-    Two deviations from a plain `ndk-build`, both deliberate:
+    Three deviations from a plain `ndk-build`, all deliberate:
 
     1. src/hev-jni.c is removed before building. It is the Java-facing half of the library
        and Horus does not use it — the tunnel is driven through the plain C API
@@ -25,6 +25,13 @@
        symlinks as one-line text files unless core.symlinks is on, and the build then fails
        with `unknown type name 'HevRBTree'`.
 
+    3. Everything in hev-patches/ is applied. Today that is a size cap on the log file:
+       upstream's logger appends forever, and a tunnel that stays up for weeks with verbose
+       logging turned on has nothing to stop it filling the device. Patches are kept here
+       rather than in a fork so that moving to a newer upstream is a one-line change to
+       -Commit; a patch that stops applying is a deliberate signal to re-read it against the
+       new layout, which is exactly the review a fork silently skips.
+
 .PARAMETER Ndk
     Path to an Android NDK. Defaults to $env:ANDROID_NDK_HOME.
 
@@ -35,7 +42,8 @@
 param(
     [string]$Ndk = $env:ANDROID_NDK_HOME,
     [string]$Commit = 'f6ab377c9bad8093a0489cda274f1adbc1bf2b45',
-    [string]$WorkDir = (Join-Path ([IO.Path]::GetTempPath()) 'horus-hev-build')
+    [string]$WorkDir = (Join-Path ([IO.Path]::GetTempPath()) 'horus-hev-build'),
+    [string]$PatchDir = (Join-Path $PSScriptRoot 'hev-patches')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,6 +79,26 @@ foreach ($sub in $repos) {
 }
 Write-Host "Materialised $fixed symlinked headers"
 
+# (3) Apply the local patches, in filename order.
+#
+# --whitespace=error-all rather than the default 'warn': these are our own patches against a
+# pinned commit, so a whitespace mismatch means the patch no longer matches the source it was
+# written for, and silently fixing it up would hide that.
+if (Test-Path $PatchDir) {
+    $patches = Get-ChildItem -Path $PatchDir -Filter '*.patch' | Sort-Object Name
+    foreach ($patch in $patches) {
+        Write-Host "Applying $($patch.Name)"
+        & git -C $src apply --whitespace=error-all $patch.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to apply $($patch.Name). Upstream layout has probably moved; re-read the patch against commit $Commit."
+        }
+    }
+    if ($patches.Count -eq 0) { Write-Host "No patches in $PatchDir" }
+}
+else {
+    Write-Warning "Patch directory not found: $PatchDir"
+}
+
 # (1) Drop the JNI layer.
 $jni = Join-Path $src 'src\hev-jni.c'
 if (-not (Test-Path $jni)) { throw "src/hev-jni.c not found - upstream layout changed, re-check this script." }
@@ -104,6 +132,11 @@ foreach ($abi in @('arm64-v8a', 'x86_64')) {
     foreach ($symbol in 'hev_socks5_tunnel_main_from_str', 'hev_socks5_tunnel_quit', 'hev_socks5_tunnel_stats') {
         if ($strings -notmatch $symbol) { throw "$abi is missing $symbol" }
     }
+
+    # The log cap is invisible at runtime until a log grows past it, which is exactly the
+    # situation nobody is watching. Assert the config key made it in, so a patch that
+    # applied but did not take is caught here rather than months later.
+    if ($strings -notmatch 'log-max-size') { throw "$abi does not carry the log-max-size patch" }
 
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     Copy-Item $built $dest -Force

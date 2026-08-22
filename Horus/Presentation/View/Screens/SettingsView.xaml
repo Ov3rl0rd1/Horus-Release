@@ -28,7 +28,7 @@
                         <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
                             <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
                                 <Label Text="Автоподключение" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
-                                <Label Text="Включать защиту при запуске приложения" Style="{StaticResource HzDim}" FontSize="12" />
+                                <Label Text="Включать защиту даже после ручного отключения" Style="{StaticResource HzDim}" FontSize="12" />
                             </VerticalStackLayout>
                             <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding AutoConnect}" />
                         </Grid>
@@ -123,6 +123,50 @@
                             </VerticalStackLayout>
                             <controls:IconView Grid.Column="1" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
                                 Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <!-- Everything the app currently believes, as text. Most support
+                             exchanges are spent establishing exactly these facts, and a
+                             screenshot of this row settles them in one message. -->
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ShowStateCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Состояние" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Подключение, сеть, ядро — одним экраном" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:IconView Grid.Column="1" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <!-- Only shown when there is one. A permanent "no crashes" row is
+                             noise; a row that appears is a signal. -->
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}"
+                                 IsVisible="{Binding HasLastCrash}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="8"
+                              IsVisible="{Binding HasLastCrash}">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ShowLastCrashCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Последний сбой" Style="{StaticResource HzBodyLabel}"
+                                       FontAttributes="Bold" TextColor="{StaticResource HzRed}" />
+                                <Label Text="{Binding LastCrashSummary}" Style="{StaticResource HzDim}" FontSize="12"
+                                       LineBreakMode="TailTruncation" />
+                            </VerticalStackLayout>
+                            <controls:IconView Grid.Column="1" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <!-- At the shipping log level a tunnel that connects and carries
+                             nothing writes almost nothing, so the one setting that makes a
+                             field failure explicable has to be reachable without a new build. -->
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Подробные логи" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Применится при следующем подключении" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding VerboseLogging}" />
                         </Grid>
                         <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
                         <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56">

@@ -37,6 +37,21 @@ namespace Horus.Protocols
         private static extern int XraySetAssetPath(byte[] path);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int XrayResetConnections();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void XrayForceGc();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int XraySleep();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int XrayWake();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int XrayIsPaused();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         private static extern IntPtr XrayVersion();
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
@@ -98,6 +113,87 @@ namespace Horus.Protocols
         /// rule uses a <c>geoip:</c> or <c>geosite:</c> predicate — the generated config
         /// deliberately avoids them.</summary>
         public static void SetAssetPath(string path) => XraySetAssetPath(Utf8(path));
+
+        /// <summary>
+        /// Closes pooled transport sessions so the next dial builds fresh ones. Returns how
+        /// many were closed, or -1 if the call failed.
+        ///
+        /// <para>For a network handover. Every session established over the old link died
+        /// with it, but the transport is not told: QUIC sits on the dead path until an idle
+        /// timeout measured in minutes, which is the "connected but nothing loads until I
+        /// toggle it" the user reports. This costs one call and leaves the running instance
+        /// and the TUN standing, where the alternative — a full reconnect — rebuilds
+        /// everything and drops the user's traffic on the way.</para>
+        ///
+        /// <para>Never throws: a library too old to export it is a reason to fall back to
+        /// the reconnect path, not to fail the caller.</para>
+        /// </summary>
+        public static int ResetConnections()
+        {
+            try { return XrayResetConnections(); }
+            catch (EntryPointNotFoundException) { return -1; }
+            catch { return -1; }
+        }
+
+        /// <summary>
+        /// Asks the core to hand freed memory back to the OS. Asynchronous inside the
+        /// library, so this returns immediately and is safe from a low-memory callback.
+        ///
+        /// <para>Go holds released pages rather than returning them, which for a process
+        /// that stays resident for weeks means a resident set that only grows — and a large
+        /// process is the first thing the OOM killer reaches for.</para>
+        /// </summary>
+        public static void ForceGc()
+        {
+            try { XrayForceGc(); }
+            catch { /* a memory hint is best-effort by definition */ }
+        }
+
+        /// <summary>
+        /// Pauses the core's background housekeeping. Returns false if the library does not
+        /// support it, which is the signal to stop trying.
+        ///
+        /// <para>The hysteria transport runs two housekeeping loops at 1 Hz — reaping idle
+        /// UDP sessions and dead QUIC clients — and neither knows the screen is off. On
+        /// Android each tick is a timer the kernel services, and over a night that is tens
+        /// of thousands of wakeups to inspect structures nothing has touched. Traffic is
+        /// unaffected; only the tidying stops, and the first tick after
+        /// <see cref="Wake"/> catches up on it.</para>
+        /// </summary>
+        public static bool Sleep() => TryVoid(XraySleep);
+
+        /// <summary>Resumes background housekeeping. Idempotent.</summary>
+        public static bool Wake() => TryVoid(XrayWake);
+
+        /// <summary>
+        /// Whether housekeeping is paused: true, false, or null when the library cannot say.
+        /// Diagnostics only — it exists so a bug report can show whether the Doze wiring
+        /// actually reached the core rather than leaving it to be assumed.
+        /// </summary>
+        public static bool? IsPaused()
+        {
+            try
+            {
+                var result = XrayIsPaused();
+                return result < 0 ? null : result == 1;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Calls an entry point that may be absent from an older library.
+        ///
+        /// <para>The distinction matters: <see cref="EntryPointNotFoundException"/> means
+        /// the app and the core have drifted apart, which is worth saying once and then
+        /// living with, while any other failure is the core's own and already recorded in
+        /// <see cref="LastError"/>.</para>
+        /// </summary>
+        private static bool TryVoid(Func<int> call)
+        {
+            try { return call() == 0; }
+            catch (EntryPointNotFoundException) { return false; }
+            catch { return false; }
+        }
 
         // ── Private ──────────────────────────────────────────────────────────
 

@@ -237,7 +237,7 @@ namespace Horus.Application
             RequireSession();
             try
             {
-                using var response = await _httpClient.GetAsync($"{_baseUrl}{ApiConsts.SERVERS_BEST}", ct);
+                using var response = await _httpClient.GetAsync($"{_baseUrl}{ApiConsts.SERVERS}", ct);
                 if (!response.IsSuccessStatusCode) return null;
 
                 var list = await DeserializeAsync<List<ServerInfo>>(response, ct);
@@ -245,6 +245,44 @@ namespace Horus.Application
             }
             catch (HttpRequestException) { return null; }
             catch (TaskCanceledException) { return null; }
+        }
+
+        public async Task<BoundServer> SelectServerAsync(int? serverId = null, CancellationToken ct = default)
+        {
+            RequireSession();
+
+            // An explicit null server_id is the documented way to ask for auto-pick, so it
+            // is sent rather than omitted — an empty body means the same thing, but being
+            // explicit keeps the intent readable in a capture.
+            using var response = await PostAsync(
+                ApiConsts.SERVERS_SELECT, new { server_id = serverId }, ct);
+
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+                throw new SubscriptionExpiredException(
+                    await ReadErrorAsync(response, "Подписка истекла."));
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+                throw new UnauthorizedAccessException("Сессия недействительна. Войдите заново.");
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new InvalidOperationException(
+                    await ReadErrorAsync(response, "Такого сервера нет."));
+
+            // The node filled up between the catalogue being read and this call. Worth its
+            // own message: the honest advice is to pick another, not to retry this one.
+            if (response.StatusCode == HttpStatusCode.Conflict)
+                throw new InvalidOperationException(
+                    await ReadErrorAsync(response, "На этом сервере нет свободных мест. Выберите другой."));
+
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException(
+                    await ReadErrorAsync(response, "Не удалось выбрать сервер."));
+
+            var bound = await DeserializeAsync<BoundServer>(response, ct)
+                        ?? throw new InvalidOperationException("Пустой ответ выбора сервера.");
+
+            Diag.Info("api", $"bound to server {bound.Id} ({bound.Name}, {bound.Location})");
+            return bound;
         }
 
         public async Task<ServerConnection> GetServerConnectionAsync(CancellationToken ct = default)
@@ -261,6 +299,12 @@ namespace Horus.Application
                 throw new InvalidOperationException(
                     await ReadErrorAsync(response, "Нет доступных серверов."));
 
+            // The account is bound to a node that has since filled up, or has no binding and
+            // nothing free to auto-pick.
+            if (response.StatusCode == HttpStatusCode.Conflict)
+                throw new InvalidOperationException(
+                    await ReadErrorAsync(response, "Нет свободных мест на сервере."));
+
             if (response.StatusCode == HttpStatusCode.Unauthorized)
                 throw new UnauthorizedAccessException("Сессия недействительна. Войдите заново.");
 
@@ -268,15 +312,15 @@ namespace Horus.Application
                 throw new InvalidOperationException(
                     await ReadErrorAsync(response, "Не удалось получить конфигурацию сервера."));
 
-            // Body is a flat { key: link } map — keys are server-side constants, so the
-            // links are matched by URI scheme rather than by name.
-            var map = await DeserializeAsync<Dictionary<string, string?>>(response, ct)
-                      ?? throw new InvalidOperationException("Пустой ответ сервера подключения.");
+            var connection = await DeserializeAsync<ServerConnection>(response, ct)
+                             ?? throw new InvalidOperationException("Пустой ответ сервера подключения.");
 
-            var connection = ServerConnection.Parse(map);
             if (!connection.HasAny)
                 throw new InvalidOperationException(
-                    "Сервер не вернул ни одной ссылки подключения (vless:// / hysteria2://).");
+                    "Сервер не вернул ни одного способа подключения (vless / hysteria2 / olcRTC).");
+
+            var offered = string.Join(", ", connection.Candidates().Select(c => c.ToString()));
+            Diag.Info("api", $"node {connection.Server?.Name ?? "?"} offers: {offered}");
 
             return connection;
         }

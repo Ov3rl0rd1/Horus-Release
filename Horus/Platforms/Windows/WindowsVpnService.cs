@@ -1,3 +1,4 @@
+using Horus.Application;
 using Horus.Domain.Events;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
@@ -254,12 +255,12 @@ namespace Horus.Platforms.Windows
         private async Task StartHevAsync(int socksPort, CancellationToken ct)
         {
             var logFile = DiagnosticPaths.HevLog;
-            DiagnosticPaths.Truncate(logFile);
+            DiagnosticPaths.Rotate(logFile);
 
             var configPath = Path.Combine(FileSystem.CacheDirectory, "hev-tunnel.yml");
             await File.WriteAllTextAsync(
                 configPath,
-                HevTunnelConfig.Build(logFile, HevTunnelConfig.DefaultLogLevel, socksPort),
+                HevTunnelConfig.Build(logFile, UserPreferences.HevLogLevel, socksPort),
                 ct);
 
             var psi = new ProcessStartInfo(HevExe, $"\"{configPath}\"")
