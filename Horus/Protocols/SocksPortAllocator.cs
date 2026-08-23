@@ -20,11 +20,36 @@ namespace Horus.Protocols
         /// <summary>How far past the preferred port to look before giving up.</summary>
         private const int Span = 20;
 
+        /// <summary>
+        /// The port the last successful allocation settled on.
+        ///
+        /// <para>Preferred on the next call, and that is not just tidiness. The port is
+        /// baked into the bridge's config at start-up, so keeping it stable is what lets a
+        /// reconnect leave the bridge and the TUN completely untouched — the difference
+        /// between a rebuild that takes a second and one that tears the interface down and
+        /// puts it back. It only moves when something else has taken it meanwhile, which is
+        /// exactly when moving is the right answer.</para>
+        /// </summary>
+        private static int _last;
+
         public static int Allocate(int preferred = XrayConfig.DefaultSocksPort)
         {
+            // Re-using the previous port keeps a reconnect from touching the bridge at all.
+            //
+            // Only when the caller expressed no preference of its own. A caller that names a
+            // port is asking for that port and its neighbourhood, and silently handing back
+            // something from a previous allocation would ignore the question — which is
+            // exactly what SocksPortContractTests caught.
+            var sticky = preferred == XrayConfig.DefaultSocksPort;
+            if (sticky && _last != 0 && IsFree(_last))
+                return _last;
+
             for (var port = preferred; port < preferred + Span; port++)
                 if (IsFree(port))
+                {
+                    _last = port;
                     return port;
+                }
 
             throw new InvalidOperationException(
                 $"Не удалось найти свободный локальный порт в диапазоне " +

@@ -83,6 +83,12 @@ namespace Horus.Presentation.ViewModels
         /// components read their log level from a config rendered at start-up.</summary>
         [ObservableProperty] private bool _verboseLogging = UserPreferences.VerboseLogging;
 
+        /// <summary>
+        /// Declare the tunnel metered. Off by default — see UserPreferences.MeteredConnection
+        /// for why that default is the fix for background apps being throttled in Doze.
+        /// </summary>
+        [ObservableProperty] private bool _meteredConnection = UserPreferences.MeteredConnection;
+
         // ── Diagnostics surface ───────────────────────────────────────────
 
         /// <summary>True when the previous session ended in an unhandled exception.</summary>
@@ -404,6 +410,12 @@ namespace Horus.Presentation.ViewModels
         {
             UserPreferences.AutoConnectOnLaunch = value;
             Diag.User("settings", $"auto-connect on launch: {value}");
+        }
+
+        partial void OnMeteredConnectionChanged(bool value)
+        {
+            UserPreferences.MeteredConnection = value;
+            Diag.User("settings", $"metered connection: {value}");
         }
 
         partial void OnVerboseLoggingChanged(bool value)

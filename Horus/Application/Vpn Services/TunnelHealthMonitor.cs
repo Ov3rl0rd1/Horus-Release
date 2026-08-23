@@ -148,6 +148,19 @@ namespace Horus.Application
         /// <summary>The last measured counter delta, carried into the log line.</summary>
         private string _lastSample = "no sample";
 
+        /// <summary>
+        /// Monotonic clock reading of the last sample in which bytes came back through the
+        /// tunnel, or 0 if none has.
+        ///
+        /// <para>Exists so a "the tunnel looks dead" report can be checked against whether it
+        /// is. Android's own probe through the VPN is the thing most likely to fail while
+        /// the device is idle — it is deferred like anything else — and acting on that
+        /// verdict alone tore down tunnels that were carrying perfectly well. RethinkDNS
+        /// ignores a reported data stall outright when traffic has flowed in the last 30
+        /// seconds, and this is the value that makes the same check possible here.</para>
+        /// </summary>
+        public long LastCarriedAtMs { get; private set; }
+
         /// <summary>Raised when the tunnel is not healthy. Never raised for <see cref="TunnelHealth.Healthy"/>.</summary>
         public event EventHandler<TunnelHealthEventArgs>? Unhealthy;
 
@@ -174,6 +187,11 @@ namespace Horus.Application
             _endpoint = endpoint;
             _hasBaseline = false;
             _suspicion = 0;
+
+            // A fresh tunnel has not failed to carry anything yet. Starting at "never
+            // carried" would make the first suspect report land on an empty history and be
+            // believed, which is the opposite of what the cross-check is for.
+            LastCarriedAtMs = Environment.TickCount64;
             _cts = new CancellationTokenSource();
             _ = RunAsync(_cts.Token);
         }
@@ -333,6 +351,8 @@ namespace Horus.Application
                 _hasBaseline = true; _suspicion = 0;
                 return TunnelHealth.Healthy;
             }
+
+            if (rx > _lastRx) LastCarriedAtMs = Environment.TickCount64;
 
             var sent = tx - _lastTx;
             var received = rx - _lastRx;

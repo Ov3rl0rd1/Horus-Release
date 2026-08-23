@@ -33,11 +33,26 @@
 			android:name="com.horus.vpn.HorusVpnTunnelService"
 			android:permission="android.permission.BIND_VPN_SERVICE"
 			android:exported="false"
-			android:foregroundServiceType="specialUse"
+			android:foregroundServiceType="systemExempted|specialUse"
 			android:stopWithTask="false">
 			<intent-filter>
 				<action android:name="android.net.VpnService" />
 			</intent-filter>
+			<!--
+			  systemExempted first, specialUse as the fallback.
+
+			  A VpnService is one of the categories Android documents as exempt from
+			  background restrictions, and systemExempted is the type that says so. Both
+			  reference clients use it — RethinkDNS as systemExempted|connectedDevice,
+			  NekoBox as systemExempted — and neither shows the "tunnel dies a while after
+			  the screen goes off" behaviour this app had.
+
+			  specialUse is the generic escape hatch and carries none of that meaning; a
+			  service declared with it is subject to the ordinary background rules. It stays
+			  declared so a device that refuses systemExempted still has a type to fall back
+			  to at runtime (see TryStartForeground), which is the only reason the property
+			  below is still here.
+			-->
 			<property
 				android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
 				android:value="vpn" />

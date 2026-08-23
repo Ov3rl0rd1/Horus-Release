@@ -27,11 +27,26 @@ namespace Horus.Platforms.Android
 
         private static Thread? _hevThread;
 
+        /// <summary>
+        /// The SOCKS port the running bridge was configured with. A rebuild that changes it
+        /// cannot be a descriptor swap: the port lives in the YAML the bridge parsed once at
+        /// start-up, so the bridge has to be restarted to learn a new one.
+        /// </summary>
+        private static int _activePort;
+
         [DllImport(HEV_LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "hev_socks5_tunnel_main_from_str")]
         private static extern int hev_socks5_tunnel_main_from_str(byte[] config_data, uint config_len, int tun_fd);
 
         [DllImport(HEV_LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "hev_socks5_tunnel_quit")]
         private static extern void hev_socks5_tunnel_quit();
+
+        /// <summary>
+        /// Hands the bridge a new TUN descriptor without stopping it. Present only in the
+        /// patched build — see packaging/android/hev-patches.
+        /// </summary>
+        [DllImport(HEV_LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "hev_socks5_tunnel_set_fd")]
+        private static extern int hev_socks5_tunnel_set_fd(int tun_fd);
+
 
         [DllImport(HEV_LIB_NAME, CallingConvention = CallingConvention.Cdecl, EntryPoint = "hev_socks5_tunnel_stats")]
         private static extern void hev_socks5_tunnel_stats(ref UIntPtr tx_packets, ref UIntPtr tx_bytes, ref UIntPtr rx_packets, ref UIntPtr rx_bytes);
@@ -77,6 +92,75 @@ namespace Horus.Platforms.Android
             { IsBackground = true, Name = "hev-socks5-tunnel" };
 
             _hevThread.Start();
+            _activePort = socksPort;
+        }
+
+        /// <summary>
+        /// Points the running bridge at a new TUN descriptor, restarting it only if it has
+        /// to.
+        ///
+        /// <para>The fast path is a descriptor swap inside the bridge, which keeps every
+        /// established session alive and costs a wakeup. It applies when the SOCKS port is
+        /// unchanged — the common case, because the port is deliberately kept stable across
+        /// reconnects — and when the library is a build carrying the patch.</para>
+        ///
+        /// <para>Everything else falls back to stop-and-start, which is what this always
+        /// used to do. An older library without the export is not an error: the app is
+        /// expected to run against a stock build, just more slowly.</para>
+        /// </summary>
+        public static void Rebind(int tun_fd, int socksPort)
+        {
+            if (_hevThread is null)
+            {
+                StartTunnel(tun_fd, socksPort);
+                return;
+            }
+
+            if (socksPort == _activePort && TrySetFd(tun_fd))
+            {
+                Log.Info(HEV_TAG, $"rebound to fd {tun_fd} without restarting");
+                Diag.Info("tun", "bridge rebound in place");
+                return;
+            }
+
+            Diag.Info("tun", socksPort == _activePort
+                ? "bridge does not support rebinding; restarting"
+                : $"socks port changed {_activePort} -> {socksPort}; restarting the bridge");
+
+            if (!StopTunnel())
+                throw new InvalidOperationException(
+                    "Предыдущий туннель ещё не остановлен. Попробуйте через несколько секунд.");
+
+            StartTunnel(tun_fd, socksPort);
+        }
+
+        /// <summary>
+        /// Calls the patched entry point, reporting whether it took. Never throws: a
+        /// library without it is the ordinary case on a stock build, and the caller has a
+        /// working fallback.
+        /// </summary>
+        private static bool TrySetFd(int tun_fd)
+        {
+            try
+            {
+                var result = hev_socks5_tunnel_set_fd(tun_fd);
+                if (result == 0) return true;
+
+                Diag.Warn("tun", $"hev_socks5_tunnel_set_fd returned {result}");
+                return false;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // A stock upstream build. Said once at info, not warned about repeatedly:
+                // it is a known configuration, not a fault.
+                Diag.Info("tun", "this bridge build has no set_fd; falling back to restart");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Diag.Warn("tun", $"set_fd failed: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -112,6 +196,7 @@ namespace Horus.Platforms.Android
             }
 
             _hevThread = null;
+            _activePort = 0;
             return true;
         }
 

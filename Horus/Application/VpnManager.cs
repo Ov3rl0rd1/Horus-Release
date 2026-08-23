@@ -128,6 +128,17 @@ namespace Horus.Application
         /// <summary>Silence longer than this means the previous unhealthy episode ended.</summary>
         private static readonly TimeSpan UnhealthyEpisodeGap = TimeSpan.FromMinutes(6);
 
+        /// <summary>
+        /// How recently the tunnel must have carried something for a platform report of
+        /// trouble to be disbelieved.
+        ///
+        /// <para>Deliberately longer than RethinkDNS's 30 seconds, because our sampling is
+        /// coarser: the health monitor reads the counters every 90 seconds while the screen
+        /// is off, so a shorter window would just mean "we have not looked recently" rather
+        /// than "nothing came back".</para>
+        /// </summary>
+        private static readonly TimeSpan CarriedRecentlyWindow = TimeSpan.FromMinutes(3);
+
         private DateTimeOffset? _unhealthySince;
         private DateTimeOffset? _lastUnhealthyAt;
 
@@ -223,6 +234,9 @@ namespace Horus.Application
                 ? $"txp {counters[0]}, tx {counters[1]}B, rxp {counters[2]}, rx {counters[3]}B"
                 : "bridge not running");
 
+            yield return new("usingCachedEndpoints", _usingCachedConnection.ToString());
+
+            foreach (var kv in ConnectionCache.Describe()) yield return new("cache." + kv.Key, kv.Value);
             foreach (var kv in VpnIntent.Describe()) yield return new("intent." + kv.Key, kv.Value);
             foreach (var kv in UserPreferences.Describe()) yield return new("pref." + kv.Key, kv.Value);
         }
@@ -261,7 +275,7 @@ namespace Horus.Application
             {
                 await BindServerIfNeededAsync(server, ct);
 
-                var connection = await _api.GetServerConnectionAsync(ct);
+                var connection = await FetchConnectionAsync(server, ct);
 
                 bool granted = await _platform.RequestPermissionsAsync();
                 if (!granted)
@@ -557,6 +571,25 @@ namespace Horus.Application
                 return;
             }
 
+            // The platform's verdict is authoritative about its own probe, not about our
+            // tunnel. Those are the same thing while the device is awake and different
+            // while it is not: in Doze the probe is deferred or refused like any other
+            // background request, so VALIDATED is withdrawn from a tunnel that is carrying
+            // traffic perfectly well. Acting on it anyway is how a rebuild — with all the
+            // background-start restrictions that implies — was being triggered every time
+            // the screen had been off for a while.
+            //
+            // So it is checked against evidence: if bytes came back through the tunnel
+            // recently, the report is about the probe, not about us. RethinkDNS applies the
+            // same rule with a 30-second window and ignores the report outright.
+            var since = Environment.TickCount64 - _health.LastCarriedAtMs;
+            if (_health.LastCarriedAtMs != 0 && since < CarriedRecentlyWindow.TotalMilliseconds)
+            {
+                OnProtocolOutput(this,
+                    $"[health] {reason}, but the tunnel carried traffic {since / 1000}s ago — ignoring");
+                return;
+            }
+
             OnProtocolOutput(this, $"[health] {reason}");
             OnUnhealthy(this, new TunnelHealthEventArgs(TunnelHealth.OutboundDead, reason));
         }
@@ -726,7 +759,31 @@ namespace Horus.Application
             SetState(VpnState.Reconnecting, reason);
 
             _health.Stop();
-            await SafeTeardownAsync();
+            _traffic.Stop();
+
+            // The core is replaced; the interface is not. Tearing the TUN down here meant
+            // every reconnect had to build a foreground service from the background, which
+            // Android 12+ restricts and Doze can refuse outright — so a reconnect that
+            // happened while the screen was off could simply never come back. Leaving it up
+            // also spares every app on the device from watching its network vanish and
+            // return. RethinkDNS never destroys its service for a rebuild either.
+            //
+            // The interface is not held indefinitely: HoldTunnelDuringRecovery gives up
+            // after enough consecutive failures, because a TUN with no working core behind
+            // it is a black hole, and a user who cannot reach anything is worse off than one
+            // with no VPN.
+            if (!HoldTunnelDuringRecovery())
+            {
+                OnProtocolOutput(this,
+                    $"[recover] {_reconnectAttempt} attempts failed; dropping the interface " +
+                    "rather than black-holing traffic");
+                await SafeTeardownAsync();
+            }
+            else
+            {
+                try { await DetachProtocolAsync(); } catch { /* already dead */ }
+            }
+
             ActiveProtocolType = null;
             SetState(VpnState.Disconnected, reason);
             ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, true));
@@ -807,6 +864,21 @@ namespace Horus.Application
         private static bool IsSessionFailure(Exception ex) =>
             ex is UnauthorizedAccessException
             || (ex is InvalidOperationException && ex.Message.Contains("сесси", StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
+        /// Whether the tunnel interface should stay up across this recovery.
+        ///
+        /// <para>Yes while there is reason to think the next attempt will work. After
+        /// <see cref="MaxHeldAttempts"/> consecutive failures there is not, and holding a
+        /// TUN whose core cannot dial stops being protection and becomes a black hole.</para>
+        /// </summary>
+        private bool HoldTunnelDuringRecovery() => _reconnectAttempt < MaxHeldAttempts;
+
+        /// <summary>
+        /// Consecutive failed reconnects before the interface is torn down. Four is where
+        /// the backoff ladder reaches two minutes — by then the problem is not transient.
+        /// </summary>
+        private const int MaxHeldAttempts = 4;
 
         private TunnelHealthMonitor.Endpoint CurrentEndpoint() => _endpoint;
         private TunnelHealthMonitor.Endpoint _endpoint;
@@ -909,6 +981,17 @@ namespace Horus.Application
 
                     if (i == available.Count - 1)
                     {
+                        // Every endpoint failed. If they came from the device, the most
+                        // likely explanation is that they are stale — the account was moved
+                        // from another device, or the node re-provisioned — and the API has
+                        // the answer. Dropping the cache here is what makes the next attempt
+                        // ask for it.
+                        if (_usingCachedConnection)
+                        {
+                            ConnectionCache.Invalidate("every cached endpoint failed");
+                            _usingCachedConnection = false;
+                        }
+
                         LastProtocolLog = protocolLog;
                         await TryBuildFailureArchiveAsync();
                         throw new InvalidOperationException(
@@ -1006,7 +1089,12 @@ namespace Horus.Application
 
             // Whatever the core actually bound, not the conventional default — the bridge
             // has to dial the same one.
-            SocksPort = config is XrayConfig xc ? xc.SocksPort : XrayConfig.DefaultSocksPort
+            SocksPort = config is XrayConfig xc ? xc.SocksPort : XrayConfig.DefaultSocksPort,
+
+            // False unless the user asked otherwise. Not calling setMetered at all — which
+            // is what this used to do — leaves Android treating the tunnel as mobile data
+            // and restricting every background app on the device in Doze.
+            Metered = UserPreferences.MeteredConnection
         };
 
         /// <summary>
@@ -1091,6 +1179,42 @@ namespace Horus.Application
                 : $"[{protocolType}] sni={link.Sni} alpn=[{string.Join(',', link.Alpn)}] " +
                   $"obfs={link.Obfs ?? "-"} hop={link.PortRange ?? "-"}");
         }
+
+        /// <summary>
+        /// The node's endpoints, from the device when they are usable and from the API when
+        /// they are not.
+        ///
+        /// <para>The cache is tried first because the request in front of every reconnect was
+        /// pure latency on the one path where there is no working tunnel to carry it — and
+        /// it made recovery depend on the API being reachable, which the tunnel does not.
+        /// Nothing here can tell whether stored keys are still valid; that is decided by the
+        /// connect attempt, and <see cref="ConnectionCache.Invalidate"/> is called when every
+        /// endpoint has failed.</para>
+        ///
+        /// <para>The binding step above is what keeps this honest for the "changed region on
+        /// another device" case: a user who picks a different node goes through
+        /// <c>select</c>, and the id mismatch discards the cache before it is read.</para>
+        /// </summary>
+        private async Task<ServerConnection> FetchConnectionAsync(ServerInfo? server, CancellationToken ct)
+        {
+            var cached = ConnectionCache.Read(server?.Id ?? ActiveServer?.Id);
+            if (cached is not null)
+            {
+                _usingCachedConnection = true;
+                return cached;
+            }
+
+            _usingCachedConnection = false;
+            var fresh = await _api.GetServerConnectionAsync(ct);
+            ConnectionCache.Write(fresh);
+            return fresh;
+        }
+
+        /// <summary>
+        /// Whether this attempt is running on stored endpoints. Decides whether a total
+        /// failure should discard them and try the API once more.
+        /// </summary>
+        private bool _usingCachedConnection;
 
         /// <summary>
         /// Reserves a slot on the chosen node, when the user chose one.

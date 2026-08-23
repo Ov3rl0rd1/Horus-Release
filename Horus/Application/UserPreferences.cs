@@ -16,6 +16,7 @@ namespace Horus.Application
         private const string AutoStartKey = "horus.pref.autostart";
         private const string AutoConnectKey = "horus.pref.autoconnect";
         private const string VerboseLogKey = "horus.pref.verboselog";
+        private const string MeteredKey = "horus.pref.metered";
 
         /// <summary>
         /// Bring the tunnel back after a reboot. Read by <c>BootReceiver</c>, which also
@@ -47,6 +48,28 @@ namespace Horus.Application
         {
             get => Get(AutoConnectKey, false);
             set => Set(AutoConnectKey, value);
+        }
+
+        /// <summary>
+        /// Report the tunnel to Android as a metered connection.
+        ///
+        /// <para><b>Off by default, and that default is the fix for a real bug.</b>
+        /// <c>VpnService.Builder</c> treats a VPN as metered unless told otherwise, and the
+        /// app never told it otherwise — so every app on the device saw the tunnel as
+        /// mobile data. In Doze that is what background restrictions key off: music stopped
+        /// between tracks, notifications stopped arriving, and turning the screen on made it
+        /// all work again, which reads exactly like the VPN dropping. Both reference clients
+        /// set this false — RethinkDNS by default, NekoBox unconditionally — and NekoBox's
+        /// own history records cloud backups failing until they did.</para>
+        ///
+        /// <para>Turning it on is honest about mobile data — apps set to "Wi-Fi only" will
+        /// respect it again — at the cost of bringing the background restrictions back.
+        /// Takes effect on the next connect.</para>
+        /// </summary>
+        public static bool MeteredConnection
+        {
+            get => Get(MeteredKey, false);
+            set => Set(MeteredKey, value);
         }
 
         /// <summary>
@@ -96,6 +119,7 @@ namespace Horus.Application
             yield return new("autoStartOnBoot", AutoStartOnBoot.ToString());
             yield return new("autoConnectOnLaunch", AutoConnectOnLaunch.ToString());
             yield return new("verboseLogging", VerboseLogging.ToString());
+            yield return new("meteredConnection", MeteredConnection.ToString());
         }
 
         private static bool Get(string key, bool fallback)
