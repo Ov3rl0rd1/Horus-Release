@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Horus.Domain.Events;
@@ -138,14 +138,9 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void NavSettings() => _nav.Go(AppScreen.Settings);
         [RelayCommand] private void OpenPay() => Payment.Open();
 
-        private int _started;
+        private Task? _startTask;
+        private readonly object _startGate = new();
 
-        /// <summary>
-        /// Reads the stored session and routes to the first real screen. Idempotent and
-        /// called from both <c>App.OnStart</c> and <c>RootPage.OnAppearing</c> — the app
-        /// opens on <see cref="AppScreen.Startup"/>, so if neither hook fired the user
-        /// would be stranded there.
-        /// </summary>
         /// <summary>Set when a required native binary is missing or unusable; blocks startup.</summary>
         [ObservableProperty] private string _startupError = string.Empty;
 
@@ -153,10 +148,29 @@ namespace Horus.Presentation.ViewModels
 
         partial void OnStartupErrorChanged(string value) => OnPropertyChanged(nameof(HasStartupError));
 
-        public async Task EnsureStartedAsync()
+        /// <summary>
+        /// Reads the stored session and routes to the first real screen. Called from both
+        /// <c>App.OnStart</c> and <c>RootPage.OnAppearing</c> — the app opens on
+        /// <see cref="AppScreen.Startup"/>, so if neither hook fired the user would be
+        /// stranded there.
+        ///
+        /// <para>The second caller awaits the first caller's work rather than returning
+        /// straight away, and that distinction is load-bearing. A plain "already started"
+        /// guard makes the loser return <i>immediately</i>, while the session it is supposed
+        /// to have waited for is still being read — and App.OnStart then runs
+        /// <c>TryRestoreOrAutoConnectAsync</c> against an unauthenticated manager, which
+        /// gives up with "no session" and never tries again. Measured on device: after the
+        /// process was killed with the tunnel up, the app came back, the session restored
+        /// fine, the UI showed the user logged in — and the VPN stayed off, because the one
+        /// path that would have brought it back had already run and lost the race.</para>
+        /// </summary>
+        public Task EnsureStartedAsync()
         {
-            if (Interlocked.Exchange(ref _started, 1) != 0) return;
+            lock (_startGate) return _startTask ??= StartAsync();
+        }
 
+        private async Task StartAsync()
+        {
             // Before anything else: without the core there is no product, and every later
             // failure would be a confusing symptom of this one. Stay on the startup screen
             // and say exactly which file is missing and where it belongs.
@@ -185,7 +199,6 @@ namespace Horus.Presentation.ViewModels
         /// <summary>Routes to the first screen once the session-restore attempt is done.</summary>
         public void Initialize(bool sessionRestored)
         {
-            _started = 1;
 
             if (sessionRestored)
                 _nav.Reset(AppScreen.Home);

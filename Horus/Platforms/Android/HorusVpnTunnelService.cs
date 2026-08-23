@@ -1,4 +1,4 @@
-using Android.App;
+﻿using Android.App;
 using Android.Content;
 using Android.Net;
 using Android.OS;
@@ -16,9 +16,18 @@ namespace Horus.Platforms.Android
     public class HorusVpnTunnelService : VpnService
     {
         /// <summary>
-        /// Must match <c>$(ApplicationId)</c> in Horus.csproj and the class name
-        /// libhev_socks.so binds its JNI entry points to. [Service(Name=…)] needs a
-        /// compile-time constant, so it cannot read the MSBuild property directly.
+        /// Prefix for the generated Java class names, and nothing more.
+        ///
+        /// <para>Not the application id, despite reading like one. <c>[Service(Name=…)]</c>
+        /// needs a compile-time constant, so it cannot follow <c>$(ApplicationId)</c> — which
+        /// is fine, because a fully-qualified class name has no obligation to sit under the
+        /// package it ships in. It must stay in lockstep with the <c>android:name</c> spelled
+        /// out in AndroidManifest.xml, or the merger emits two &lt;service&gt; elements and
+        /// fails.</para>
+        ///
+        /// <para>Anything that needs the actual id — self-exclusion from the tunnel above all
+        /// — must read the runtime <c>PackageName</c> instead, which is what lets a test build
+        /// install under a different id and still exclude itself correctly.</para>
         /// </summary>
         internal const string PackageId = "com.horus.vpn";
 
@@ -46,7 +55,6 @@ namespace Horus.Platforms.Android
         private static HorusVpnTunnelService? _instance;
 
         /// <summary>Remembered so a service restart can re-apply it without a new callback.</summary>
-        private static Network[]? _underlying;
 
         public static TunnelState CurrentState { get; private set; } = TunnelState.Unknown;
         public static event EventHandler<TunnelStateChangedEventArgs>? TunnelStateChanged;
@@ -80,43 +88,31 @@ namespace Horus.Platforms.Android
         }
 
         /// <summary>
-        /// Tells the system which physical networks are carrying the tunnel, in priority
-        /// order — index 0 is preferred. Called on every handover by
-        /// <see cref="AndroidNetworkMonitor"/>.
+        /// Hands the choice of carrying network back to the system.
         ///
-        /// <para>Null and empty are not the same thing and the difference matters. Null
-        /// hands the decision back to the system, which is correct while offline: asserting
-        /// an empty array marks the VPN as having no connectivity, and some system
-        /// components take that as licence to tear it down. Empty is therefore never passed
-        /// on — it is normalised to null in <see cref="ApplyUnderlyingNetwork"/>.</para>
+        /// <para>Null is the documented default — "track the system default network" — and
+        /// naming networks instead turned out to be actively harmful. Meteredness is the
+        /// reason: a VPN gets NOT_METERED only when it is not declared metered <i>and</i>
+        /// every network it names as an underlay is unmetered
+        /// (<c>Vpn.applyUnderlyingCapabilities</c> ORs them together). We named every
+        /// available network, so on any phone with mobile data switched on alongside Wi-Fi
+        /// the cellular network dragged the tunnel back to metered — undoing
+        /// <c>setMetered(false)</c> and with it the whole point of setting it. Observed on
+        /// device: underlays [wlan0, ccmni0] produced a tunnel with no NOT_METERED.</para>
+        ///
+        /// <para>Null also survives an idle device better. An explicit array is a claim we
+        /// then have to keep true, and while the screen is off we are least able to: a named
+        /// network entering doze leaves the system holding an assertion about a link that is
+        /// no longer carrying. RethinkDNS passes null by default and only names networks
+        /// when the user asks for multi-path, which is a feature we do not have.</para>
         /// </summary>
-        internal static void SetUnderlyingNetwork(Network[]? networks)
-        {
-            _underlying = networks;
-            _instance?.ApplyUnderlyingNetwork();
-        }
-
         private void ApplyUnderlyingNetwork()
         {
             if (_tunFd is null) return; // nothing established yet; EstablishTunnel will apply it
 
             try
             {
-                // One physical network — the overwhelmingly common case — is expressed as
-                // null rather than as an array of one.
-                //
-                // Null means "whatever is active", which is a statement the system can keep
-                // re-evaluating as conditions change. An explicit array is a claim we then
-                // have to keep true, and while the screen is off we are the least able to:
-                // a named network entering a doze-idle state leaves the system holding an
-                // assertion about a link that is no longer carrying, and it may conclude the
-                // VPN has no connectivity. RethinkDNS passes null by default for the same
-                // reason and only names networks when the user asks for multi-path.
-                //
-                // Two or more networks are still named explicitly, because there the order
-                // is information the system does not otherwise have.
-                var underlays = _underlying is { Length: > 1 } ? _underlying : null;
-                SetUnderlyingNetworks(underlays);
+                SetUnderlyingNetworks(null);
             }
             catch (Exception ex)
             {
@@ -255,6 +251,7 @@ namespace Horus.Platforms.Android
                 {
                     attempt.Start(this, notification);
                     _inForeground = true;
+                    Diag.Info("tun", $"foreground service started as {attempt.Name}");
                     return true;
                 }
                 catch (Exception ex)

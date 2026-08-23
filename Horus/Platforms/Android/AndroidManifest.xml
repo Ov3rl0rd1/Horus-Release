@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 	<!-- No package= attribute: $(ApplicationId) from Horus.csproj is the single source of
-	     truth. It must stay com.horus.vpn — libhev_socks.so resolves its JNI entry points
-	     against the class com/horus/vpn/VPNService. -->
+	     truth, and it is genuinely overridable — build-hev.ps1 deletes src/hev-jni.c, so
+	     libhev_socks.so no longer looks up a Java class by name and nothing pins the id.
+	     Device testing relies on that, installing as com.horus.vpn.test beside the release
+	     build. The <service> name below is a different matter: it is a fully-qualified class
+	     name that happens to start with the release id, and it must not track $(ApplicationId)
+	     — see the note on the element itself. -->
 	<application android:allowBackup="false" android:icon="@mipmap/appicon" android:supportsRtl="true" android:label="Horus" android:extractNativeLibs="true"
 		android:largeHeap="true"
 		android:memtagMode="off"
@@ -83,6 +87,13 @@
 	<uses-permission android:name="android.permission.INTERNET" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+	<!-- The permission behind foregroundServiceType="systemExempted". Declaring the type
+	     without it is not a milder version of asking: startForeground rejects the type
+	     outright, the code falls through to specialUse, and the exemption that was the
+	     whole point of naming systemExempted is never granted — silently, because the
+	     fallback keeps the tunnel working. Both NekoBox and RethinkDNS declare it. -->
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
 	<!-- Normal permission, no prompt. Needed for ConnectivityManager.requestNetwork and
