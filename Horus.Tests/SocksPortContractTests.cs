@@ -87,6 +87,29 @@ public class SocksPortContractTests
         finally { squatter.Stop(); }
     }
 
+    [Fact]
+    public void Allocator_reuses_the_last_port_when_no_preference_is_given()
+    {
+        // Stability here is what lets a reconnect leave the bridge and the TUN untouched:
+        // the port is baked into hev's config at start-up, so a port that moves forces a
+        // restart of the bridge that a stable one does not.
+        var first = SocksPortAllocator.Allocate();
+        var second = SocksPortAllocator.Allocate();
+
+        Assert.Equal(first, second);
+    }
+
+    [Fact]
+    public void An_explicit_preference_beats_the_remembered_port()
+    {
+        // The remembered port must not answer a question that was not asked. Without this
+        // the allocator ignored its own argument once anything had allocated before it.
+        SocksPortAllocator.Allocate();
+
+        var wanted = FreePort();
+        Assert.Equal(wanted, SocksPortAllocator.Allocate(wanted));
+    }
+
     /// <summary>A port that is free right now, chosen by the OS.</summary>
     private static int FreePort()
     {

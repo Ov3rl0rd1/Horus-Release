@@ -1,4 +1,4 @@
-using Android.Content;
+﻿using Android.Content;
 using Android.Net;
 using Android.OS;
 using Horus.Application.Diagnostics;
@@ -447,8 +447,10 @@ namespace Horus.Platforms.Android
                 _transport = transport = order.Count > 0 ? order[0].Transport : NetworkTransport.None;
             }
 
-            PushUnderlying(ranked.Length > 0 ? ranked : null);
-
+            // The ranking is not pushed to the tunnel as underlying networks: naming a
+            // metered network there makes the whole tunnel metered. See
+            // HorusVpnTunnelService.ApplyUnderlyingNetwork. It is still computed, because
+            // handover detection and the reported transport both read it.
             Diag.Trace("net",
                 $"{reason}: {ranked.Length} network(s), first={transport}, handover={handover}");
 
@@ -496,12 +498,6 @@ namespace Horus.Platforms.Android
             if (caps.HasTransport(TransportType.Cellular)) return NetworkTransport.Cellular;
             if (caps.HasTransport(TransportType.Ethernet)) return NetworkTransport.Ethernet;
             return NetworkTransport.Other;
-        }
-
-        private static void PushUnderlying(Network[]? networks)
-        {
-            try { HorusVpnTunnelService.SetUnderlyingNetwork(networks); }
-            catch (Exception ex) { Diag.Warn("net", $"setUnderlyingNetworks failed: {ex.Message}"); }
         }
 
         // ── Tunnel health signals ────────────────────────────────────────────

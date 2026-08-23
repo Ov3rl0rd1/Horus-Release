@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Builds libhev_socks.so — the TUN bridge — and drops it into Platforms/Android/lib.
 
@@ -25,12 +25,21 @@
        symlinks as one-line text files unless core.symlinks is on, and the build then fails
        with `unknown type name 'HevRBTree'`.
 
-    3. Everything in hev-patches/ is applied. Today that is a size cap on the log file:
-       upstream's logger appends forever, and a tunnel that stays up for weeks with verbose
-       logging turned on has nothing to stop it filling the device. Patches are kept here
-       rather than in a fork so that moving to a newer upstream is a one-line change to
-       -Commit; a patch that stops applying is a deliberate signal to re-read it against the
-       new layout, which is exactly the review a fork silently skips.
+    3. Everything in hev-patches/ is applied, in filename order. Today that is two:
+
+       0001 caps the log file. Upstream's logger appends forever, and a tunnel that stays up
+       for weeks with verbose logging on has nothing to stop it filling the device.
+
+       0002 adds hev_socks5_tunnel_set_fd, which moves a running tunnel onto a new TUN
+       descriptor. Android's VpnService can hand over an interface without dropping it —
+       establish() a second time — but only if whatever pumps packets can follow. Without
+       this a rebuild has to stop and start the tunnel, and on Android that means starting a
+       foreground service from the background: restricted on 12+, refusable in Doze, and
+       therefore a reconnect that can fail outright while the screen is off.
+
+       Patches are kept here rather than in a fork so that moving to a newer upstream is a
+       one-line change to -Commit; a patch that stops applying is a deliberate signal to
+       re-read it against the new layout, which is exactly the review a fork silently skips.
 
 .PARAMETER Ndk
     Path to an Android NDK. Defaults to $env:ANDROID_NDK_HOME.
@@ -105,6 +114,9 @@ if (-not (Test-Path $jni)) { throw "src/hev-jni.c not found - upstream layout ch
 Remove-Item $jni -Force
 Write-Host "Removed src/hev-jni.c"
 
+# APP_ABI overrides Application.mk, which still lists armeabi-v7a and x86. The app ships a
+# core for neither, so building them was half the build time for output nothing copies.
+#
 # Each argument is built as one string: PowerShell would otherwise split `KEY=(expr)` into
 # two arguments and ndk-build would see the key with an empty value.
 $buildScript = Join-Path $src 'Android.mk'
@@ -117,6 +129,7 @@ $objOut = Join-Path $WorkDir 'obj'
     "APP_BUILD_SCRIPT=$buildScript" `
     "NDK_APPLICATION_MK=$applicationMk" `
     "APP_MODULES=hev-socks5-tunnel" `
+    "APP_ABI=arm64-v8a x86_64" `
     "NDK_LIBS_OUT=$libsOut" `
     "NDK_OUT=$objOut" `
     -j8
@@ -133,10 +146,14 @@ foreach ($abi in @('arm64-v8a', 'x86_64')) {
         if ($strings -notmatch $symbol) { throw "$abi is missing $symbol" }
     }
 
-    # The log cap is invisible at runtime until a log grows past it, which is exactly the
-    # situation nobody is watching. Assert the config key made it in, so a patch that
-    # applied but did not take is caught here rather than months later.
+    # Both patches are invisible at runtime until the moment they matter, which is exactly
+    # the moment nobody is watching: a log only overruns after weeks, and a missing fd swap
+    # just makes reconnects quietly slower. Assert each one landed, so a patch that applied
+    # but did not take is caught here rather than months later.
     if ($strings -notmatch 'log-max-size') { throw "$abi does not carry the log-max-size patch" }
+    foreach ($symbol in 'hev_socks5_tunnel_set_fd') {
+        if ($strings -notmatch $symbol) { throw "$abi is missing $symbol - the fd hot-swap patch did not take" }
+    }
 
     New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
     Copy-Item $built $dest -Force

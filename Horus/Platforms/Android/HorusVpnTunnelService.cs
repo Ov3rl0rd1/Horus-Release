@@ -1,4 +1,4 @@
-using Android.App;
+﻿using Android.App;
 using Android.Content;
 using Android.Net;
 using Android.OS;
@@ -16,9 +16,18 @@ namespace Horus.Platforms.Android
     public class HorusVpnTunnelService : VpnService
     {
         /// <summary>
-        /// Must match <c>$(ApplicationId)</c> in Horus.csproj and the class name
-        /// libhev_socks.so binds its JNI entry points to. [Service(Name=…)] needs a
-        /// compile-time constant, so it cannot read the MSBuild property directly.
+        /// Prefix for the generated Java class names, and nothing more.
+        ///
+        /// <para>Not the application id, despite reading like one. <c>[Service(Name=…)]</c>
+        /// needs a compile-time constant, so it cannot follow <c>$(ApplicationId)</c> — which
+        /// is fine, because a fully-qualified class name has no obligation to sit under the
+        /// package it ships in. It must stay in lockstep with the <c>android:name</c> spelled
+        /// out in AndroidManifest.xml, or the merger emits two &lt;service&gt; elements and
+        /// fails.</para>
+        ///
+        /// <para>Anything that needs the actual id — self-exclusion from the tunnel above all
+        /// — must read the runtime <c>PackageName</c> instead, which is what lets a test build
+        /// install under a different id and still exclude itself correctly.</para>
         /// </summary>
         internal const string PackageId = "com.horus.vpn";
 
@@ -32,6 +41,12 @@ namespace Horus.Platforms.Android
 
         private ParcelFileDescriptor? _tunFd;
 
+        /// <summary>What the live tunnel was built with, so a rebuild can be skipped.</summary>
+        private TunnelOptions? _activeOptions;
+
+        /// <summary>Whether startForeground has already succeeded for this instance.</summary>
+        private bool _inForeground;
+
         /// <summary>
         /// The live instance, so the network monitor can push the underlying networks onto
         /// it. Weakly held is unnecessary — the service outlives everything that uses this,
@@ -40,7 +55,6 @@ namespace Horus.Platforms.Android
         private static HorusVpnTunnelService? _instance;
 
         /// <summary>Remembered so a service restart can re-apply it without a new callback.</summary>
-        private static Network[]? _underlying;
 
         public static TunnelState CurrentState { get; private set; } = TunnelState.Unknown;
         public static event EventHandler<TunnelStateChangedEventArgs>? TunnelStateChanged;
@@ -74,29 +88,31 @@ namespace Horus.Platforms.Android
         }
 
         /// <summary>
-        /// Tells the system which physical networks are carrying the tunnel, in priority
-        /// order — index 0 is preferred. Called on every handover by
-        /// <see cref="AndroidNetworkMonitor"/>.
+        /// Hands the choice of carrying network back to the system.
         ///
-        /// <para>Null and empty are not the same thing and the difference matters. Null
-        /// hands the decision back to the system, which is correct while offline: asserting
-        /// an empty array marks the VPN as having no connectivity, and some system
-        /// components take that as licence to tear it down. Empty is therefore never passed
-        /// on — it is normalised to null in <see cref="ApplyUnderlyingNetwork"/>.</para>
+        /// <para>Null is the documented default — "track the system default network" — and
+        /// naming networks instead turned out to be actively harmful. Meteredness is the
+        /// reason: a VPN gets NOT_METERED only when it is not declared metered <i>and</i>
+        /// every network it names as an underlay is unmetered
+        /// (<c>Vpn.applyUnderlyingCapabilities</c> ORs them together). We named every
+        /// available network, so on any phone with mobile data switched on alongside Wi-Fi
+        /// the cellular network dragged the tunnel back to metered — undoing
+        /// <c>setMetered(false)</c> and with it the whole point of setting it. Observed on
+        /// device: underlays [wlan0, ccmni0] produced a tunnel with no NOT_METERED.</para>
+        ///
+        /// <para>Null also survives an idle device better. An explicit array is a claim we
+        /// then have to keep true, and while the screen is off we are least able to: a named
+        /// network entering doze leaves the system holding an assertion about a link that is
+        /// no longer carrying. RethinkDNS passes null by default and only names networks
+        /// when the user asks for multi-path, which is a feature we do not have.</para>
         /// </summary>
-        internal static void SetUnderlyingNetwork(Network[]? networks)
-        {
-            _underlying = networks;
-            _instance?.ApplyUnderlyingNetwork();
-        }
-
         private void ApplyUnderlyingNetwork()
         {
-            if (_tunFd is null) return; // nothing established yet; CreateTunnel will apply it
+            if (_tunFd is null) return; // nothing established yet; EstablishTunnel will apply it
 
             try
             {
-                SetUnderlyingNetworks(_underlying is { Length: > 0 } ? _underlying : null);
+                SetUnderlyingNetworks(null);
             }
             catch (Exception ex)
             {
@@ -214,17 +230,56 @@ namespace Horus.Platforms.Android
         /// </summary>
         private bool TryStartForeground()
         {
-            try
+            if (_inForeground) return true;
+
+            try { EnsureNotificationChannel(); }
+            catch (Exception ex) { Diag.Warn("tun", $"notification channel failed: {ex.Message}"); }
+
+            var notification = BuildNotification("Подключение…");
+
+            // systemExempted is the type Android documents for the categories that are
+            // exempt from background restrictions, and a VpnService is one of them. Asking
+            // for it explicitly is what buys the service the latitude the reference clients
+            // get; specialUse, which this used to declare, carries none of that meaning.
+            //
+            // Tried in order because a vendor build may refuse a type: an outright failure
+            // here kills the connect, so falling back to specialUse and then to the untyped
+            // overload is worth the three lines.
+            foreach (var attempt in ForegroundAttempts())
             {
-                EnsureNotificationChannel();
-                StartForeground(NotificationId, BuildNotification("Подключение…"));
-                return true;
+                try
+                {
+                    attempt.Start(this, notification);
+                    _inForeground = true;
+                    Diag.Info("tun", $"foreground service started as {attempt.Name}");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Diag.Warn("tun", $"startForeground({attempt.Name}) refused: {ex.GetType().Name}: {ex.Message}");
+                }
             }
-            catch (Exception ex)
+
+            Diag.Error("tun", "no foreground service type was accepted");
+            return false;
+        }
+
+        private readonly record struct ForegroundAttempt(string Name, Action<Service, Notification> Start);
+
+        private static IEnumerable<ForegroundAttempt> ForegroundAttempts()
+        {
+            if (OperatingSystem.IsAndroidVersionAtLeast(34))
             {
-                Diag.Error("tun", $"startForeground refused: {ex.GetType().Name}: {ex.Message}");
-                return false;
+                yield return new("systemExempted", static (svc, n) =>
+                    svc.StartForeground(NotificationId, n,
+                        global::Android.Content.PM.ForegroundService.TypeSystemExempted));
+
+                yield return new("specialUse", static (svc, n) =>
+                    svc.StartForeground(NotificationId, n,
+                        global::Android.Content.PM.ForegroundService.TypeSpecialUse));
             }
+
+            yield return new("untyped", static (svc, n) => svc.StartForeground(NotificationId, n));
         }
 
         public override void OnRevoke()
@@ -239,6 +294,22 @@ namespace Horus.Platforms.Android
             base.OnRevoke();
         }
 
+        /// <summary>
+        /// Brings the tunnel up, or moves an already-running one onto new parameters.
+        ///
+        /// <para><b>The service is never torn down for a rebuild.</b> It used to be: every
+        /// reconnect stopped the bridge, closed the descriptor, dropped out of the
+        /// foreground and called <c>stopSelf</c>, then started a fresh service. That is slow,
+        /// it makes the notification flicker, and — the part that actually broke things — it
+        /// requires starting a foreground service from the background, which Android 12+
+        /// restricts and Doze can refuse outright. A reconnect that happened while the
+        /// screen was off could therefore simply never come back. RethinkDNS destroys its
+        /// service only when the VPN is genuinely stopping, and rebuilds in place otherwise.</para>
+        ///
+        /// <para>Three cases, cheapest first: nothing meaningful changed and the call is a
+        /// no-op; only the descriptor needs replacing and the bridge is handed the new one;
+        /// or there is no tunnel yet and everything is built.</para>
+        /// </summary>
         private void CreateTunnel()
         {
             var options = _pendingOptions;
@@ -248,7 +319,21 @@ namespace Horus.Platforms.Android
                 return;
             }
 
-            SetState(TunnelState.Starting);
+            // Already carrying on exactly these terms. Nothing to do, and doing nothing is
+            // the fastest possible reconnect: the descriptor, the bridge and every
+            // established session survive untouched.
+            if (_tunFd is not null && _activeOptions is not null && Equivalent(_activeOptions, options))
+            {
+                Diag.Info("tun", "rebuild skipped: parameters unchanged");
+                UpdateNotification("Подключено");
+                SetState(TunnelState.Started);
+                _startTcs?.TrySetResult(true);
+                return;
+            }
+
+            var rebuilding = _tunFd is not null;
+            SetState(rebuilding ? TunnelState.Starting : TunnelState.Starting);
+
             try
             {
                 var self = PackageName!;
@@ -257,6 +342,15 @@ namespace Horus.Platforms.Android
                 builder.AddAddress(options.TunAddress, options.TunPrefix);
                 builder.SetMtu(options.Mtu > 0 ? options.Mtu : 1500);
                 builder.SetSession("Horus VPN");
+
+                // Not calling this at all is not the same as calling it with false, and the
+                // difference was a real bug: VpnService.Builder treats a tunnel as metered
+                // unless told otherwise, so every app on the device saw ours as mobile data
+                // and Android's background restrictions applied in Doze. Music stopped
+                // between tracks and notifications stopped arriving, which reads as the VPN
+                // dropping. See UserPreferences.MeteredConnection.
+                if (OperatingSystem.IsAndroidVersionAtLeast(29))
+                    builder.SetMetered(options.Metered);
 
                 foreach (var dns in options.DnsServers ?? ["1.1.1.1", "8.8.8.8"])
                     builder.AddDnsServer(dns);
@@ -275,19 +369,36 @@ namespace Horus.Platforms.Android
 
                 ApplySplitTunneling(builder, options, self);
 
-                _tunFd = builder.Establish()
+                // Establishing again while a tunnel is up is the documented hand-off: the
+                // old descriptor is invalidated by the system and the interface itself never
+                // disappears, so apps do not see the network drop out from under them.
+                var previousFd = _tunFd;
+                var fd = builder.Establish()
                     ?? throw new InvalidOperationException("VpnService.Builder.Establish() returned null.");
+
+                _tunFd = fd;
+                _activeOptions = options;
 
                 // Immediately, not only on the next handover: whatever the monitor last saw
                 // is the link this tunnel is being built on, and leaving it unset until
                 // something changes means the first session of every connect is misattributed.
                 ApplyUnderlyingNetwork();
 
-                HevSocksTunnel.StartTunnel(_tunFd.Fd, options.SocksPort);
+                if (rebuilding)
+                    HevSocksTunnel.Rebind(fd.Fd, options.SocksPort);
+                else
+                    HevSocksTunnel.StartTunnel(fd.Fd, options.SocksPort);
+
+                // Only now. Closing it earlier would take the interface down between the two
+                // establishes, which is the flicker this whole path exists to avoid.
+                try { previousFd?.Close(); }
+                catch (Exception ex) { Diag.Warn("tun", $"closing the previous fd failed: {ex.Message}"); }
 
                 UpdateNotification("Подключено");
                 SetState(TunnelState.Started);
-                Diag.Info("tun", $"established, mtu {options.Mtu}, socks {options.SocksPort}");
+                Diag.Info("tun", rebuilding
+                    ? $"rebuilt in place, mtu {options.Mtu}, socks {options.SocksPort}"
+                    : $"established, mtu {options.Mtu}, socks {options.SocksPort}");
                 _startTcs?.TrySetResult(true);
             }
             catch (Exception ex)
@@ -297,6 +408,24 @@ namespace Horus.Platforms.Android
                 _startTcs?.TrySetException(ex);
             }
         }
+
+        /// <summary>
+        /// Whether a rebuild would produce the same tunnel.
+        ///
+        /// <para>Only the parameters that reach the interface or the bridge are compared.
+        /// The node address and the bypass list are not among them on Android: routing
+        /// around the tunnel is done by excluding this app's UID, so those fields change
+        /// nothing here even when they differ.</para>
+        /// </summary>
+        private static bool Equivalent(TunnelOptions a, TunnelOptions b) =>
+            a.SocksPort == b.SocksPort
+            && a.Mtu == b.Mtu
+            && a.TunAddress == b.TunAddress
+            && a.TunPrefix == b.TunPrefix
+            && a.AllTraffic == b.AllTraffic
+            && a.Metered == b.Metered
+            && (a.DnsServers ?? []).SequenceEqual(b.DnsServers ?? [])
+            && (a.BypassApps ?? []).SequenceEqual(b.BypassApps ?? []);
 
         /// <summary>
         /// Applies split tunneling, and — far more importantly — keeps this app's own UID
@@ -378,7 +507,9 @@ namespace Horus.Platforms.Android
             // Cleared so a later start cannot pick up options belonging to a connection
             // that is already gone.
             _pendingOptions = null;
+            _activeOptions = null;
 
+            _inForeground = false;
             StopForeground(StopForegroundFlags.Remove);
             SetState(TunnelState.Stopped);
             _stopTcs?.TrySetResult(true);

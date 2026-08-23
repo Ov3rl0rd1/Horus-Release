@@ -40,6 +40,18 @@
                             </VerticalStackLayout>
                             <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding AutoStart}" />
                         </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <!-- Off by default. Android treats a VPN as metered unless told
+                             otherwise, and that is what throttles background apps in Doze —
+                             music between tracks, notifications. Turning it on restores
+                             honest reporting of mobile data at that cost. -->
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Лимитное соединение" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Ограничивать фоновый трафик приложений" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding MeteredConnection}" />
+                        </Grid>
                         <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}"
                                  IsVisible="{Binding SplitTunnelingSupported}" />
                         <!-- Hidden where the platform can't actually enforce it (Windows

@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 	<!-- No package= attribute: $(ApplicationId) from Horus.csproj is the single source of
-	     truth. It must stay com.horus.vpn — libhev_socks.so resolves its JNI entry points
-	     against the class com/horus/vpn/VPNService. -->
+	     truth, and it is genuinely overridable — build-hev.ps1 deletes src/hev-jni.c, so
+	     libhev_socks.so no longer looks up a Java class by name and nothing pins the id.
+	     Device testing relies on that, installing as com.horus.vpn.test beside the release
+	     build. The <service> name below is a different matter: it is a fully-qualified class
+	     name that happens to start with the release id, and it must not track $(ApplicationId)
+	     — see the note on the element itself. -->
 	<application android:allowBackup="false" android:icon="@mipmap/appicon" android:supportsRtl="true" android:label="Horus" android:extractNativeLibs="true"
 		android:largeHeap="true"
 		android:memtagMode="off"
@@ -33,11 +37,26 @@
 			android:name="com.horus.vpn.HorusVpnTunnelService"
 			android:permission="android.permission.BIND_VPN_SERVICE"
 			android:exported="false"
-			android:foregroundServiceType="specialUse"
+			android:foregroundServiceType="systemExempted|specialUse"
 			android:stopWithTask="false">
 			<intent-filter>
 				<action android:name="android.net.VpnService" />
 			</intent-filter>
+			<!--
+			  systemExempted first, specialUse as the fallback.
+
+			  A VpnService is one of the categories Android documents as exempt from
+			  background restrictions, and systemExempted is the type that says so. Both
+			  reference clients use it — RethinkDNS as systemExempted|connectedDevice,
+			  NekoBox as systemExempted — and neither shows the "tunnel dies a while after
+			  the screen goes off" behaviour this app had.
+
+			  specialUse is the generic escape hatch and carries none of that meaning; a
+			  service declared with it is subject to the ordinary background rules. It stays
+			  declared so a device that refuses systemExempted still has a type to fall back
+			  to at runtime (see TryStartForeground), which is the only reason the property
+			  below is still here.
+			-->
 			<property
 				android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
 				android:value="vpn" />
@@ -68,6 +87,13 @@
 	<uses-permission android:name="android.permission.INTERNET" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+	<!-- The permission behind foregroundServiceType="systemExempted". Declaring the type
+	     without it is not a milder version of asking: startForeground rejects the type
+	     outright, the code falls through to specialUse, and the exemption that was the
+	     whole point of naming systemExempted is never granted — silently, because the
+	     fallback keeps the tunnel working. Both NekoBox and RethinkDNS declare it. -->
+	<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
 	<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
 	<!-- Normal permission, no prompt. Needed for ConnectivityManager.requestNetwork and

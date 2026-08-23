@@ -37,5 +37,12 @@ namespace Horus.Domain.Models
         /// move together when the conventional port is already taken.
         /// </summary>
         public int SocksPort { get; set; } = XrayConfig.DefaultSocksPort;
+
+        /// <summary>
+        /// Whether to declare the tunnel metered. False unless the user asked otherwise —
+        /// see <c>UserPreferences.MeteredConnection</c> for why the default matters more
+        /// than it looks.
+        /// </summary>
+        public bool Metered { get; set; }
     }
 }
