@@ -176,6 +176,101 @@ public class XrayConfigBuilderTests
         Assert.False(stream.TryGetProperty("finalmask", out _));
     }
 
+    // ── Geo routing ─────────────────────────────────────────────────────────
+
+    private static JsonElement Rules(JsonElement root) =>
+        root.GetProperty("routing").GetProperty("rules");
+
+    [Fact]
+    public void Geo_rules_are_absent_unless_enabled()
+    {
+        // Naming a category the core cannot resolve is not a soft failure: the config is
+        // rejected and the tunnel never comes up. Off by default is the safe state.
+        foreach (var rule in Rules(Build(VlessLink)).EnumerateArray())
+            Assert.False(rule.TryGetProperty("domain", out _));
+    }
+
+    [Fact]
+    public void A_direct_geo_category_routes_to_freedom()
+    {
+        var root = Build(VlessLink, cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"],
+            DirectIps = ["geoip:ru"]
+        });
+
+        var direct = Rules(root).EnumerateArray()
+            .Where(r => r.GetProperty("outboundTag").GetString() == XrayConfigBuilder.DirectTag)
+            .ToList();
+
+        Assert.Contains(direct, r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "geosite:category-ru"));
+        Assert.Contains(direct, r => r.TryGetProperty("ip", out var ip)
+            && ip.EnumerateArray().Any(v => v.GetString() == "geoip:ru"));
+    }
+
+    [Fact]
+    public void An_exception_is_matched_before_the_category_that_contains_it()
+    {
+        // The whole design. A geo set is tens of thousands of entries and cannot be edited,
+        // so a user exception can only win by being earlier in the list. If this ordering
+        // ever inverts, the exception silently stops working and the domain goes direct.
+        var root = Build(VlessLink, cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"],
+            ProxyDomainExceptions = ["example.ru"]
+        });
+
+        var rules = Rules(root).EnumerateArray().ToList();
+
+        var exception = rules.FindIndex(r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "example.ru"));
+        var category = rules.FindIndex(r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "geosite:category-ru"));
+
+        Assert.True(exception >= 0 && category >= 0, "both rules must be emitted");
+        Assert.True(exception < category, "the exception must come first or it can never win");
+    }
+
+    [Fact]
+    public void Geo_rules_still_come_after_the_local_ranges()
+    {
+        // Local traffic must stay local whatever the geo configuration says: a LAN address
+        // that fell into a geo category would otherwise be routed by it.
+        var root = Build(VlessLink, cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"]
+        });
+
+        var rules = Rules(root).EnumerateArray().ToList();
+
+        var local = rules.FindIndex(r => r.TryGetProperty("ip", out var ip)
+            && ip.EnumerateArray().Any(v => v.GetString() == "192.168.0.0/16"));
+        var geo = rules.FindIndex(r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "geosite:category-ru"));
+
+        Assert.True(local >= 0 && geo > local);
+    }
+
+    [Fact]
+    public void The_catch_all_stays_last()
+    {
+        var root = Build(VlessLink, cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"]
+        });
+
+        var rules = Rules(root).EnumerateArray().ToList();
+        var last = rules[^1];
+
+        Assert.Equal(XrayConfigBuilder.ProxyTag, last.GetProperty("outboundTag").GetString());
+        Assert.Equal("tcp,udp", last.GetProperty("network").GetString());
+    }
+
     [Fact]
     public void A_range_from_the_query_reaches_udpHop()
     {

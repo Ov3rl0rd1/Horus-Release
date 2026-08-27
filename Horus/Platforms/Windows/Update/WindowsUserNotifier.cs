@@ -49,6 +49,15 @@ namespace Horus.Platforms.Windows.Update
             return Task.CompletedTask;
         }
 
+        /// <summary>
+        /// Not shown. A toast with a progress bar needs a registered notification group and
+        /// a packaged identity, which an MSI/zip build does not have — and the desktop
+        /// already reports the download on the Home screen, where the user is.
+        /// </summary>
+        public Task ShowProgressAsync(string title, string message, int percent) => Task.CompletedTask;
+
+        public Task HideProgressAsync() => Task.CompletedTask;
+
         private static string Escape(string text) =>
             text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
     }

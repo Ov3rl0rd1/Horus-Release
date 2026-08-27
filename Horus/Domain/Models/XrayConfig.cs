@@ -15,6 +15,13 @@ namespace Horus.Domain.Models
         public required ShareLink Link { get; init; }
 
         /// <summary>
+        /// Geo-category routing. Disabled unless the caller has confirmed the .dat files
+        /// are installed — naming a category the core cannot resolve makes XrayStart fail
+        /// outright rather than degrading.
+        /// </summary>
+        public GeoRoutingOptions Geo { get; set; } = GeoRoutingOptions.Disabled;
+
+        /// <summary>
         /// Port of the SOCKS5 inbound. Hardcoded on the other side too — in
         /// <c>HevSocksTunnel</c>'s YAML — so the two must never drift apart.
         /// </summary>

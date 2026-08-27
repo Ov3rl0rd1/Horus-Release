@@ -43,13 +43,14 @@ namespace Horus.Protocols
             "224.0.0.0/4", "255.255.255.255/32", "ff00::/8"
         ];
 
-        /// <summary>Unicast ranges that must never be routed into the tunnel.</summary>
-        private static readonly string[] DirectRanges =
-        [
-            "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-            "169.254.0.0/16",
-            "::1/128", "fc00::/7", "fe80::/10"
-        ];
+        /// <summary>
+        /// Unicast ranges that must never be routed into the tunnel.
+        ///
+        /// Shared with the platform tunnel services through <see cref="LocalNetworks"/>:
+        /// the core's routing table and the TUN's own routes have to agree about what is
+        /// local, and keeping two lists in two files is how they stop agreeing.
+        /// </summary>
+        private static readonly string[] DirectRanges = LocalNetworks.Direct;
 
         private static readonly JsonSerializerOptions Options = new()
         {
@@ -145,6 +146,8 @@ namespace Horus.Protocols
                 }
             };
 
+            AddGeoRules(rules, cfg.Geo);
+
             rules.Add(new Dictionary<string, object?>
             {
                 ["type"] = "field",
@@ -153,6 +156,63 @@ namespace Horus.Protocols
             });
 
             return [.. rules];
+        }
+
+        /// <summary>
+        /// Emits the geo-category rules, exceptions first.
+        ///
+        /// <para><b>Order is the whole design.</b> A geo set is tens of thousands of entries
+        /// and cannot be edited, so a user exception can only win by being matched earlier.
+        /// Exceptions therefore come first and send their targets to the proxy; the category
+        /// rules follow and send everything else in the set out direct.</para>
+        ///
+        /// <para>Nothing is emitted unless the caller has confirmed the <c>.dat</c> files are
+        /// installed. Naming a category the core cannot resolve is not a soft failure — the
+        /// config is rejected and the tunnel never comes up.</para>
+        /// </summary>
+        private static void AddGeoRules(List<object> rules, GeoRoutingOptions geo)
+        {
+            if (!geo.HasAnything) return;
+
+            if (geo.ProxyDomainExceptions.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["domain"] = geo.ProxyDomainExceptions,
+                    ["outboundTag"] = ProxyTag
+                });
+            }
+
+            if (geo.ProxyIpExceptions.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["ip"] = geo.ProxyIpExceptions,
+                    ["outboundTag"] = ProxyTag
+                });
+            }
+
+            if (geo.DirectSites.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["domain"] = geo.DirectSites,
+                    ["outboundTag"] = DirectTag
+                });
+            }
+
+            if (geo.DirectIps.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["ip"] = geo.DirectIps,
+                    ["outboundTag"] = DirectTag
+                });
+            }
         }
 
         /// <summary>

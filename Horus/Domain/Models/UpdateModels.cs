@@ -20,6 +20,53 @@ namespace Horus.Domain.Models
         Immediate = 2
     }
 
+    /// <summary>
+    /// What the updater is doing right now, for the parts of the UI that show it.
+    ///
+    /// Deliberately coarse. The user is told that something is downloading, that something
+    /// is ready, or nothing at all — the difference between "verifying the checksum" and
+    /// "writing the session" is ours to care about, not theirs.
+    /// </summary>
+    public enum UpdateStage
+    {
+        /// <summary>Nothing pending, or nothing worth mentioning.</summary>
+        Idle = 0,
+
+        /// <summary>Fetching the payload. <see cref="UpdateProgress.Fraction"/> is meaningful.</summary>
+        Downloading,
+
+        /// <summary>Downloaded and verified, waiting for a moment or for the user.</summary>
+        Ready,
+
+        /// <summary>Handed to the platform installer.</summary>
+        Installing
+    }
+
+    /// <summary>A snapshot of the updater for display.</summary>
+    /// <param name="Stage">What is happening.</param>
+    /// <param name="Version">The version being fetched or waiting.</param>
+    /// <param name="Urgency">
+    /// Which decides how insistently it is presented: a first- or second-component change
+    /// asks to be installed now, a third-component one merely mentions itself.
+    /// </param>
+    /// <param name="Fraction">
+    /// Download progress in 0..1, or -1 when the server sent no length and there is nothing
+    /// honest to show. An indeterminate bar is better than a fabricated percentage.
+    /// </param>
+    public readonly record struct UpdateProgress(
+        UpdateStage Stage,
+        AppVersion Version,
+        UpdateUrgency Urgency,
+        double Fraction)
+    {
+        public static readonly UpdateProgress None =
+            new(UpdateStage.Idle, AppVersion.Zero, UpdateUrgency.None, -1);
+
+        public bool HasFraction => Fraction >= 0;
+
+        public int Percent => Fraction < 0 ? 0 : (int)Math.Round(Fraction * 100);
+    }
+
     /// <summary>Where a manifest came from. Recorded in diagnostics, never shown to users.</summary>
     public enum UpdateOrigin { GitHub, Site }
 

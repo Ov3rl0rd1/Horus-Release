@@ -86,10 +86,20 @@
                                             </Label.Triggers>
                                         </Label>
                                         <Label Text="{Binding Message}" Style="{StaticResource HzDim}" FontSize="12" />
+
+                                        <!-- Only the download notice carries one. -->
+                                        <ProgressBar IsVisible="{Binding HasProgress}"
+                                                     Progress="{Binding ProgressValue}"
+                                                     ProgressColor="{StaticResource HzGold}"
+                                                     HeightRequest="3" Margin="0,6,0,1" />
                                     </VerticalStackLayout>
 
+                                    <!-- A notice that only reports — a download in flight —
+                                         has nothing to press, so the button is omitted
+                                         rather than shown disabled. -->
                                     <Border Grid.Column="1" BackgroundColor="{StaticResource HzGold}"
-                                            Padding="13,7" VerticalOptions="Center">
+                                            Padding="13,7" VerticalOptions="Center"
+                                            IsVisible="{Binding HasAction}">
                                         <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
                                         <Label Text="{Binding ActionLabel}" TextColor="{StaticResource HzOnGold}"
                                                FontSize="12" FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />

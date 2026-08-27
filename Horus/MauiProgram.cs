@@ -103,6 +103,10 @@ namespace Horus
             // on a permission re-read at resume, and when the updater reports it is parked.
             services.AddSingleton<INoticeService, Horus.Application.Notices.NoticeService>();
 
+            // Geo rule files. Scaffolding: registered and usable, but nothing enables geo
+            // routing yet and there is no settings screen for it.
+            services.AddSingleton<IGeoAssetService, Horus.Application.Routing.GeoAssetService>();
+
             // ── Platform Services ────────────────────────────────────────────
 #if ANDROID
             services

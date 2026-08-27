@@ -30,5 +30,7 @@ namespace Horus.Application.PlatformStubs
     public sealed class StubUserNotifier : IUserNotifier
     {
         public Task NotifyAsync(string title, string message) => Task.CompletedTask;
+        public Task ShowProgressAsync(string title, string message, int percent) => Task.CompletedTask;
+        public Task HideProgressAsync() => Task.CompletedTask;
     }
 }

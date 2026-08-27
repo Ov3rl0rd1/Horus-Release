@@ -19,7 +19,16 @@ namespace Horus.Domain.Models
         Notifications,
 
         /// <summary>The app is subject to battery optimisation, which is what kills a sleeping tunnel.</summary>
-        BatteryOptimisation
+        BatteryOptimisation,
+
+        /// <summary>An update is being fetched. Informational, carries a progress bar.</summary>
+        UpdateDownloading,
+
+        /// <summary>
+        /// An update is downloaded, verified and waiting. How insistently it asks depends on
+        /// which part of the version changed.
+        /// </summary>
+        UpdateReady
     }
 
     /// <summary>How loudly a notice presents. Two levels only — more would be decoration.</summary>
@@ -50,6 +59,10 @@ namespace Horus.Domain.Models
     /// <param name="Message">One line of why it matters.</param>
     /// <param name="ActionLabel">The button. A verb.</param>
     /// <param name="Tone">Drives the colour treatment only.</param>
+    /// <param name="Progress">
+    /// 0..1 for a determinate bar, -1 for an indeterminate one, null for no bar at all.
+    /// Only the download notice uses it.
+    /// </param>
     /// <param name="CanDismiss">
     /// Whether the user may hide it. Dismissal is remembered for a while rather than
     /// forever: the conditions here come back, and a notice that can be silenced
@@ -61,5 +74,18 @@ namespace Horus.Domain.Models
         string Message,
         string ActionLabel,
         NoticeTone Tone,
-        bool CanDismiss);
+        bool CanDismiss,
+        double? Progress = null)
+    {
+        /// <summary>
+        /// Whether to draw the action button. A notice with nothing for the user to press —
+        /// a download in flight — is still worth showing, it just reports rather than asks.
+        /// </summary>
+        public bool HasAction => !string.IsNullOrEmpty(ActionLabel);
+
+        public bool HasProgress => Progress is not null;
+
+        /// <summary>MAUI's ProgressBar has no indeterminate mode, so -1 is drawn as empty.</summary>
+        public double ProgressValue => Progress is > 0 ? Math.Clamp(Progress.Value, 0, 1) : 0;
+    }
 }
