@@ -18,12 +18,18 @@ namespace Horus.Platforms.Android.Update
     /// requirement does not apply to it — so no prompt appears, from the very first update
     /// onward.</para>
     ///
+    /// <para><b>And why it often is not silent anyway.</b> That contract is one Android
+    /// documents but OEM builds decline to honour — MIUI in particular asks for
+    /// confirmation regardless. The session then completes with
+    /// <c>STATUS_PENDING_USER_ACTION</c> instead of installing, which is handled in
+    /// <see cref="UpdateInstallReceiver"/>. Nothing here may assume the quiet path.</para>
+    ///
     /// <para><b>The one thing the user must do once.</b>
     /// <c>REQUEST_INSTALL_PACKAGES</c> is an app-op the user grants per app ("Install
     /// unknown apps"). Sideloading the first APK grants it to the browser or file manager,
-    /// not to Horus. Until the user grants it here, the install cannot even be attempted,
-    /// so this asks for it once — quietly, through a notification rather than by hijacking
-    /// the screen — and gives up until it is granted.</para>
+    /// not to Horus. That is reported through <see cref="CheckReadiness"/> and surfaced as
+    /// a Home screen notice, rather than asked for from here: a background app cannot
+    /// reliably open a settings screen, and the previous attempt to do so failed silently.</para>
     ///
     /// <para>The process does not survive: Android stops the app to swap it. Nothing may be
     /// assumed to run after <see cref="InstallAsync"/> commits.</para>
@@ -37,14 +43,34 @@ namespace Horus.Platforms.Android.Update
         /// </summary>
         private const int UserActionNotRequired = 2;
 
-        private readonly IUserNotifier _notifier;
-
-        public AndroidUpdateInstaller(IUserNotifier notifier) => _notifier = notifier;
-
         public bool IsSupported => true;
 
         /// <summary>Always true — Android stops the process to replace it.</summary>
         public bool TerminatesProcess => true;
+
+        /// <summary>
+        /// False. The VpnService goes down with the process and the system reclaims the
+        /// interface and its routes, so there is nothing here that needs unwinding first —
+        /// unlike Windows, where a half-replaced install leaves a live wintun adapter.
+        ///
+        /// This used to be unconditional, and it was the whole bug: the tunnel was stopped,
+        /// the install then needed a confirmation the app could not raise from the
+        /// background, and the VPN stayed off while the attempt repeated every two minutes.
+        /// </summary>
+        public bool RequiresTunnelDown => false;
+
+        /// <summary>
+        /// Cheap and side-effect free, and called before anything is torn down.
+        ///
+        /// Only the app-op is checkable in advance. Whether the platform will demand a
+        /// confirmation dialog is not knowable until the session is committed — MIUI and
+        /// other OEM builds decline to honour <c>USER_ACTION_NOT_REQUIRED</c> — so that case
+        /// is handled after the fact, in <see cref="UpdateInstallReceiver"/>.
+        /// </summary>
+        public UpdateBlocker CheckReadiness() =>
+            CanInstallPackages(global::Android.App.Application.Context)
+                ? UpdateBlocker.None
+                : UpdateBlocker.InstallPermission;
 
         /// <summary>
         /// The ABI this device actually runs. Releases ship one APK per architecture
@@ -71,12 +97,11 @@ namespace Horus.Platforms.Android.Update
         {
             var context = global::Android.App.Application.Context;
 
+            // CheckReadiness has already run before the caller committed to anything; this
+            // is the belt-and-braces case where it changed underneath us.
             if (!CanInstallPackages(context))
-            {
-                await RequestInstallPermissionAsync(context).ConfigureAwait(false);
                 throw new InvalidOperationException(
                     "«Установка неизвестных приложений» не разрешена для Horus.");
-            }
 
             var installer = context.PackageManager?.PackageInstaller
                 ?? throw new InvalidOperationException("PackageInstaller unavailable.");
@@ -118,34 +143,6 @@ namespace Horus.Platforms.Android.Update
         {
             if (!OperatingSystem.IsAndroidVersionAtLeast(26)) return true;
             return context.PackageManager?.CanRequestPackageInstalls() ?? false;
-        }
-
-        /// <summary>
-        /// Sends the user to the one settings screen that can grant this. Deliberately a
-        /// notification, not an activity launch: updating must never interrupt, and a
-        /// background app cannot reliably start an activity anyway.
-        /// </summary>
-        private async Task RequestInstallPermissionAsync(Context context)
-        {
-            try
-            {
-                await _notifier.NotifyAsync(
-                    "Horus не может обновиться сам",
-                    "Разрешите установку приложений из Horus, чтобы обновления ставились автоматически.")
-                    .ConfigureAwait(false);
-
-                if (!OperatingSystem.IsAndroidVersionAtLeast(26)) return;
-
-                var intent = new Intent(
-                    global::Android.Provider.Settings.ActionManageUnknownAppSources,
-                    global::Android.Net.Uri.Parse("package:" + context.PackageName));
-                intent.AddFlags(ActivityFlags.NewTask);
-
-                // Only works while something of ours is in the foreground; failing here is
-                // expected and harmless, since the notification already carries the ask.
-                context.StartActivity(intent);
-            }
-            catch { }
         }
     }
 }

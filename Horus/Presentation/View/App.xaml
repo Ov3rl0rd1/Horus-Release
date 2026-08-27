@@ -228,6 +228,10 @@
             <Color x:Key="HzGreenSoft">#147ED9A7</Color>
             <Color x:Key="HzGreenBorder">#4D7ED9A7</Color>
             <Color x:Key="HzRed">#F2A6A0</Color>
+            <!-- Same soft-fill/border pair as gold and green, for notices that report a
+                 broken feature rather than a suggestion. -->
+            <Color x:Key="HzRedSoft">#14F2A6A0</Color>
+            <Color x:Key="HzRedBorder">#4DF2A6A0</Color>
             <Color x:Key="HzAmber">#F3D48E</Color>
 
             <!-- Purple accents / connect ring -->

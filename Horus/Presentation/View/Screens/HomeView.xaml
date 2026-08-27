@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:vm="clr-namespace:Horus.Presentation.ViewModels"
              xmlns:controls="clr-namespace:Horus.Presentation.View.Controls"
+             xmlns:models="clr-namespace:Horus.Domain.Models"
              x:DataType="vm:MainViewModel"
              x:Class="Horus.Presentation.View.Screens.HomeView">
 
@@ -45,26 +46,72 @@
                                  MaximumWidthRequest="{OnIdiom Phone=100000, Default=560}"
                                  HorizontalOptions="{OnIdiom Phone=Fill, Default=Center}">
 
-                <!-- Renew banner (subscription expiring / inactive) -->
-                <Border IsVisible="{Binding ShowRenew}" BackgroundColor="{StaticResource HzGoldSoft}"
-                        Stroke="{StaticResource HzGoldBorder}" Padding="14,12">
-                    <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
-                    <Border.GestureRecognizers>
-                        <TapGestureRecognizer Command="{Binding OpenPayCommand}" />
-                    </Border.GestureRecognizers>
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <VerticalStackLayout Grid.Column="0" Spacing="1">
-                            <Label Text="{Binding RenewTitle}" TextColor="{StaticResource HzGoldLight}"
-                                   FontSize="13" FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
-                            <Label Text="{Binding RenewSub}" Style="{StaticResource HzDim}" FontSize="12" />
-                        </VerticalStackLayout>
-                        <Border Grid.Column="1" BackgroundColor="{StaticResource HzGold}" Padding="13,7" VerticalOptions="Center">
-                            <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
-                            <Label Text="{Binding RenewLabel}" TextColor="{StaticResource HzOnGold}" FontSize="12"
-                                   FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
-                        </Border>
-                    </Grid>
-                </Border>
+                <!-- Notices: subscription, and the system switches that silently disable
+                     features (install permission, notifications, battery optimisation).
+                     One template for all of them — see INoticeService for what decides the
+                     list and why it is capped at two. -->
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Notices}" Spacing="10"
+                                     IsVisible="{Binding HasNotices}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="models:AppNotice">
+                            <Border BackgroundColor="{StaticResource HzGoldSoft}"
+                                    Stroke="{StaticResource HzGoldBorder}" Padding="14,12">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+
+                                <!-- Tone drives the colour treatment only. A broken feature
+                                     reads red; a recommendation stays gold. -->
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding Tone}"
+                                                 Value="{x:Static models:NoticeTone.Problem}">
+                                        <Setter Property="BackgroundColor" Value="{StaticResource HzRedSoft}" />
+                                        <Setter Property="Stroke" Value="{StaticResource HzRedBorder}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer
+                                        Command="{Binding Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=ActOnNoticeCommand}"
+                                        CommandParameter="{Binding .}" />
+                                </Border.GestureRecognizers>
+
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                                    <VerticalStackLayout Grid.Column="0" Spacing="1">
+                                        <Label Text="{Binding Title}" TextColor="{StaticResource HzGoldLight}"
+                                               FontSize="13" FontAttributes="Bold" FontFamily="{StaticResource FontBody}">
+                                            <Label.Triggers>
+                                                <DataTrigger TargetType="Label" Binding="{Binding Tone}"
+                                                             Value="{x:Static models:NoticeTone.Problem}">
+                                                    <Setter Property="TextColor" Value="{StaticResource HzRed}" />
+                                                </DataTrigger>
+                                            </Label.Triggers>
+                                        </Label>
+                                        <Label Text="{Binding Message}" Style="{StaticResource HzDim}" FontSize="12" />
+                                    </VerticalStackLayout>
+
+                                    <Border Grid.Column="1" BackgroundColor="{StaticResource HzGold}"
+                                            Padding="13,7" VerticalOptions="Center">
+                                        <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                        <Label Text="{Binding ActionLabel}" TextColor="{StaticResource HzOnGold}"
+                                               FontSize="12" FontAttributes="Bold" FontFamily="{StaticResource FontBody}" />
+                                    </Border>
+
+                                    <!-- Dismiss. Absent on notices the user must not be able
+                                         to hide: a parked update explains behaviour they are
+                                         already seeing. -->
+                                    <Label Grid.Column="2" Text="✕" IsVisible="{Binding CanDismiss}"
+                                           TextColor="{StaticResource HzTextMuted}" FontSize="15"
+                                           VerticalOptions="Center" Padding="6,0,0,0">
+                                        <Label.GestureRecognizers>
+                                            <TapGestureRecognizer
+                                                Command="{Binding Source={RelativeSource AncestorType={x:Type vm:MainViewModel}}, Path=DismissNoticeCommand}"
+                                                CommandParameter="{Binding .}" />
+                                        </Label.GestureRecognizers>
+                                    </Label>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
 
                 <!-- Connect ring -->
                 <Grid HorizontalOptions="Center" WidthRequest="224" HeightRequest="224" Margin="0,8,0,0">

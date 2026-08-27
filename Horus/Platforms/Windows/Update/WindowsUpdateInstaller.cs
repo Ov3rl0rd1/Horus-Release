@@ -39,6 +39,19 @@ namespace Horus.Platforms.Windows.Update
         /// <summary>The app exits so the helper can replace its files.</summary>
         public bool TerminatesProcess => true;
 
+        /// <summary>
+        /// True, and this is the platform the whole mechanism exists for: the helper
+        /// replaces files while a wintun adapter and its /32 bypass routes are live, and a
+        /// process killed mid-install leaves the machine with no internet until it reboots.
+        /// </summary>
+        public bool RequiresTunnelDown => true;
+
+        /// <summary>
+        /// Nothing to check. The app already runs elevated — it has to, to create a TUN
+        /// adapter — so msiexec and a file copy both succeed by construction.
+        /// </summary>
+        public UpdateBlocker CheckReadiness() => UpdateBlocker.None;
+
         public string? AssetSuffix => _isMsi.Value ? "-win-x64.msi" : "-win-x64-portable.zip";
 
         private static string? InstallDirectory

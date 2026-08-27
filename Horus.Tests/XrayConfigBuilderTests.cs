@@ -177,6 +177,21 @@ public class XrayConfigBuilderTests
     }
 
     [Fact]
+    public void A_range_from_the_query_reaches_udpHop()
+    {
+        // The API renders the hop range as ?mport= rather than inside the authority.
+        // Parsing it is only half the job — if it does not land in quicParams.udpHop, port
+        // hopping silently stops and the node throttles the one fixed port instead.
+        var hop = ProxyOutbound(Build(
+                "hysteria2://pw@ch1.horusping.com:9443" +
+                "?sni=ch1.horusping.com&obfs=salamander&mport=31111-49999&obfs-password=p#CH1"))
+            .GetProperty("streamSettings").GetProperty("finalmask")
+            .GetProperty("quicParams").GetProperty("udpHop");
+
+        Assert.Equal("31111-49999", hop.GetProperty("ports").GetString());
+    }
+
+    [Fact]
     public void Hop_interval_below_the_cores_minimum_is_dropped()
     {
         // A non-zero interval under 5s is rejected by the core; omitting it lets the

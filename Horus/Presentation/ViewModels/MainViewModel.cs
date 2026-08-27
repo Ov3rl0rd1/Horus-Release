@@ -28,6 +28,7 @@ namespace Horus.Presentation.ViewModels
         private readonly Navigator _nav;
         private readonly PaymentViewModel _payment;
         private readonly IPublisherTrustService _publisherTrust;
+        private readonly INoticeService _notices;
 
         [ObservableProperty] private VpnState _vpnState = VpnState.Disconnected;
         [ObservableProperty] private string _downloadSpeed = "—";
@@ -93,7 +94,8 @@ namespace Horus.Presentation.ViewModels
             AppSession session,
             Navigator nav,
             PaymentViewModel payment,
-            IPublisherTrustService publisherTrust)
+            IPublisherTrustService publisherTrust,
+            INoticeService notices)
         {
             _publisherTrust = publisherTrust;
             _showPublisherWarning = publisherTrust.NeedsTrust;
@@ -108,6 +110,10 @@ namespace Horus.Presentation.ViewModels
             _session = session;
             _nav = nav;
             _payment = payment;
+            _notices = notices;
+
+            _notices.Changed += (_, __) => SyncNotices();
+            SyncNotices();
 
             _vpnManager.StateChanged += OnVpnStateChanged;
             _traffic.TrafficUpdated += OnTrafficUpdated;
@@ -222,16 +228,49 @@ namespace Horus.Presentation.ViewModels
         /// <summary>True once <c>/whoami</c> has told us where we stand.</summary>
         private bool SubscriptionKnown => _auth.SubscriptionState != SubscriptionState.Unknown;
 
+        // ── Notices ───────────────────────────────────────────────────────────
+        //
+        // The subscription banner used to be four bespoke properties bound straight into
+        // the view. Three more conditions needed the same treatment — an install permission
+        // that silently prevents updates, notifications the user switched off, and battery
+        // optimisation that ends tunnels overnight — so the view now renders a list and
+        // INoticeService decides what is in it. The subscription case is simply one entry.
+
+        public ObservableCollection<AppNotice> Notices { get; } = [];
+
+        public bool HasNotices => Notices.Count > 0;
+
+        private void SyncNotices()
+        {
+            MainThread.BeginInvokeOnMainThread(() =>
+            {
+                Notices.Clear();
+                foreach (var notice in _notices.Current) Notices.Add(notice);
+                OnPropertyChanged(nameof(HasNotices));
+            });
+        }
+
         /// <summary>
-        /// Hidden until the server has actually said the subscription is short or gone —
-        /// otherwise every cold start flashed "Подписка не активна" before /whoami answered.
+        /// Runs a notice's action. Subscription opens the payment sheet, which lives here
+        /// rather than in the service — the Application layer has no business knowing about
+        /// an overlay view model.
         /// </summary>
-        public bool ShowRenew => SubscriptionKnown && SubDaysLeft <= 7;
-        public string RenewTitle => SubDaysLeft > 0 ? "Подписка заканчивается" : "Подписка не активна";
-        public string RenewSub => SubDaysLeft > 0
-            ? $"Осталось {SubDaysLeft} дн. — продлите, чтобы не потерять доступ"
-            : "Оформите подписку, чтобы включить защиту";
-        public string RenewLabel => SubDaysLeft > 0 ? "Продлить" : "Оформить";
+        [RelayCommand]
+        private async Task ActOnNoticeAsync(AppNotice? notice)
+        {
+            if (notice is null) return;
+
+            if (notice.Kind == NoticeKind.Subscription) { _payment.Open(); return; }
+
+            await _notices.ActAsync(notice.Kind);
+        }
+
+        [RelayCommand]
+        private void DismissNotice(AppNotice? notice)
+        {
+            if (notice is null) return;
+            _notices.Dismiss(notice.Kind);
+        }
 
         // ── Commands ──────────────────────────────────────────────────────────
         [RelayCommand]
