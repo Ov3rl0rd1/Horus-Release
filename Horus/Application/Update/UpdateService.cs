@@ -52,8 +52,48 @@ namespace Horus.Application.Update
         private AppVersion _restoredVersion = AppVersion.Zero;
         private DateTimeOffset _restoredFirstSeen;
 
+        /// <summary>
+        /// Consecutive install attempts that failed for a reason the user cannot fix. Feeds
+        /// an exponential backoff, because the previous behaviour — retry every two minutes
+        /// forever — is what turned one impossible install into hours of a VPN that would
+        /// not stay on.
+        /// </summary>
+        private int _installFailures;
+
+        /// <summary>When the backoff allows another attempt. Ignored while parked.</summary>
+        private DateTimeOffset _retryNotBefore = DateTimeOffset.MinValue;
+
+        private UpdateBlocker _blocker;
+
         public AppVersion CurrentVersion { get; }
         public AppVersion? JustUpdatedFrom { get; private set; }
+
+        public UpdateBlocker Blocker => _blocker;
+
+        public event EventHandler? BlockerChanged;
+
+        private void SetBlocker(UpdateBlocker blocker)
+        {
+            if (_blocker == blocker) return;
+            _blocker = blocker;
+            Log($"blocker is now {blocker}");
+            BlockerChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// Lets a parked update try again. The park costs nothing while it waits — no timer,
+        /// no wakeup — so this is the only thing that can un-stick it, and it is called from
+        /// app resume, where a permission change would have happened.
+        /// </summary>
+        public void RetryNow()
+        {
+            if (_blocker == UpdateBlocker.None && _installFailures == 0) return;
+
+            Log("retry requested");
+            _retryNotBefore = DateTimeOffset.MinValue;
+            _installFailures = 0;
+            SetBlocker(UpdateBlocker.None);
+        }
 
         public UpdateService(
             IEnumerable<IUpdateSource> sources,
@@ -114,12 +154,25 @@ namespace Horus.Application.Update
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { Log($"tick failed: {ex.Message}"); }
 
-                    await Task.Delay(UpdatePolicy.NextPoll(_plan), ct).ConfigureAwait(false);
+                    await Task.Delay(NextInterval(), ct).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) { /* stopped */ }
             catch (Exception ex) { Log($"loop died: {ex.Message}"); }
         }
+
+        /// <summary>
+        /// How long to sleep before the next tick.
+        ///
+        /// A parked update drops to the idle interval instead of the two-minute one the
+        /// plan would otherwise ask for. Nothing can change while it is parked except a
+        /// user action outside the app, and that arrives as <see cref="RetryNow"/> on
+        /// resume — so waking every two minutes to look at an unchanged condition is pure
+        /// battery cost. This is the same reasoning as everywhere else here: the event
+        /// exists, so do not poll for it.
+        /// </summary>
+        private TimeSpan NextInterval() =>
+            _blocker != UpdateBlocker.None ? CheckInterval : UpdatePolicy.NextPoll(_plan);
 
         private async Task TickAsync(CancellationToken ct)
         {
@@ -142,6 +195,27 @@ namespace Horus.Application.Update
 
                 Preferences.Set(KeyPendingFile, _readyFile);
                 Log($"{plan.Manifest.Version} downloaded and verified");
+            }
+
+            // Parked. Nothing here retries a blocked install: the condition only changes
+            // when the user does something outside the app, which arrives as RetryNow on
+            // resume. Spinning on it is what produced forty attempts in three hours.
+            if (_blocker != UpdateBlocker.None) return;
+
+            if (now < _retryNotBefore)
+            {
+                Log($"install backing off until {_retryNotBefore:HH:mm:ss}");
+                return;
+            }
+
+            // Before anything destructive. The whole failure this replaces came from
+            // discovering the answer after the tunnel was already down.
+            var readiness = _installer.CheckReadiness();
+            if (readiness != UpdateBlocker.None)
+            {
+                Log($"cannot install: {readiness}; parking until the user resolves it");
+                SetBlocker(readiness);
+                return;
             }
 
             var connected = _vpn.State == VpnState.Connected;
@@ -278,14 +352,20 @@ namespace Horus.Application.Update
 
         private async Task InstallAsync(UpdatePlan plan, string file, bool vpnConnected, CancellationToken ct)
         {
-            // Bring the tunnel down ourselves rather than letting the installer yank the
-            // process out from under it: on Windows that would leave the wintun adapter and
-            // its routes behind, which is exactly the "no internet until reboot" failure
-            // the crash-safety work went in to prevent.
-            if (vpnConnected)
+            // Only where the installer really cannot run alongside a live tunnel — Windows,
+            // whose installer replaces files while a wintun adapter and its routes are up.
+            // On Android the VpnService dies with the process and the system reclaims the
+            // interface, so taking it down first bought nothing and cost the user their VPN
+            // every time an install did not go through.
+            var tookTunnelDown = false;
+            if (vpnConnected && _installer.RequiresTunnelDown)
             {
                 Log("stopping the tunnel before installing");
-                try { await _vpn.DisconnectAsync().ConfigureAwait(false); }
+                try
+                {
+                    await _vpn.DisconnectAsync().ConfigureAwait(false);
+                    tookTunnelDown = true;
+                }
                 catch (Exception ex) { Log($"disconnect before install failed: {ex.Message}"); }
             }
 
@@ -302,8 +382,50 @@ namespace Horus.Application.Update
             }
             catch (Exception ex)
             {
-                Log($"install failed: {ex.Message}");
+                Diag.Error("update", $"install failed: {ex.Message}", ex.ToString());
+                NoteInstallFailure(UpdateBlocker.PlatformRefused);
+
+                // We are still running, so the install did not take. If the tunnel was
+                // stopped for it, put it back — otherwise the user is left with no VPN and
+                // no explanation, which is exactly the reported behaviour.
+                if (tookTunnelDown) await RestoreTunnelAsync().ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// Reports an install that did not happen. Called both from the synchronous failure
+        /// above and, on Android, from the status receiver once the platform has had its say.
+        /// </summary>
+        public void NoteInstallFailure(UpdateBlocker blocker)
+        {
+            _installFailures++;
+
+            if (blocker == UpdateBlocker.InstallPermission)
+            {
+                // Nothing to retry: it stays parked until the user grants it.
+                SetBlocker(blocker);
+                return;
+            }
+
+            // Exponential, capped. The point is that a permanently impossible install costs
+            // one attempt an hour rather than thirty an hour.
+            var minutes = Math.Min(60, 2 * Math.Pow(2, Math.Min(_installFailures - 1, 5)));
+            _retryNotBefore = DateTimeOffset.UtcNow.AddMinutes(minutes);
+            Log($"install attempt {_installFailures} failed; next no earlier than +{minutes:F0} min");
+
+            // Repeatedly impossible is worth telling the user about, once.
+            if (_installFailures == 3) SetBlocker(blocker);
+        }
+
+        /// <summary>Brings the tunnel back after an install that did not happen.</summary>
+        private async Task RestoreTunnelAsync()
+        {
+            try
+            {
+                Log("install did not proceed — restoring the tunnel");
+                await _vpn.TryRestoreOrAutoConnectAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex) { Diag.Warn("update", $"could not restore the tunnel: {ex.Message}"); }
         }
 
         /// <summary>

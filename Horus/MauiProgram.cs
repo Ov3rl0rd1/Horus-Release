@@ -99,12 +99,17 @@ namespace Horus
                 .AddSingleton<IUpdateSource, SiteReleaseSource>()
                 .AddSingleton<IUpdateService, UpdateService>();
 
+            // Home screen notices. Entirely event-driven: it recomputes on account changes,
+            // on a permission re-read at resume, and when the updater reports it is parked.
+            services.AddSingleton<INoticeService, Horus.Application.Notices.NoticeService>();
+
             // ── Platform Services ────────────────────────────────────────────
 #if ANDROID
             services
                 .AddSingleton<IVpnPlatformService, AndroidVpnService>()
                 .AddSingleton<ISplitTunnelingService, AndroidSplitTunnelingService>()
                 .AddSingleton<INetworkMonitor, AndroidNetworkMonitor>()
+                .AddSingleton<ISystemPermissions, AndroidSystemPermissions>()
                 .AddSingleton<IUserNotifier, Platforms.Android.Update.AndroidUserNotifier>()
                 .AddSingleton<IDeviceConditions, Platforms.Android.Update.AndroidDeviceConditions>()
                 .AddSingleton<IUpdateInstaller, Platforms.Android.Update.AndroidUpdateInstaller>();
@@ -113,6 +118,7 @@ namespace Horus
                 .AddSingleton<IVpnPlatformService, WindowsVpnService>()
                 .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>()
                 .AddSingleton<INetworkMonitor, WindowsNetworkMonitor>()
+                .AddSingleton<ISystemPermissions, Application.PlatformStubs.StubSystemPermissions>()
                 .AddSingleton<IPublisherTrustService, WindowsPublisherTrustService>()
                 .AddSingleton<IUserNotifier, Platforms.Windows.Update.WindowsUserNotifier>()
                 .AddSingleton<IDeviceConditions, Platforms.Windows.Update.WindowsDeviceConditions>()
@@ -131,6 +137,7 @@ namespace Horus
             // Store platforms update themselves; there is nothing here to replace.
             services
                 .AddSingleton<INetworkMonitor, Application.PlatformStubs.StubNetworkMonitor>()
+                .AddSingleton<ISystemPermissions, Application.PlatformStubs.StubSystemPermissions>()
                 .AddSingleton<IUserNotifier, Application.PlatformStubs.StubUserNotifier>()
                 .AddSingleton<IDeviceConditions, Application.PlatformStubs.StubDeviceConditions>()
                 .AddSingleton<IUpdateInstaller, Application.PlatformStubs.StubUpdateInstaller>();

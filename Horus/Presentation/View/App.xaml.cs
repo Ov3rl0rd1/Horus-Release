@@ -27,6 +27,9 @@ namespace Horus
             // runs while the window is up: nothing here is worth waking a sleeping phone,
             // and the tunnel does not depend on it.
             var accounts = _services.GetRequiredService<IAccountSync>();
+            var permissions = _services.GetRequiredService<ISystemPermissions>();
+            var notices = _services.GetRequiredService<INoticeService>();
+            var updates = _services.GetRequiredService<IUpdateService>();
 
             window.Resumed += (_, __) =>
             {
@@ -35,6 +38,20 @@ namespace Horus
                 // whether anybody can.
                 AppVisibility.SetForeground();
                 accounts.OnForeground();
+
+                // Resume is the only signal Android gives for "the user may have changed a
+                // permission". There is no broadcast for granting "install unknown apps",
+                // so the alternative would be polling — which on a battery-sensitive VPN is
+                // not an alternative at all. The user leaves for Settings and comes back,
+                // and that round trip ends here.
+                permissions.Refresh();
+                notices.Refresh();
+
+                // Order matters: the re-read above has to land first, so that a parked
+                // update is released only once the permission it was waiting for is
+                // actually there. A parked update costs nothing while it waits — no timer,
+                // no wakeup — so this is the only thing that ever un-sticks it.
+                updates.RetryNow();
             };
 
             window.Stopped += (_, __) =>

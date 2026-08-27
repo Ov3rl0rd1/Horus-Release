@@ -23,6 +23,37 @@ namespace Horus.Domain.Models
     /// <summary>Where a manifest came from. Recorded in diagnostics, never shown to users.</summary>
     public enum UpdateOrigin { GitHub, Site }
 
+    /// <summary>
+    /// Why an update that is downloaded and verified still cannot be applied.
+    ///
+    /// This exists because the updater used to discover the answer only <i>after</i> taking
+    /// the tunnel down for an install that could never succeed — and then retried every two
+    /// minutes. On one device that meant the VPN switching itself off seven times in a row,
+    /// each time the user turned it back on, for three and a half hours, with nothing said
+    /// anywhere about why.
+    ///
+    /// A blocker is checked before anything destructive happens, it parks the update instead
+    /// of retrying, and it is what puts an explanation in front of the user.
+    /// </summary>
+    public enum UpdateBlocker
+    {
+        /// <summary>Nothing in the way.</summary>
+        None = 0,
+
+        /// <summary>
+        /// Android will not let this app install packages. Clears only when the user grants
+        /// it, which is observed on the next app resume — never polled for.
+        /// </summary>
+        InstallPermission,
+
+        /// <summary>
+        /// The platform refused for a reason we cannot resolve — an OEM policy, or a
+        /// signature mismatch. Retried on a long backoff rather than parked, since nothing
+        /// the user does here is known to help.
+        /// </summary>
+        PlatformRefused
+    }
+
     /// <summary>One downloadable file in a release.</summary>
     /// <param name="Name">File name as published, e.g. <c>Horus-0.1.0-win-x64.msi</c>.</param>
     /// <param name="Url">Absolute download URL.</param>

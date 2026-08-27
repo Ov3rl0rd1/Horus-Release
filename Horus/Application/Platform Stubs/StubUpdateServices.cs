@@ -14,6 +14,9 @@ namespace Horus.Application.PlatformStubs
         public bool IsSupported => false;
         public string? AssetSuffix => null;
         public bool TerminatesProcess => false;
+        public bool RequiresTunnelDown => false;
+
+        public UpdateBlocker CheckReadiness() => UpdateBlocker.PlatformRefused;
 
         public Task InstallAsync(string payloadPath, AppVersion version, CancellationToken ct) =>
             throw new NotSupportedException("Self-update is not available on this platform.");
