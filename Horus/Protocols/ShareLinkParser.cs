@@ -65,6 +65,13 @@ namespace Horus.Protocols
             var authority = rest[(at + 1)..];
 
             var (host, port, portRange) = ParseAuthority(authority, link);
+            var parameters = ParseQuery(query);
+
+            // The hop range moved out of the authority and into the query. Both forms are
+            // accepted, and the authority still wins: a link that carries it in both places
+            // is self-consistent by construction, and endpoints cached from before the
+            // change are still in the old shape for up to 24 hours after a server update.
+            portRange ??= ReadHopRange(parameters);
 
             return new ShareLink
             {
@@ -74,9 +81,24 @@ namespace Horus.Protocols
                 Port = port,
                 PortRange = portRange,
                 Tag = tag,
-                Params = ParseQuery(query)
+                Params = parameters
             };
         }
+
+        /// <summary>
+        /// Reads the Hysteria2 port-hopping range from <c>?mport=</c>.
+        ///
+        /// The API used to render the range inside the authority
+        /// (<c>host:9443,31111:49999/?…</c>) and now renders it as a query parameter
+        /// (<c>host:9443?…&amp;mport=31111-49999</c>). Only the spelling changed — the value
+        /// means the same thing and goes to the same place, <c>quicParams.udpHop</c>.
+        ///
+        /// Normalised through the same helper as the authority form, so a colon-separated
+        /// range arriving here would be corrected rather than reaching the core and failing
+        /// every dial with <c>too many colons in address</c>.
+        /// </summary>
+        private static string? ReadHopRange(IReadOnlyDictionary<string, string> parameters) =>
+            parameters.TryGetValue("mport", out var raw) ? NormalizePortRange(raw) : null;
 
         /// <summary>
         /// Checks the handshake parameters a link must carry for its protocol, and throws

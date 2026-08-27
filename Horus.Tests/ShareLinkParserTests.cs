@@ -22,6 +22,14 @@ public class ShareLinkParserTests
         $"hysteria2://{Uuid}@fi1.horus.dev:8443,20000-30000/" +
         "?sni=www.microsoft.com&obfs=salamander&obfs-password=s3cr3t-obfs#MainHystria";
 
+    /// <summary>
+    /// The shape HorusAPI renders now: no path segment, no range in the authority, and the
+    /// hop ports as <c>mport</c> sitting between the other query parameters.
+    /// </summary>
+    private const string HysteriaLinkWithMport =
+        $"hysteria2://{Uuid}@ch1.horusping.com:9443" +
+        "?sni=ch1.horusping.com&obfs=salamander&mport=31111-49999&obfs-password=s3cr3t-obfs#CH1";
+
     [Fact]
     public void Parses_vless_reality_link()
     {
@@ -55,6 +63,36 @@ public class ShareLinkParserTests
         Assert.Equal("salamander", link.Obfs);
         Assert.Equal("s3cr3t-obfs", link.ObfsPassword);
         Assert.Equal("MainHystria", link.Tag);
+    }
+
+    [Fact]
+    public void Parses_hysteria2_link_with_the_range_in_the_query()
+    {
+        // The API moved the hop range out of the authority and into ?mport=. Everything
+        // else has to survive that move — in particular obfs-password, which now arrives
+        // after mport rather than before it.
+        var link = ShareLinkParser.Parse(HysteriaLinkWithMport);
+
+        Assert.Equal(ProtocolType.Hysteria2, link.Protocol);
+        Assert.Equal(Uuid, link.Credential);
+        Assert.Equal("ch1.horusping.com", link.Host);
+        Assert.Equal(9443, link.Port);
+        Assert.Equal("31111-49999", link.PortRange);
+        Assert.Equal("ch1.horusping.com", link.Sni);
+        Assert.Equal("salamander", link.Obfs);
+        Assert.Equal("s3cr3t-obfs", link.ObfsPassword);
+        Assert.Equal("CH1", link.Tag);
+    }
+
+    [Fact]
+    public void A_link_without_mport_has_no_range()
+    {
+        // Absence must stay absence: a null range is what tells the config builder to omit
+        // udpHop entirely, and an empty string there would render as a malformed port list.
+        var link = ShareLinkParser.Parse(
+            $"hysteria2://{Uuid}@ch1.horusping.com:9443?sni=s&obfs=salamander&obfs-password=p#CH1");
+
+        Assert.Null(link.PortRange);
     }
 
     [Theory]
@@ -108,9 +146,13 @@ public class ShareLinkParserTests
     }
 
     [Theory]
+    // In the authority, the shape the API used to render.
     [InlineData("hysteria2://pw@h.example:8443,31111:49999/?sni=s#t", 8443, "31111-49999")]
     [InlineData("hysteria2://pw@h.example:8443,31111-49999/?sni=s#t", 8443, "31111-49999")]
     [InlineData("hysteria2://pw@h.example:20000-50000?sni=s#t", 20000, "20000-50000")]
+    // In the query, the shape it renders now. Same value, same destination.
+    [InlineData("hysteria2://pw@h.example:9443?sni=s&mport=31111-49999#t", 9443, "31111-49999")]
+    [InlineData("hysteria2://pw@h.example:9443?sni=s&mport=31111:49999#t", 9443, "31111-49999")]
     public void Hop_range_is_normalised_to_the_hyphen_form(string raw, int port, string range)
     {
         // HorusAPI stores the range colon-separated. The core's PortList only accepts a
