@@ -1,30 +1,32 @@
 using Horus.Domain.Models;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Horus.Protocols
 {
     /// <summary>
-    /// Renders an xray-core <c>config.json</c> from a parsed share link.
+    /// Wraps the node's outbound in a runnable xray-core <c>config.json</c>.
     ///
     /// The shape is one SOCKS5 inbound (dialled by the platform TUN bridge) plus three
-    /// outbounds — the selected proxy, <c>freedom</c> and <c>blackhole</c> — with routing
+    /// outbounds — the node's proxy, <c>freedom</c> and <c>blackhole</c> — with routing
     /// that keeps private/loopback ranges off the tunnel.
     ///
-    /// Routing deliberately avoids <c>geoip:</c> / <c>geosite:</c> predicates so xray never
-    /// needs the geoip.dat / geosite.dat assets to be present next to the binary.
+    /// <para><b>This no longer builds the proxy outbound.</b> The API used to hand over
+    /// share links and this reconstructed an outbound per protocol, which meant the app
+    /// carried its own model of the core's schema and could drift from it — the
+    /// <c>hysteria</c>-versus-<c>hysteria2</c> transport name and the finalmask layout were
+    /// both found that way. The node now ships the outbound it wants used, so all that is
+    /// left is the envelope, and none of the envelope depends on the protocol.</para>
+    ///
+    /// Geo predicates are emitted only when the caller confirms the .dat assets exist;
+    /// otherwise routing stays free of them so no assets are needed.
     /// </summary>
     public static class XrayConfigBuilder
     {
         public const string ProxyTag = "proxy";
         public const string DirectTag = "direct";
         public const string BlockTag = "block";
-
-        /// <summary>Hop interval used when the share link doesn't specify one.</summary>
-        private const int DefaultHopIntervalSeconds = 30;
-
-        /// <summary>The core rejects a non-zero hop interval below this.</summary>
-        private const int MinHopIntervalSeconds = 5;
 
         /// <summary>
         /// Multicast and broadcast, which are dropped rather than forwarded anywhere.
@@ -43,13 +45,14 @@ namespace Horus.Protocols
             "224.0.0.0/4", "255.255.255.255/32", "ff00::/8"
         ];
 
-        /// <summary>Unicast ranges that must never be routed into the tunnel.</summary>
-        private static readonly string[] DirectRanges =
-        [
-            "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-            "169.254.0.0/16",
-            "::1/128", "fc00::/7", "fe80::/10"
-        ];
+        /// <summary>
+        /// Unicast ranges that must never be routed into the tunnel.
+        ///
+        /// Shared with the platform tunnel services through <see cref="LocalNetworks"/>:
+        /// the core's routing table and the TUN's own routes have to agree about what is
+        /// local, and keeping two lists in two files is how they stop agreeing.
+        /// </summary>
+        private static readonly string[] DirectRanges = LocalNetworks.Direct;
 
         private static readonly JsonSerializerOptions Options = new()
         {
@@ -145,6 +148,8 @@ namespace Horus.Protocols
                 }
             };
 
+            AddGeoRules(rules, cfg.Geo);
+
             rules.Add(new Dictionary<string, object?>
             {
                 ["type"] = "field",
@@ -153,6 +158,63 @@ namespace Horus.Protocols
             });
 
             return [.. rules];
+        }
+
+        /// <summary>
+        /// Emits the geo-category rules, exceptions first.
+        ///
+        /// <para><b>Order is the whole design.</b> A geo set is tens of thousands of entries
+        /// and cannot be edited, so a user exception can only win by being matched earlier.
+        /// Exceptions therefore come first and send their targets to the proxy; the category
+        /// rules follow and send everything else in the set out direct.</para>
+        ///
+        /// <para>Nothing is emitted unless the caller has confirmed the <c>.dat</c> files are
+        /// installed. Naming a category the core cannot resolve is not a soft failure — the
+        /// config is rejected and the tunnel never comes up.</para>
+        /// </summary>
+        private static void AddGeoRules(List<object> rules, GeoRoutingOptions geo)
+        {
+            if (!geo.HasAnything) return;
+
+            if (geo.ProxyDomainExceptions.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["domain"] = geo.ProxyDomainExceptions,
+                    ["outboundTag"] = ProxyTag
+                });
+            }
+
+            if (geo.ProxyIpExceptions.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["ip"] = geo.ProxyIpExceptions,
+                    ["outboundTag"] = ProxyTag
+                });
+            }
+
+            if (geo.DirectSites.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["domain"] = geo.DirectSites,
+                    ["outboundTag"] = DirectTag
+                });
+            }
+
+            if (geo.DirectIps.Count > 0)
+            {
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["ip"] = geo.DirectIps,
+                    ["outboundTag"] = DirectTag
+                });
+            }
         }
 
         /// <summary>
@@ -207,249 +269,28 @@ namespace Horus.Protocols
 
         // ── Outbounds ────────────────────────────────────────────────────────
 
-        private static Dictionary<string, object?> BuildProxyOutbound(XrayConfig cfg) =>
-            cfg.Link.Protocol switch
-            {
-                ProtocolType.Vless => BuildVless(cfg),
-                ProtocolType.Hysteria2 => BuildHysteria(cfg),
-                ProtocolType.OlcRtc => BuildOlcRtc(cfg),
-                _ => throw new NotSupportedException(
-                    $"No xray outbound generator for {cfg.Link.Protocol}.")
-            };
-
-        private static Dictionary<string, object?> BuildVless(XrayConfig cfg)
-        {
-            var link = cfg.Link;
-
-            var user = new Dictionary<string, object?>
-            {
-                ["id"] = link.Credential,
-                ["encryption"] = link.Encryption,
-                ["level"] = 0
-            };
-            if (!string.IsNullOrEmpty(link.Flow)) user["flow"] = link.Flow;
-
-            return new Dictionary<string, object?>
-            {
-                ["tag"] = ProxyTag,
-                ["protocol"] = "vless",
-                ["settings"] = new Dictionary<string, object?>
-                {
-                    ["vnext"] = new object[]
-                    {
-                        new Dictionary<string, object?>
-                        {
-                            // Dial the resolved IP; REALITY's serverName still carries the
-                            // hostname, so the SNI presented on the wire is unchanged.
-                            ["address"] = link.DialAddress,
-                            ["port"] = link.Port,
-                            ["users"] = new object[] { user }
-                        }
-                    }
-                },
-                ["streamSettings"] = BuildStreamSettings(cfg)
-            };
-        }
-
         /// <summary>
-        /// Hysteria2 outbound, as the Horus xray fork defines it. This is <b>not</b> the
-        /// sing-box / mihomo shape, and upstream xray-core has no hysteria at all — the
-        /// names below come from the fork's own conf structs:
+        /// The node's own outbound, with only the routing tag forced.
         ///
-        /// <list type="bullet">
-        /// <item>the proxy is registered as <c>hysteria</c>, not <c>hysteria2</c>
-        /// (<c>proxy/hysteria</c>), with the version carried in <c>settings.version</c>;</item>
-        /// <item>the stream transport is likewise <c>hysteria</c>
-        /// (<c>infra/conf.TransportProtocol</c> maps only that spelling);</item>
-        /// <item>the auth password lives on the <b>transport</b>
-        /// (<c>HysteriaConfig.Auth</c> → <c>hysteriaSettings.auth</c>), not on the outbound;</item>
-        /// <item>salamander obfuscation and UDP port hopping are <b>finalmask</b> features,
-        /// not hysteria ones — <c>HysteriaConfig.Build</c> explicitly warns that
-        /// "congestion &amp; up &amp; down &amp; udphop move to finalmask/quicParams".</item>
-        /// </list>
-        /// </summary>
-        private static Dictionary<string, object?> BuildHysteria(XrayConfig cfg)
-        {
-            var link = cfg.Link;
-
-            var tls = new Dictionary<string, object?>
-            {
-                // The node domain, deliberately NOT the link's sni. Hysteria2 here runs
-                // behind a real Let's Encrypt certificate issued for the node hostname,
-                // while the link's sni carries the REALITY camouflage domain — presenting
-                // that name fails certificate validation before auth is ever attempted,
-                // and the only symptom is a silent handshake timeout.
-                // Trade-off: a deployment whose HY2 certificate covers some other name
-                // would need this to honour link.Sni instead.
-                ["serverName"] = link.Host,
-                ["allowInsecure"] = cfg.AllowInsecure,
-                // The node's listener negotiates h3; offering nothing fails the handshake.
-                ["alpn"] = link.Alpn.Count > 0 ? link.Alpn : new[] { "h3" }
-            };
-
-            var stream = new Dictionary<string, object?>
-            {
-                ["network"] = "hysteria",
-                ["security"] = "tls",
-                ["tlsSettings"] = tls,
-                ["hysteriaSettings"] = new Dictionary<string, object?>
-                {
-                    ["version"] = 2,           // HysteriaConfig.Build rejects anything else
-                    ["auth"] = link.Credential
-                }
-            };
-
-            var finalmask = new Dictionary<string, object?>();
-
-            if (!string.IsNullOrEmpty(link.Obfs))
-            {
-                // Mask entries are {type, settings} — see conf's udpmaskLoader.
-                finalmask["udp"] = new object[]
-                {
-                    new Dictionary<string, object?>
-                    {
-                        ["type"] = link.Obfs,
-                        ["settings"] = new Dictionary<string, object?>
-                        {
-                            ["password"] = link.ObfsPassword ?? string.Empty
-                        }
-                    }
-                };
-            }
-
-            if (!string.IsNullOrEmpty(link.PortRange))
-            {
-                var udpHop = new Dictionary<string, object?> { ["ports"] = link.PortRange };
-
-                // The core errors on a non-zero interval below 5 seconds; omitting it
-                // lets the core pick its own default.
-                var interval = link.HopInterval ?? DefaultHopIntervalSeconds;
-                if (interval >= MinHopIntervalSeconds) udpHop["interval"] = interval;
-
-                finalmask["quicParams"] = new Dictionary<string, object?> { ["udpHop"] = udpHop };
-            }
-
-            if (finalmask.Count > 0) stream["finalmask"] = finalmask;
-
-            return new Dictionary<string, object?>
-            {
-                ["tag"] = ProxyTag,
-                ["protocol"] = "hysteria",
-                ["settings"] = new Dictionary<string, object?>
-                {
-                    ["version"] = 2,
-                    ["address"] = link.DialAddress,
-                    ["port"] = link.Port
-                },
-                ["streamSettings"] = stream
-            };
-        }
-
-        /// <summary>
-        /// olcRTC outbound. Keys follow the fork's own sample client config: the outbound
-        /// is signalling-based, so it carries a room rather than an address, and it has no
-        /// streamSettings at all.
+        /// <para><b>Nothing is generated here any more.</b> This used to hold one builder
+        /// per protocol — VLESS, Hysteria, olcRTC — each reconstructing an outbound from a
+        /// parsed share link, and each a place where the app's idea of the core's schema
+        /// could drift from the core's. The node now ships the outbound it actually wants
+        /// used, so the only thing left to do is make sure it carries the tag the routing
+        /// rules point at.</para>
         ///
-        /// The four values come from the node's own registration
-        /// (<c>olcrtc_provider</c>, <c>_transport</c>, <c>_room_id</c>, <c>_room_key</c>)
-        /// and reach the app as a structured block rather than a URI —
-        /// <see cref="ShareLinkParser.FromOlcRtc"/> projects it onto a link so everything
-        /// downstream sees one shape.
-        ///
-        /// <para>The defaults are what the node registers when it has nothing better to
-        /// say. They are kept because a node that announces a room but omits a transport
-        /// should still be dialable, and getting them wrong fails loudly at handshake
-        /// rather than silently carrying nothing.</para>
+        /// <para>The tag is overwritten rather than trusted: the profiles do set
+        /// <c>"tag": "proxy"</c>, but a node that forgets would produce a config where every
+        /// routing rule points at an outbound that does not exist, and xray answers that
+        /// with a startup failure rather than anything diagnosable.</para>
         /// </summary>
-        private static Dictionary<string, object?> BuildOlcRtc(XrayConfig cfg)
+        private static JsonNode BuildProxyOutbound(XrayConfig cfg)
         {
-            var link = cfg.Link;
+            var outbound = cfg.Outbound.DeepClone();
 
-            var settings = new Dictionary<string, object?>
-            {
-                ["provider"] = link.Params.TryGetValue("provider", out var p) && !string.IsNullOrWhiteSpace(p)
-                    ? p : "wbstream",
-                ["transport"] = link.Params.TryGetValue("transport", out var t) && !string.IsNullOrWhiteSpace(t)
-                    ? t : "vp8channel",
-                ["roomId"] = link.Params.TryGetValue("roomid", out var r) && !string.IsNullOrWhiteSpace(r)
-                    ? r : link.Host,
-                ["key"] = link.Credential
-            };
+            if (outbound is JsonObject obj) obj["tag"] = ProxyTag;
 
-            // The account's stable identity on the node. Sent when the API supplied it so
-            // the node's telemetry can attribute the session; older nodes ignore it.
-            if (link.Params.TryGetValue("uuid", out var uuid) && !string.IsNullOrWhiteSpace(uuid))
-                settings["uuid"] = uuid;
-
-            if (link.Params.TryGetValue("dnsServer", out var dns))
-                settings["dnsServer"] = dns;
-
-            return new Dictionary<string, object?>
-            {
-                ["tag"] = ProxyTag,
-                ["protocol"] = "olcrtc",
-                ["settings"] = settings
-            };
-        }
-
-        // ── Stream settings ──────────────────────────────────────────────────
-
-        /// <summary>
-        /// Stream settings for the link-driven transports (VLESS). Hysteria builds its own,
-        /// because its transport, security and masking are all fixed by the protocol rather
-        /// than taken from the link.
-        /// </summary>
-        private static Dictionary<string, object?> BuildStreamSettings(XrayConfig cfg)
-        {
-            var link = cfg.Link;
-            var network = link.Network;
-            var security = link.Security;
-
-            var stream = new Dictionary<string, object?>
-            {
-                ["network"] = network,
-                ["security"] = security
-            };
-
-            // "xhttp" is accepted as an alias for splithttp, but its settings object is
-            // still required — a bare network name yields a transport with no path and the
-            // node rejects the request.
-            if (network.Equals("xhttp", StringComparison.OrdinalIgnoreCase)
-                || network.Equals("splithttp", StringComparison.OrdinalIgnoreCase))
-            {
-                var xhttp = new Dictionary<string, object?>
-                {
-                    ["path"] = link.Params.TryGetValue("path", out var path) ? path : "/",
-                    ["mode"] = link.Params.TryGetValue("mode", out var mode) ? mode : "auto"
-                };
-                if (link.Params.TryGetValue("host", out var host) && host.Length > 0)
-                    xhttp["host"] = host;
-
-                stream["xhttpSettings"] = xhttp;
-            }
-
-            if (link.IsReality)
-            {
-                stream["realitySettings"] = new Dictionary<string, object?>
-                {
-                    ["serverName"] = link.Sni ?? link.Host,
-                    ["fingerprint"] = link.Fingerprint,
-                    ["publicKey"] = link.PublicKey ?? string.Empty,
-                    ["shortId"] = link.ShortId ?? string.Empty,
-                    ["spiderX"] = link.SpiderX ?? "/"
-                };
-            }
-            else if (string.Equals(security, "tls", StringComparison.OrdinalIgnoreCase))
-            {
-                stream["tlsSettings"] = new Dictionary<string, object?>
-                {
-                    ["serverName"] = link.Sni ?? link.Host,
-                    ["fingerprint"] = link.Fingerprint,
-                    ["allowInsecure"] = cfg.AllowInsecure
-                };
-            }
-
-            return stream;
+            return outbound;
         }
     }
 }

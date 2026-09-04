@@ -365,6 +365,8 @@ namespace Horus.Platforms.Android
                     // `ipv6: fc00::1` hev-socks5-tunnel is already configured with.
                     builder.AddAddress("fc00::1", 128);
                     builder.AddRoute("::", 0);
+
+                    ExcludeLocalNetworks(builder);
                 }
 
                 ApplySplitTunneling(builder, options, self);
@@ -426,6 +428,56 @@ namespace Horus.Platforms.Android
             && a.Metered == b.Metered
             && (a.DnsServers ?? []).SequenceEqual(b.DnsServers ?? [])
             && (a.BypassApps ?? []).SequenceEqual(b.BypassApps ?? []);
+
+        /// <summary>
+        /// Keeps the device's own network out of the tunnel: printers, NAS boxes, the
+        /// router's admin page, anything on the same Wi-Fi.
+        ///
+        /// <para>The core already routes these ranges through <c>freedom</c>, so they were
+        /// never <i>proxied</i> — but they still entered the TUN, were read by the bridge and
+        /// left again from this app's own socket. The destination is reached, and the source
+        /// address is wrong: a device that answers the sender sees a connection from us
+        /// rather than from the app that made it, which breaks same-subnet checks and any
+        /// protocol that hands back an address. Excluding the route avoids the round trip and
+        /// keeps the source intact.</para>
+        ///
+        /// <para><c>excludeRoute</c> is API 33+. Below that the whole thing is skipped rather
+        /// than emulated: the alternative is enumerating the complement of these ranges as
+        /// explicit routes, which is a large table that must be exactly right, and getting it
+        /// subtly wrong leaks real traffic outside the tunnel. The old behaviour — reaching
+        /// the LAN via <c>freedom</c> — is not broken, only less tidy, so a device that
+        /// cannot do this keeps working.</para>
+        /// </summary>
+        private static void ExcludeLocalNetworks(Builder builder)
+        {
+            if (!OperatingSystem.IsAndroidVersionAtLeast(33))
+            {
+                Diag.Info("tun", "LAN stays inside the tunnel: excludeRoute needs API 33+");
+                return;
+            }
+
+            var excluded = 0;
+
+            foreach (var cidr in Protocols.LocalNetworks.ExcludedFromTunnel
+                         .Concat(Protocols.LocalNetworks.ExcludedFromTunnelV6))
+            {
+                var (address, prefix) = Protocols.LocalNetworks.Split(cidr);
+                try
+                {
+                    builder.ExcludeRoute(new global::Android.Net.IpPrefix(
+                        Java.Net.InetAddress.GetByName(address)!, prefix));
+                    excluded++;
+                }
+                catch (Exception ex)
+                {
+                    // A refused prefix must not fail the connect: the tunnel still works,
+                    // it just carries this range like it did before.
+                    Diag.Warn("tun", $"could not exclude {cidr}: {ex.Message}");
+                }
+            }
+
+            Diag.Info("tun", $"excluded {excluded} local ranges from the tunnel");
+        }
 
         /// <summary>
         /// Applies split tunneling, and — far more importantly — keeps this app's own UID
@@ -536,7 +588,39 @@ namespace Horus.Platforms.Android
                 .SetContentText(text)
                 .SetSmallIcon(Resource.Drawable.appicon_notif)
                 .SetOngoing(true);
+
+            // Without a content intent the notification is inert: a permanent row in the
+            // shade that does nothing when tapped. It is the most visible part of the app
+            // while the VPN is on, so it is also the most natural way back into it.
+            if (BuildOpenAppIntent() is { } tap) builder.SetContentIntent(tap);
+
             return builder.Build();
+        }
+
+        /// <summary>
+        /// A pending intent that brings the app to the front.
+        ///
+        /// <c>ClearTop | SingleTop</c> rather than a fresh launch so that tapping it while
+        /// the app is already open returns to the existing screen instead of restarting the
+        /// activity and losing whatever the user was doing.
+        /// </summary>
+        private PendingIntent? BuildOpenAppIntent()
+        {
+            try
+            {
+                var launch = PackageManager?.GetLaunchIntentForPackage(PackageName!);
+                if (launch is null) return null;
+
+                launch.AddFlags(ActivityFlags.NewTask | ActivityFlags.ClearTop | ActivityFlags.SingleTop);
+
+                return PendingIntent.GetActivity(
+                    this, 0, launch, PendingIntentFlags.UpdateCurrent | PendingIntentFlags.Immutable);
+            }
+            catch (Exception ex)
+            {
+                Diag.Warn("tun", $"could not build the notification tap intent: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Horus.Domain.Models;
 using Horus.Protocols;
 using Xunit;
@@ -8,18 +9,48 @@ namespace Horus.Tests;
 /// <summary>
 /// Golden assertions on the generated xray config.
 ///
-/// <c>BuildHysteria2</c> in particular targets the custom core's own schema and will be
-/// edited again — probably on a device, under time pressure. These tests are what will
-/// say so on the day that edit breaks the VLESS path instead.
+/// <para><b>What these cover changed with the API.</b> The app used to build the proxy
+/// outbound itself from a share link, and most of this file checked that reconstruction —
+/// the fork's <c>hysteria</c> transport name, the finalmask layout, REALITY fields. The
+/// node ships the outbound now, so none of that is the app's to get wrong; what is left,
+/// and what these test, is the envelope the app still owns: the SOCKS inbound the bridge
+/// dials, the resolvers, and the routing that keeps local traffic off the tunnel.</para>
 /// </summary>
 public class XrayConfigBuilderTests
 {
-    private static JsonElement Build(string shareLink, Action<XrayConfig>? configure = null)
+    /// <summary>A minimal but realistic node outbound, in the shape the profiles emit.</summary>
+    private const string NodeOutbound = """
+        {
+          "tag": "proxy",
+          "protocol": "vless",
+          "settings": {
+            "vnext": [ { "address": "1.2.3.4", "port": 443,
+                         "users": [ { "id": "uid-1", "encryption": "none", "flow": "xtls-rprx-vision" } ] } ]
+          },
+          "streamSettings": {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": { "serverName": "www.microsoft.com", "publicKey": "K", "shortId": "S" }
+          }
+        }
+        """;
+
+    private static XrayConfig Config(string outboundJson = NodeOutbound, Action<XrayConfig>? configure = null)
     {
-        var cfg = new XrayConfig { Link = ShareLinkParser.Parse(shareLink) };
+        var cfg = new XrayConfig
+        {
+            Outbound = JsonNode.Parse(outboundJson)!,
+            Offer = "vless-reality",
+            Label = "VLESS REALITY",
+            ProtocolName = "vless",
+            NodeAddress = "1.2.3.4"
+        };
         configure?.Invoke(cfg);
-        return JsonDocument.Parse(cfg.ToConfig()).RootElement.Clone();
+        return cfg;
     }
+
+    private static JsonElement Build(Action<XrayConfig>? configure = null) =>
+        JsonDocument.Parse(Config(configure: configure).ToConfig()).RootElement.Clone();
 
     private static JsonElement ProxyOutbound(JsonElement root)
     {
@@ -30,184 +61,144 @@ public class XrayConfigBuilderTests
         throw new Xunit.Sdk.XunitException("No outbound tagged 'proxy'.");
     }
 
-    private const string VlessLink =
-        "vless://uid-1@fi1.horus.dev:443?encryption=none&flow=xtls-rprx-vision&security=reality" +
-        "&sni=www.microsoft.com&fp=chrome&pbk=PUBKEY&sid=SHORTID&type=tcp#MainVLESS";
+    // ── The node's outbound is passed through ───────────────────────────────
 
     [Fact]
-    public void Vless_outbound_carries_the_reality_parameters()
+    public void The_nodes_outbound_is_used_verbatim()
     {
-        var proxy = ProxyOutbound(Build(VlessLink));
+        // The whole point of the new contract: whatever the node sent is what runs. If the
+        // app ever starts rewriting fields here, a node can no longer offer a protocol this
+        // build has not heard of — which is the property the API was restructured to get.
+        var proxy = ProxyOutbound(Build());
 
         Assert.Equal("vless", proxy.GetProperty("protocol").GetString());
 
-        var user = proxy.GetProperty("settings").GetProperty("vnext")[0]
-                        .GetProperty("users")[0];
-        Assert.Equal("uid-1", user.GetProperty("id").GetString());
-        Assert.Equal("none", user.GetProperty("encryption").GetString());
-        Assert.Equal("xtls-rprx-vision", user.GetProperty("flow").GetString());
+        var vnext = proxy.GetProperty("settings").GetProperty("vnext")[0];
+        Assert.Equal("1.2.3.4", vnext.GetProperty("address").GetString());
+        Assert.Equal(443, vnext.GetProperty("port").GetInt32());
 
-        var stream = proxy.GetProperty("streamSettings");
-        Assert.Equal("reality", stream.GetProperty("security").GetString());
-
-        var reality = stream.GetProperty("realitySettings");
+        var reality = proxy.GetProperty("streamSettings").GetProperty("realitySettings");
         Assert.Equal("www.microsoft.com", reality.GetProperty("serverName").GetString());
-        Assert.Equal("PUBKEY", reality.GetProperty("publicKey").GetString());
-        Assert.Equal("SHORTID", reality.GetProperty("shortId").GetString());
-        Assert.Equal("chrome", reality.GetProperty("fingerprint").GetString());
     }
 
     [Fact]
-    public void Xhttp_vless_link_emits_xhttpSettings()
+    public void An_unknown_protocol_still_produces_a_config()
     {
-        // The node also publishes an xhttp/REALITY endpoint. "xhttp" is only an alias for
-        // splithttp — the settings object is still required, and without it the transport
-        // has no path to request.
-        var stream = ProxyOutbound(Build(
-                "vless://uid@h.example:8443?encryption=none&security=reality&sni=s.example" +
-                "&fp=randomized&pbk=K&sid=S&type=xhttp&path=%2Fapi%2Fv1%2Fupdates&mode=stream-one#x"))
-            .GetProperty("streamSettings");
+        // A node offering something released after this build must still work.
+        var proxy = ProxyOutbound(Build(cfg => cfg.Outbound =
+            JsonNode.Parse("""{"protocol":"something-new","settings":{"address":"1.2.3.4"}}""")!));
 
-        Assert.Equal("xhttp", stream.GetProperty("network").GetString());
-
-        var xhttp = stream.GetProperty("xhttpSettings");
-        Assert.Equal("/api/v1/updates", xhttp.GetProperty("path").GetString());
-        Assert.Equal("stream-one", xhttp.GetProperty("mode").GetString());
+        Assert.Equal("something-new", proxy.GetProperty("protocol").GetString());
     }
 
     [Fact]
-    public void Tcp_vless_link_emits_no_xhttpSettings()
+    public void The_proxy_tag_is_forced()
     {
-        var stream = ProxyOutbound(Build(VlessLink)).GetProperty("streamSettings");
+        // Every routing rule points at "proxy". A node that omits or misspells the tag would
+        // otherwise produce a config whose rules reference an outbound that does not exist,
+        // and xray answers that with a startup failure rather than anything diagnosable.
+        var proxy = ProxyOutbound(Build(cfg => cfg.Outbound =
+            JsonNode.Parse("""{"tag":"whatever","protocol":"vless","settings":{}}""")!));
 
-        Assert.Equal("tcp", stream.GetProperty("network").GetString());
-        Assert.False(stream.TryGetProperty("xhttpSettings", out _));
+        Assert.Equal(XrayConfigBuilder.ProxyTag, proxy.GetProperty("tag").GetString());
     }
 
+    private static JsonElement Rules(JsonElement root) =>
+        root.GetProperty("routing").GetProperty("rules");
+
     [Fact]
-    public void Flow_is_omitted_when_the_link_does_not_specify_one()
+    public void Geo_rules_are_absent_unless_enabled()
     {
-        var proxy = ProxyOutbound(Build(
-            "vless://uid@h.example:443?security=reality&pbk=K&sid=S&type=tcp#t"));
-
-        var user = proxy.GetProperty("settings").GetProperty("vnext")[0].GetProperty("users")[0];
-        Assert.False(user.TryGetProperty("flow", out _));
+        // Naming a category the core cannot resolve is not a soft failure: the config is
+        // rejected and the tunnel never comes up. Off by default is the safe state.
+        foreach (var rule in Rules(Build()).EnumerateArray())
+            Assert.False(rule.TryGetProperty("domain", out _));
     }
 
-    // The fork registers this as "hysteria", not "hysteria2" — see proxy/hysteria and
-    // infra/conf.TransportProtocol. Emitting "hysteria2" is what produced the
-    // "no transport for hysteria protocol" config error.
-    private const string HysteriaLink =
-        "hysteria2://pw@h.example:8443,20000-30000/?sni=s.example&alpn=h3" +
-        "&obfs=salamander&obfs-password=OP&hopInterval=30#t";
-
     [Fact]
-    public void Hysteria_outbound_uses_the_forks_protocol_and_transport_names()
+    public void A_direct_geo_category_routes_to_freedom()
     {
-        var proxy = ProxyOutbound(Build(HysteriaLink));
+        var root = Build(cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"],
+            DirectIps = ["geoip:ru"]
+        });
 
-        Assert.Equal("hysteria", proxy.GetProperty("protocol").GetString());
-        Assert.Equal("hysteria", proxy.GetProperty("streamSettings").GetProperty("network").GetString());
+        var direct = Rules(root).EnumerateArray()
+            .Where(r => r.GetProperty("outboundTag").GetString() == XrayConfigBuilder.DirectTag)
+            .ToList();
+
+        Assert.Contains(direct, r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "geosite:category-ru"));
+        Assert.Contains(direct, r => r.TryGetProperty("ip", out var ip)
+            && ip.EnumerateArray().Any(v => v.GetString() == "geoip:ru"));
     }
 
     [Fact]
-    public void Hysteria_settings_are_flat_with_a_version_and_carry_auth_on_the_transport()
+    public void An_exception_is_matched_before_the_category_that_contains_it()
     {
-        var proxy = ProxyOutbound(Build(HysteriaLink));
+        // The whole design. A geo set is tens of thousands of entries and cannot be edited,
+        // so a user exception can only win by being earlier in the list. If this ordering
+        // ever inverts, the exception silently stops working and the domain goes direct.
+        var root = Build(cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"],
+            ProxyDomainExceptions = ["example.ru"]
+        });
 
-        // settings is {version,address,port} — not a servers[] array.
-        var settings = proxy.GetProperty("settings");
-        Assert.Equal(2, settings.GetProperty("version").GetInt32());
-        Assert.Equal("h.example", settings.GetProperty("address").GetString());
-        Assert.Equal(8443, settings.GetProperty("port").GetInt32());
-        Assert.False(settings.TryGetProperty("servers", out _));
+        var rules = Rules(root).EnumerateArray().ToList();
 
-        // The auth password lives on the transport (HysteriaConfig.Auth), not the outbound.
-        var hy = proxy.GetProperty("streamSettings").GetProperty("hysteriaSettings");
-        Assert.Equal(2, hy.GetProperty("version").GetInt32());
-        Assert.Equal("pw", hy.GetProperty("auth").GetString());
+        var exception = rules.FindIndex(r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "example.ru"));
+        var category = rules.FindIndex(r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "geosite:category-ru"));
+
+        Assert.True(exception >= 0 && category >= 0, "both rules must be emitted");
+        Assert.True(exception < category, "the exception must come first or it can never win");
     }
 
     [Fact]
-    public void Hysteria_tls_uses_the_node_domain_and_offers_h3()
+    public void Geo_rules_still_come_after_the_local_ranges()
     {
-        var tls = ProxyOutbound(Build(HysteriaLink))
-            .GetProperty("streamSettings").GetProperty("tlsSettings");
+        // Local traffic must stay local whatever the geo configuration says: a LAN address
+        // that fell into a geo category would otherwise be routed by it.
+        var root = Build(cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"]
+        });
 
-        // The node's HY2 certificate is issued for its own hostname, so the SNI must be
-        // the host — not the link's sni, which carries the REALITY camouflage domain.
-        Assert.Equal("h.example", tls.GetProperty("serverName").GetString());
-        Assert.Contains("h3", tls.GetProperty("alpn").EnumerateArray().Select(a => a.GetString()));
+        var rules = Rules(root).EnumerateArray().ToList();
+
+        var local = rules.FindIndex(r => r.TryGetProperty("ip", out var ip)
+            && ip.EnumerateArray().Any(v => v.GetString() == "192.168.0.0/16"));
+        var geo = rules.FindIndex(r => r.TryGetProperty("domain", out var d)
+            && d.EnumerateArray().Any(v => v.GetString() == "geosite:category-ru"));
+
+        Assert.True(local >= 0 && geo > local);
     }
 
     [Fact]
-    public void Hysteria_defaults_alpn_to_h3_when_the_link_omits_it()
+    public void The_catch_all_stays_last()
     {
-        // The API issues hysteria2 links without alpn; the listener negotiates h3 only.
-        var tls = ProxyOutbound(Build("hysteria2://pw@h.example:9443/?sni=s.example#t"))
-            .GetProperty("streamSettings").GetProperty("tlsSettings");
+        var root = Build(cfg => cfg.Geo = new GeoRoutingOptions
+        {
+            Enabled = true,
+            DirectSites = ["geosite:category-ru"]
+        });
 
-        Assert.Equal(["h3"], tls.GetProperty("alpn").EnumerateArray().Select(a => a.GetString()));
+        var rules = Rules(root).EnumerateArray().ToList();
+        var last = rules[^1];
+
+        Assert.Equal(XrayConfigBuilder.ProxyTag, last.GetProperty("outboundTag").GetString());
+        Assert.Equal("tcp,udp", last.GetProperty("network").GetString());
     }
 
-    [Fact]
-    public void Hysteria_obfs_and_port_hopping_live_under_finalmask()
-    {
-        // HysteriaConfig.Build warns that congestion/up/down/udphop moved to
-        // finalmask/quicParams, and salamander is a finalmask udp mask.
-        var finalmask = ProxyOutbound(Build(HysteriaLink))
-            .GetProperty("streamSettings").GetProperty("finalmask");
-
-        var mask = finalmask.GetProperty("udp")[0];
-        Assert.Equal("salamander", mask.GetProperty("type").GetString());
-        Assert.Equal("OP", mask.GetProperty("settings").GetProperty("password").GetString());
-
-        var hop = finalmask.GetProperty("quicParams").GetProperty("udpHop");
-        Assert.Equal("20000-30000", hop.GetProperty("ports").GetString());
-        Assert.Equal(30, hop.GetProperty("interval").GetInt32());
-    }
-
-    [Fact]
-    public void Hysteria_omits_finalmask_when_there_is_nothing_to_mask()
-    {
-        var stream = ProxyOutbound(Build("hysteria2://pw@h.example:8443/?sni=s.example#t"))
-            .GetProperty("streamSettings");
-
-        Assert.False(stream.TryGetProperty("finalmask", out _));
-    }
-
-    [Fact]
-    public void A_range_from_the_query_reaches_udpHop()
-    {
-        // The API renders the hop range as ?mport= rather than inside the authority.
-        // Parsing it is only half the job — if it does not land in quicParams.udpHop, port
-        // hopping silently stops and the node throttles the one fixed port instead.
-        var hop = ProxyOutbound(Build(
-                "hysteria2://pw@ch1.horusping.com:9443" +
-                "?sni=ch1.horusping.com&obfs=salamander&mport=31111-49999&obfs-password=p#CH1"))
-            .GetProperty("streamSettings").GetProperty("finalmask")
-            .GetProperty("quicParams").GetProperty("udpHop");
-
-        Assert.Equal("31111-49999", hop.GetProperty("ports").GetString());
-    }
-
-    [Fact]
-    public void Hop_interval_below_the_cores_minimum_is_dropped()
-    {
-        // A non-zero interval under 5s is rejected by the core; omitting it lets the
-        // core apply its own default instead of failing the whole config.
-        var hop = ProxyOutbound(Build(
-                "hysteria2://pw@h.example:8443,20000-30000/?obfs=salamander&hopInterval=2#t"))
-            .GetProperty("streamSettings").GetProperty("finalmask")
-            .GetProperty("quicParams").GetProperty("udpHop");
-
-        Assert.False(hop.TryGetProperty("interval", out _));
-    }
-
-    [Fact]
     public void Socks_inbound_matches_the_configured_port()
     {
-        var root = Build(VlessLink);
+        var root = Build();
         var inbound = root.GetProperty("inbounds")[0];
 
         Assert.Equal("socks", inbound.GetProperty("protocol").GetString());
@@ -219,7 +210,7 @@ public class XrayConfigBuilderTests
     [Fact]
     public void Private_ranges_route_direct_and_everything_else_proxies()
     {
-        var rules = Build(VlessLink).GetProperty("routing").GetProperty("rules");
+        var rules = Build().GetProperty("routing").GetProperty("rules");
 
         // Multicast and broadcast are dropped first. Sending them anywhere else costs a
         // SOCKS5 session per packet, and on Windows they come straight back through the
@@ -261,12 +252,11 @@ public class XrayConfigBuilderTests
     [Fact]
     public void No_rule_exempts_the_resolvers_from_the_tunnel()
     {
-        var cfg = new XrayConfig { Link = ShareLinkParser.Parse(VlessLink) };
-        var resolvers = XrayConfigBuilder.ResolverIps(cfg.DnsServers);
+        var resolvers = XrayConfigBuilder.ResolverIps(Config().DnsServers);
 
         Assert.NotEmpty(resolvers);   // otherwise this test proves nothing
 
-        var rules = Build(VlessLink).GetProperty("routing").GetProperty("rules");
+        var rules = Build().GetProperty("routing").GetProperty("rules");
 
         foreach (var rule in rules.EnumerateArray())
         {
@@ -289,7 +279,7 @@ public class XrayConfigBuilderTests
         // Android has no /etc/resolv.conf, so the core's Go resolver has no nameservers and
         // fails every lookup without sending a packet — the outbound then never dials at
         // all. Explicit servers are what make name resolution work inside the core.
-        var dns = Build(VlessLink).GetProperty("dns");
+        var dns = Build().GetProperty("dns");
 
         var servers = dns.GetProperty("servers").EnumerateArray().Select(s => s.GetString()).ToList();
         Assert.NotEmpty(servers);
@@ -303,22 +293,7 @@ public class XrayConfigBuilderTests
         // would force a client-side lookup for every destination, which on Android stalls
         // every connection on the dead Go resolver.
         Assert.Equal("AsIs",
-            Build(VlessLink).GetProperty("routing").GetProperty("domainStrategy").GetString());
-    }
-
-    [Fact]
-    public void Outbound_dials_the_resolved_ip_but_keeps_the_hostname_as_sni()
-    {
-        var cfg = new XrayConfig { Link = ShareLinkParser.Parse(VlessLink) };
-        cfg.Link.ResolvedHost = "203.0.113.7";
-
-        var proxy = ProxyOutbound(JsonDocument.Parse(cfg.ToConfig()).RootElement);
-
-        Assert.Equal("203.0.113.7",
-            proxy.GetProperty("settings").GetProperty("vnext")[0].GetProperty("address").GetString());
-        Assert.Equal("www.microsoft.com",
-            proxy.GetProperty("streamSettings").GetProperty("realitySettings")
-                 .GetProperty("serverName").GetString());
+            Build().GetProperty("routing").GetProperty("domainStrategy").GetString());
     }
 
     [Fact]
@@ -326,7 +301,7 @@ public class XrayConfigBuilderTests
     {
         // geoip:/geosite: would require geoip.dat + geosite.dat next to the core and a
         // XraySetAssetPath call; the builder deliberately avoids that dependency.
-        var json = new XrayConfig { Link = ShareLinkParser.Parse(VlessLink) }.ToConfig();
+        var json = Config().ToConfig();
 
         Assert.DoesNotContain("geoip:", json);
         Assert.DoesNotContain("geosite:", json);
@@ -335,10 +310,10 @@ public class XrayConfigBuilderTests
     [Fact]
     public void Log_file_is_emitted_only_when_a_path_is_set()
     {
-        var without = Build(VlessLink).GetProperty("log");
+        var without = Build().GetProperty("log");
         Assert.False(without.TryGetProperty("error", out _));
 
-        var with = Build(VlessLink, c => c.LogFilePath = "/tmp/xray.log").GetProperty("log");
+        var with = Build(c => c.LogFilePath = "/tmp/xray.log").GetProperty("log");
         Assert.Equal("/tmp/xray.log", with.GetProperty("error").GetString());
         // Access logging records every destination the user visits — keep it off.
         Assert.Equal("none", with.GetProperty("access").GetString());
@@ -347,7 +322,7 @@ public class XrayConfigBuilderTests
     [Fact]
     public void Always_emits_direct_and_block_outbounds()
     {
-        var tags = Build(VlessLink).GetProperty("outbounds").EnumerateArray()
+        var tags = Build().GetProperty("outbounds").EnumerateArray()
             .Select(o => o.GetProperty("tag").GetString()).ToList();
 
         Assert.Contains(XrayConfigBuilder.ProxyTag, tags);

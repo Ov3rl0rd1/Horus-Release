@@ -33,20 +33,22 @@ namespace Horus.Domain.Models
         public const string SERVERS_SELECT = "/servers/select";
 
         /// <summary>
-        /// Connection links for the node the caller is already bound to. Cheap by design —
-        /// it reads one row and never talks to the node, because provisioning happens at
-        /// <see cref="SERVERS_SELECT"/> time.
+        /// The node's own client outbounds, with this account substituted in. Cheap by
+        /// design — it reads one row and never talks to the node, because provisioning
+        /// happens at <see cref="SERVERS_SELECT"/> time.
+        ///
+        /// <para>Returns JSON when the session is in the <c>X-Session-Key</c> header, which
+        /// is what this app sends. The same route answers a <c>?key=</c> query with a base64
+        /// subscription of share links, for third-party clients.</para>
         /// </summary>
         public const string SERVERS_CONNECT = "/servers/connect";
 
         public const string WHOAMI = "/whoami";
         public const string HEALTH = "/health";
 
-        // ── Share-link schemes ───────────────────────────────────────────────
-        // vless and hysteria2 arrive as share links. olcRTC does not: it is signalling
-        // based and has no address to put in a URI, so the API sends a structured object
-        // instead — see OlcRtcEndpoint.
-        public const string SCHEME_VLESS = "vless://";
-        public const string SCHEME_HYSTERIA2 = "hysteria2://";
+        // Share-link schemes used to live here. They are gone from this path entirely:
+        // /servers/connect returns whole xray outbounds to the app, and URIs survive only
+        // on the base64 subscription the same endpoint serves to third-party clients when
+        // the session arrives as ?key= instead of a header.
     }
 }

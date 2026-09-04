@@ -83,6 +83,18 @@ namespace Horus.Domain.Interfaces
     public interface IUserNotifier
     {
         Task NotifyAsync(string title, string message);
+
+        /// <summary>
+        /// Shows or updates an ongoing progress notification, replacing the previous one.
+        ///
+        /// <paramref name="percent"/> below zero means indeterminate — the server did not
+        /// say how large the payload is, and a made-up percentage that later jumps
+        /// backwards is worse than an honest spinner.
+        /// </summary>
+        Task ShowProgressAsync(string title, string message, int percent);
+
+        /// <summary>Removes the progress notification. Safe when there is none.</summary>
+        Task HideProgressAsync();
     }
 
     /// <summary>Checks for, downloads and applies updates in the background.</summary>
@@ -101,6 +113,25 @@ namespace Horus.Domain.Interfaces
         UpdateBlocker Blocker { get; }
 
         event EventHandler? BlockerChanged;
+
+        /// <summary>What the updater is doing, for the Home screen and the notification.</summary>
+        UpdateProgress Progress { get; }
+
+        /// <summary>
+        /// Raised as the stage or the download percentage moves. Throttled by the service —
+        /// a byte-by-byte event would redraw the UI thousands of times for one download.
+        /// </summary>
+        event EventHandler? ProgressChanged;
+
+        /// <summary>
+        /// Installs a ready update now, because the user asked.
+        ///
+        /// This bypasses the quiet-hours and charging conditions, which exist to avoid
+        /// interrupting someone — a deliberate press is not an interruption. It does not
+        /// bypass the readiness check: an install that cannot succeed still must not take
+        /// the tunnel down for it.
+        /// </summary>
+        Task InstallNowAsync();
 
         /// <summary>
         /// Re-evaluates a parked update immediately. Called when a permission may have

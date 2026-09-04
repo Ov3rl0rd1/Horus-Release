@@ -29,9 +29,16 @@ namespace Horus.Application
     /// </summary>
     public static class ConnectionCache
     {
-        private const string PayloadKey = "horus.connect.cache";
-        private const string StampKey = "horus.connect.cache.at";
-        private const string ServerKey = "horus.connect.cache.server";
+        // Version suffix, bumped when the payload shape changes.
+        //
+        // /servers/connect stopped returning share links and now returns whole xray
+        // outbounds. An entry written by an older build still deserialises — every field it
+        // knew about is gone, so it yields a ServerConnection with an empty outbound list,
+        // which reads as "the node offers nothing" and produces a connect failure rather
+        // than a cache miss. Changing the key makes the old entry invisible instead.
+        private const string PayloadKey = "horus.connect.cache.v2";
+        private const string StampKey = "horus.connect.cache.v2.at";
+        private const string ServerKey = "horus.connect.cache.v2.server";
 
         /// <summary>
         /// How old a cached set may be before it is re-fetched even though nothing failed.

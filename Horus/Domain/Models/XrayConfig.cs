@@ -3,16 +3,49 @@ using Horus.Protocols;
 namespace Horus.Domain.Models
 {
     /// <summary>
-    /// Config for one xray-core run. A single xray process serves every protocol —
-    /// <see cref="Link"/> decides which outbound becomes the <c>proxy</c> tag, and
-    /// <see cref="ProtocolType"/> reports it for logging and fallback bookkeeping.
+    /// Config for one xray-core run. A single xray process serves every protocol; the
+    /// node supplies the outbound and this wraps it with the inbound, DNS and routing the
+    /// app owns.
+    ///
+    /// <para><b>The outbound is no longer generated here.</b> The API hands over a complete
+    /// xray outbound the node built, so this class carries it rather than the parsed share
+    /// link it used to reconstruct one from. What the app still owns is everything
+    /// <i>around</i> it — the SOCKS inbound the bridge dials, the resolvers, the local
+    /// ranges that must not be proxied — and none of that depends on which protocol the
+    /// node chose.</para>
     /// </summary>
     public class XrayConfig : ProtocolConfig
     {
-        public override ProtocolType ProtocolType => Link.Protocol;
+        /// <summary>The complete outbound as the node described it, address already resolved.</summary>
+        public required System.Text.Json.Nodes.JsonNode Outbound { get; set; }
 
-        /// <summary>Parsed share link the proxy outbound is generated from.</summary>
-        public required ShareLink Link { get; init; }
+        /// <summary>Stable offer id from the node's profile. Identity for logs and fallback.</summary>
+        public override string OfferId => Offer;
+
+        /// <summary>Backing value; <see cref="OfferId"/> is the abstract member it satisfies.</summary>
+        public required string Offer { get; init; }
+
+        /// <summary>Human-readable name for the UI, supplied by the node.</summary>
+        public override string DisplayName => string.IsNullOrWhiteSpace(Label) ? Offer : Label;
+
+        public string Label { get; init; } = string.Empty;
+
+        /// <summary>The outbound's <c>protocol</c> field, for logging only.</summary>
+        public string ProtocolName { get; init; } = "unknown";
+
+        /// <summary>
+        /// Literal address the outbound dials, or null when it dials nothing the app can
+        /// route around — an olcRTC room has no address. Drives the platform bypass route,
+        /// without which the core's own socket is carried by the tunnel it is feeding.
+        /// </summary>
+        public string? NodeAddress { get; init; }
+
+        /// <summary>
+        /// Geo-category routing. Disabled unless the caller has confirmed the .dat files
+        /// are installed — naming a category the core cannot resolve makes XrayStart fail
+        /// outright rather than degrading.
+        /// </summary>
+        public GeoRoutingOptions Geo { get; set; } = GeoRoutingOptions.Disabled;
 
         /// <summary>
         /// Port of the SOCKS5 inbound. Hardcoded on the other side too — in

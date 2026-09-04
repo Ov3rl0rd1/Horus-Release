@@ -47,6 +47,10 @@ namespace Horus.Application.Notices
             _auth.AuthStateChanged += (_, __) => Refresh();
             _permissions.Changed += (_, __) => Refresh();
             _updates.BlockerChanged += (_, __) => Refresh();
+
+            // Already throttled by the service to a few percent per step, so this is a
+            // handful of recomputes per download rather than thousands.
+            _updates.ProgressChanged += (_, __) => Refresh();
         }
 
         public void Refresh()
@@ -81,7 +85,34 @@ namespace Horus.Application.Notices
                     CanDismiss: false));
             }
 
-            // 2. Install permission. An update is downloaded and verified and cannot be
+            // 2. A ready update. Second only to the subscription because it is the one the
+            //    user was explicitly asked to act on, and because leaving it unmentioned is
+            //    what made the previous silent-install failures so confusing.
+            var update = _updates.Progress;
+
+            if (update.Stage is UpdateStage.Ready or UpdateStage.Installing)
+            {
+                var installing = update.Stage == UpdateStage.Installing;
+                var urgent = update.Urgency == UpdateUrgency.Immediate;
+
+                notices.Add(new AppNotice(
+                    NoticeKind.UpdateReady,
+                    installing ? "Устанавливаем обновление" : urgent ? "Обновление готово" : "Доступно обновление",
+                    installing
+                        ? $"Версия {update.Version}"
+                        : urgent
+                            // First or second component: something changed that users need.
+                            ? $"Версия {update.Version} — рекомендуем установить сейчас"
+                            // Third component only: it will go in by itself tonight.
+                            : $"Версия {update.Version} — установится ночью или по кнопке",
+                    installing ? string.Empty : "Установить",
+                    urgent ? NoticeTone.Problem : NoticeTone.Suggestion,
+                    // A big update is not dismissible: hiding it would leave the user with
+                    // no way back to the button. A small one can wait out of sight.
+                    CanDismiss: !urgent && !installing));
+            }
+
+            // 3. Install permission. An update is downloaded and verified and cannot be
             //    applied — and until this was surfaced, all the user saw was the VPN
             //    switching itself off every couple of minutes.
             var updateParked = _updates.Blocker == UpdateBlocker.InstallPermission;
@@ -100,7 +131,25 @@ namespace Horus.Application.Notices
                     CanDismiss: !updateParked));
             }
 
-            // 3. Notifications. Without them the tunnel status is invisible and the install
+            // 4. A download in flight. Reports rather than asks — no button — and cannot be
+            //    dismissed because it disappears on its own within a minute or two.
+            if (update.Stage == UpdateStage.Downloading)
+            {
+                notices.Add(new AppNotice(
+                    NoticeKind.UpdateDownloading,
+                    "Загрузка обновления",
+                    update.HasFraction
+                        ? $"Версия {update.Version} · {update.Percent}%"
+                        : $"Версия {update.Version}",
+                    string.Empty,
+                    NoticeTone.Suggestion,
+                    CanDismiss: false,
+                    // -1 keeps the bar empty rather than inventing a position: the server
+                    // did not say how large the payload is.
+                    Progress: update.HasFraction ? update.Fraction : -1));
+            }
+
+            // 5. Notifications. Without them the tunnel status is invisible and the install
             //    prompt cannot reach the user at all.
             if (!_permissions.NotificationsEnabled && !Dismissed(NoticeKind.Notifications))
             {
@@ -113,7 +162,7 @@ namespace Horus.Application.Notices
                     CanDismiss: true));
             }
 
-            // 4. Battery optimisation. Last and dismissible on purpose: it is a
+            // 6. Battery optimisation. Last and dismissible on purpose: it is a
             //    recommendation, not a fault. It matters here more than in most apps — Doze
             //    suspending the app network is what ends tunnels overnight — but plenty of
             //    devices keep the tunnel alive without it, so presenting it as broken would
@@ -143,8 +192,14 @@ namespace Horus.Application.Notices
         {
             Diag.User("notice", $"acting on {kind}");
 
-            // The payment sheet belongs to the view model; everything else is a system screen.
+            // The payment sheet belongs to the view model; everything else is handled here.
             if (kind == NoticeKind.Subscription) return;
+
+            if (kind == NoticeKind.UpdateReady)
+            {
+                await _updates.InstallNowAsync().ConfigureAwait(false);
+                return;
+            }
 
             await _permissions.RequestAsync(kind).ConfigureAwait(false);
 

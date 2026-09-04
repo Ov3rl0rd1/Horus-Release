@@ -40,6 +40,9 @@
     <Compile Include="..\Horus\Protocols\SocksPortAllocator.cs" Link="Linked\SocksPortAllocator.cs" />
     <Compile Include="..\Horus\Domain\Models\TunnelOption.cs" Link="Linked\TunnelOption.cs" />
     <Compile Include="..\Horus\Protocols\XrayConfigBuilder.cs" Link="Linked\XrayConfigBuilder.cs" />
+    <Compile Include="..\Horus\Protocols\LocalNetworks.cs" Link="Linked\LocalNetworks.cs" />
+    <Compile Include="..\Horus\Protocols\OutboundAddress.cs" Link="Linked\OutboundAddress.cs" />
+    <Compile Include="..\Horus\Domain\Models\GeoRouting.cs" Link="Linked\GeoRouting.cs" />
 
     <!--
       The update path. Every one of these decides something whose failure is silent: a

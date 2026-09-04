@@ -64,6 +64,42 @@ namespace Horus.Application.Update
         private DateTimeOffset _retryNotBefore = DateTimeOffset.MinValue;
 
         private UpdateBlocker _blocker;
+        private UpdateProgress _progress = UpdateProgress.None;
+
+        /// <summary>
+        /// Percentage points between progress events. A download of ~60 MB in 8 KB reads
+        /// raises several thousand callbacks; forwarding all of them would redraw the Home
+        /// screen and rewrite the notification continuously for no visible benefit.
+        /// </summary>
+        private const int ProgressStepPercent = 2;
+
+        public UpdateProgress Progress => _progress;
+
+        public event EventHandler? ProgressChanged;
+
+        private void SetProgress(UpdateStage stage, AppVersion version, UpdateUrgency urgency, double fraction)
+        {
+            var next = new UpdateProgress(stage, version, urgency, fraction);
+            if (next == _progress) return;
+
+            var wasDownloading = _progress.Stage == UpdateStage.Downloading;
+            _progress = next;
+            ProgressChanged?.Invoke(this, EventArgs.Empty);
+
+            // The shade gets the same story as the Home screen, because the user is often
+            // not looking at the app while a 60 MB payload comes down.
+            if (stage == UpdateStage.Downloading)
+            {
+                _ = _notifier.ShowProgressAsync(
+                    "Загрузка обновления",
+                    next.HasFraction ? $"Версия {version} · {next.Percent}%" : $"Версия {version}",
+                    next.HasFraction ? next.Percent : -1);
+            }
+            else if (wasDownloading)
+            {
+                _ = _notifier.HideProgressAsync();
+            }
+        }
 
         public AppVersion CurrentVersion { get; }
         public AppVersion? JustUpdatedFrom { get; private set; }
@@ -191,11 +227,19 @@ namespace Horus.Application.Update
                 if (hold != UpdateHold.None) { Log($"download held: {hold}"); return; }
 
                 _readyFile = await DownloadAsync(plan, ct).ConfigureAwait(false);
-                if (_readyFile is null) return;
+                if (_readyFile is null)
+                {
+                    SetProgress(UpdateStage.Idle, AppVersion.Zero, UpdateUrgency.None, -1);
+                    return;
+                }
 
                 Preferences.Set(KeyPendingFile, _readyFile);
                 Log($"{plan.Manifest.Version} downloaded and verified");
             }
+
+            // Ready, whether it was fetched just now or restored from a previous run. This
+            // is what the Home screen turns into "установить сейчас".
+            SetProgress(UpdateStage.Ready, plan.Manifest.Version, plan.Urgency, 1);
 
             // Parked. Nothing here retries a blocked install: the condition only changes
             // when the user does something outside the app, which arrives as RetryNow on
@@ -313,9 +357,11 @@ namespace Horus.Application.Update
                         return null;
                     }
 
+                    var total = response.Content.Headers.ContentLength ?? -1;
+
                     await using var src = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                     await using var dst = File.Create(partial);
-                    await src.CopyToAsync(dst, ct).ConfigureAwait(false);
+                    await CopyWithProgressAsync(src, dst, total, plan, ct).ConfigureAwait(false);
                 }
 
                 var digest = await ComputeSha256Async(partial, ct).ConfigureAwait(false);
@@ -338,6 +384,43 @@ namespace Horus.Application.Update
                 Log($"download failed: {ex.Message}");
                 TryDelete(partial);
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Copies the payload, reporting progress in coarse steps.
+        ///
+        /// A length is not guaranteed: GitHub sends one, a redirect or a proxy may not. When
+        /// it is missing the fraction stays -1 and the UI shows an indeterminate bar rather
+        /// than inventing a number that would run backwards when the real size arrived.
+        /// </summary>
+        private async Task CopyWithProgressAsync(
+            Stream source, Stream destination, long total, UpdatePlan plan, CancellationToken ct)
+        {
+            var version = plan.Manifest.Version;
+            var urgency = plan.Urgency;
+
+            SetProgress(UpdateStage.Downloading, version, urgency, total > 0 ? 0 : -1);
+
+            var buffer = new byte[64 * 1024];
+            long copied = 0;
+            var lastReported = -1;
+
+            while (true)
+            {
+                var read = await source.ReadAsync(buffer, ct).ConfigureAwait(false);
+                if (read == 0) break;
+
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                copied += read;
+
+                if (total <= 0) continue;
+
+                var percent = (int)(copied * 100 / total);
+                if (percent / ProgressStepPercent == lastReported / ProgressStepPercent) continue;
+
+                lastReported = percent;
+                SetProgress(UpdateStage.Downloading, version, urgency, (double)copied / total);
             }
         }
 
@@ -375,6 +458,8 @@ namespace Horus.Application.Update
             RememberReconnectIntent(vpnConnected);
 
             Log($"installing {plan.Manifest.Version} from {file}");
+            SetProgress(UpdateStage.Installing, plan.Manifest.Version, plan.Urgency, 1);
+
             try
             {
                 await _installer.InstallAsync(file, plan.Manifest.Version, ct).ConfigureAwait(false);
@@ -390,6 +475,36 @@ namespace Horus.Application.Update
                 // no explanation, which is exactly the reported behaviour.
                 if (tookTunnelDown) await RestoreTunnelAsync().ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// Installs a ready update because the user pressed the button.
+        ///
+        /// The quiet-hours and charging conditions are skipped — they exist so an update
+        /// never interrupts, and a deliberate press is not an interruption. The readiness
+        /// check is not skipped: an install that cannot succeed must still not take the
+        /// tunnel down for it, which is the failure this whole path was rebuilt around.
+        /// </summary>
+        public async Task InstallNowAsync()
+        {
+            if (_plan is not { } plan || _readyFile is null)
+            {
+                Diag.Info("update", "install requested but nothing is ready");
+                return;
+            }
+
+            Diag.User("update", $"user asked to install {plan.Manifest.Version} now");
+
+            var readiness = _installer.CheckReadiness();
+            if (readiness != UpdateBlocker.None)
+            {
+                Log($"user-requested install cannot proceed: {readiness}");
+                SetBlocker(readiness);
+                return;
+            }
+
+            await InstallAsync(plan, _readyFile, _vpn.State == VpnState.Connected, CancellationToken.None)
+                .ConfigureAwait(false);
         }
 
         /// <summary>

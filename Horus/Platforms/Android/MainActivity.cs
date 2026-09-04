@@ -15,8 +15,15 @@ namespace Horus
             ConfigChanges.ScreenSize | ConfigChanges.Orientation |
             ConfigChanges.UiMode | ConfigChanges.ScreenLayout |
             ConfigChanges.SmallestScreenSize | ConfigChanges.Density)]
+    // Long-pressing a Quick Settings tile opens whatever activity answers
+    // ACTION_QS_TILE_PREFERENCES. Without this the gesture does nothing at all, which reads
+    // as a broken tile — Android offers no default for it.
+    [IntentFilter([ActionQsTilePreferences], Categories = [Intent.CategoryDefault])]
     public class MainActivity : MauiAppCompatActivity
     {
+        private const string ActionQsTilePreferences =
+            "android.service.quicksettings.action.QS_TILE_PREFERENCES";
+
         protected override void OnCreate(Bundle? savedInstanceState)
         {
             base.OnCreate(savedInstanceState);

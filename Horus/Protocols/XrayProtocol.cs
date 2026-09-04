@@ -17,7 +17,7 @@ namespace Horus.Protocols
     {
         private readonly IVpnPlatformService _vpn;
 
-        private ProtocolType _activeType = ProtocolType.Vless;
+        private string _activeOfferId = string.Empty;
         private XrayConfig? _lastConfig;
 
         public XrayProtocol(IVpnPlatformService vpn)
@@ -26,7 +26,7 @@ namespace Horus.Protocols
         }
 
         /// <summary>Which outbound the running instance is proxying through.</summary>
-        public ProtocolType Type => _activeType;
+        public string ActiveOfferId => _activeOfferId;
 
         public ProtocolConfig Config => _lastConfig
             ?? throw new InvalidOperationException("xray has not been configured yet.");
@@ -118,7 +118,7 @@ namespace Horus.Protocols
                 throw new ArgumentException("Expected XrayConfig.", nameof(config));
 
             _lastConfig = xrayConfig;
-            _activeType = xrayConfig.Link.Protocol;
+            _activeOfferId = config.OfferId;
 
             StatusChanged?.Invoke(this, new VpnStatusChangedEventArgs(VpnState.Connecting, null));
 
@@ -133,7 +133,7 @@ namespace Horus.Protocols
                 // Validate before starting: a wrong outbound schema surfaces here as a
                 // precise parser message rather than as an opaque start failure.
                 XrayInterop.Test(json);
-                OutputReceived?.Invoke(this, $"[xray] Config accepted ({_activeType}).");
+                OutputReceived?.Invoke(this, $"[xray] Config accepted ({_activeOfferId}).");
 
                 try
                 {
@@ -180,9 +180,10 @@ namespace Horus.Protocols
 
         public Task<bool> ValidateConfigAsync(ProtocolConfig config)
         {
-            if (config is not XrayConfig c
-                || string.IsNullOrEmpty(c.Link.Host)
-                || string.IsNullOrEmpty(c.Link.Credential))
+            // The outbound is the node's, so there is nothing here worth re-validating
+            // field by field — the core is the authority on its own schema, and Test() is
+            // the cheap way to ask it.
+            if (config is not XrayConfig c || string.IsNullOrEmpty(c.OfferId))
                 return Task.FromResult(false);
 
             try

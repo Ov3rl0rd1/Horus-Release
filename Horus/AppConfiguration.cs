@@ -31,6 +31,21 @@ namespace Horus
             "https://github.com/Ov3rl0rd1/Horus-Release/releases";
 
         /// <summary>
+        /// Where <c>geoip.dat</c> / <c>geosite.dat</c> and their <c>.sha256sum</c> sidecars
+        /// are fetched from. Empty disables geo routing entirely.
+        ///
+        /// <para>Default is the Russia-specific rule set, which is the one that matters for
+        /// these users: it carries <c>geosite:ru-blocked</c> (what must be proxied) and
+        /// <c>geosite:ru-available-only-inside</c> (what must not be), alongside every
+        /// v2fly category. The generic v2fly build has neither.</para>
+        ///
+        /// <para>The files are large — about 18 MB and 74 MB — which is why they are
+        /// downloaded on an unmetered network rather than shipped in the APK.</para>
+        /// </summary>
+        public static string GeoAssetsBaseUrl { get; set; } =
+            "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download";
+
+        /// <summary>
         /// Android package names that must always bypass the tunnel, whatever split-tunnel
         /// mode the user picks. Populated from <c>BlockedPackages</c> in appsettings.json.
         ///

@@ -4,9 +4,10 @@ using Horus.Domain.Models;
 namespace Horus.Protocols
 {
     /// <summary>
-    /// Every protocol is an outbound of the same xray-core process, so there is one
+    /// Every offer is an outbound of the same xray-core process, so there is one
     /// <see cref="IVpnProtocol"/> implementation. The factory survives as the seam
-    /// <see cref="Horus.Application.VpnManager"/> uses to obtain it.
+    /// <see cref="Horus.Application.VpnManager"/> uses to obtain it, and as the place the
+    /// node's outbound is prepared for the core.
     /// </summary>
     public class ProtocolFactory
     {
@@ -17,56 +18,68 @@ namespace Horus.Protocols
             _sp = sp;
         }
 
-        /// <summary>Protocols the bundled core can proxy through, ignoring node availability.</summary>
-        public static IReadOnlyList<ProtocolType> Supported =>
-            [ProtocolType.Hysteria2, ProtocolType.Vless, ProtocolType.OlcRtc];
-
         public IVpnProtocol Create() => _sp.GetRequiredService<XrayProtocol>();
 
-        public IVpnProtocol Create(ProtocolType type)
-        {
-            if (!Supported.Contains(type))
-                throw new NotSupportedException($"Protocol {type} is not supported.");
-            return Create();
-        }
-
         /// <summary>
-        /// Turns one endpoint the node published into a config the core can run.
+        /// Prepares one of the node's outbounds for the core.
         ///
-        /// <para>Takes a <see cref="ConnectionCandidate"/> rather than a protocol name
-        /// because a node may publish several endpoints of the same protocol — the API
-        /// returns <c>vless</c> as an array — and the fallback loop needs to try each of
-        /// them, not just the first.</para>
+        /// <para>The outbound arrives complete: the node built it and the API substituted
+        /// this account into it. Two things still have to happen on the device, and both are
+        /// about the address:</para>
+        ///
+        /// <list type="number">
+        /// <item>The hostname has to become a literal IP, because the core's Go resolver has
+        /// no nameservers here. See <see cref="OutboundAddress"/> for what goes wrong
+        /// otherwise, and why only <c>address</c> fields may be rewritten.</item>
+        /// <item>That IP has to be reported back, so the platform can route it around the
+        /// tunnel — without which the core's own socket is carried by the tunnel it is
+        /// feeding.</item>
+        /// </list>
+        ///
+        /// <para>An outbound that dials nothing is a legitimate case rather than an error:
+        /// an olcRTC offer identifies a signalling room and has no address at all. It gets
+        /// no resolution and no bypass route, and the platform decides whether it can work
+        /// with that.</para>
         /// </summary>
         public async Task<ProtocolConfig> CreateConfigAsync(
             ConnectionCandidate candidate, CancellationToken ct = default)
         {
             ArgumentNullException.ThrowIfNull(candidate);
 
-            var link = candidate.Protocol == ProtocolType.OlcRtc
-                ? BuildOlcRtcLink(candidate)
-                : ParseLink(candidate);
+            var outbound = candidate.Outbound.DeepClone();
 
-            // olcRTC dials the provider's signalling service, not the node, so there is no
-            // node address to pre-resolve and nothing to fail on. Every other protocol
-            // must be handed a literal address — see ResolveNodeAsync.
-            if (candidate.Protocol == ProtocolType.OlcRtc)
+            // The address the outbound actually dials, which is normally the node but is
+            // read from the outbound rather than assumed: a profile is free to point an
+            // offer somewhere else, and resolving a name it does not use would be a lie.
+            var dialHost = OutboundAddress.FindHost(outbound);
+            string? resolved = null;
+
+            if (dialHost is null)
             {
-                Diag.Write($"[{candidate.Protocol}] room via " +
-                           $"{link.Params.GetValueOrDefault("provider")}/" +
-                           $"{link.Params.GetValueOrDefault("transport")} on {link.Host}");
+                Diag.Info("connect", $"{candidate.Id} dials no address (signalling offer)");
             }
             else
             {
-                await ResolveNodeAsync(link, ct);
+                resolved = await ResolveAsync(dialHost, ct);
 
-                Diag.Write($"[{candidate.Protocol}] {link.Host} -> {link.DialAddress}:{link.Port} " +
-                           $"hop={link.PortRange ?? "none"}");
+                if (resolved is null)
+                    throw new InvalidOperationException(
+                        $"Не удалось определить адрес узла {dialHost}. " +
+                        "Проверьте подключение к сети и попробуйте ещё раз.");
+
+                var rewritten = OutboundAddress.Rewrite(outbound, dialHost, resolved);
+                Diag.Info("connect",
+                    $"{candidate.Id} ({candidate.ProtocolName}) {dialHost} -> {resolved}, {rewritten} address field(s)");
             }
 
             return new XrayConfig
             {
-                Link = link,
+                Outbound = outbound,
+                Offer = candidate.Id,
+                Label = candidate.Label,
+                ProtocolName = candidate.ProtocolName,
+                NodeAddress = resolved,
+
                 LogFilePath = DiagnosticPaths.XrayLog,
                 LogLevel = Horus.Application.UserPreferences.XrayLogLevel,
 
@@ -75,50 +88,6 @@ namespace Horus.Protocols
                 // else took it meanwhile — which is exactly when moving is the right answer.
                 SocksPort = SocksPortAllocator.Allocate()
             };
-        }
-
-        private static ShareLink ParseLink(ConnectionCandidate candidate)
-        {
-            var raw = candidate.Link
-                ?? throw new NotSupportedException(
-                    $"The {candidate.Protocol} candidate carries no share link.");
-
-            var link = ShareLinkParser.Parse(raw);
-            ShareLinkParser.Validate(link);
-            return link;
-        }
-
-        private static ShareLink BuildOlcRtcLink(ConnectionCandidate candidate)
-        {
-            var endpoint = candidate.OlcRtc
-                ?? throw new NotSupportedException("The olcRTC candidate carries no parameters.");
-
-            return ShareLinkParser.FromOlcRtc(endpoint);
-        }
-
-        /// <summary>
-        /// Pre-resolves the node address, and fails the attempt when it cannot.
-        ///
-        /// <para>Handing the core a hostname produces a tunnel that is dead on arrival, and
-        /// dead in a way that is almost invisible: the core starts, its SOCKS inbound
-        /// accepts every session the bridge offers, and it never dials out, because its Go
-        /// resolver has no nameservers here and its configured DNS servers route through
-        /// the very proxy it is trying to build. Sessions pile up in the hundreds, bytes
-        /// leave and only RSTs come back, and the app reports ЗАЩИЩЕНО.</para>
-        ///
-        /// <para>Observed on a real device: 190 established SOCKS sessions and not one
-        /// socket to any external address. Failing here is the only honest option — the
-        /// fallback loop moves to the next endpoint, and if none resolves the user gets an
-        /// error instead of a tunnel that silently carries nothing.</para>
-        /// </summary>
-        private async Task ResolveNodeAsync(ShareLink link, CancellationToken ct)
-        {
-            link.ResolvedHost = await ResolveAsync(link.Host, ct);
-
-            if (link.ResolvedHost is null)
-                throw new InvalidOperationException(
-                    $"Не удалось определить адрес узла {link.Host}. " +
-                    "Проверьте подключение к сети и попробуйте ещё раз.");
         }
 
         /// <summary>
