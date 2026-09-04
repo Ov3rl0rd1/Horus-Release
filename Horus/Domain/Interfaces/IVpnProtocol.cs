@@ -5,7 +5,8 @@ namespace Horus.Domain.Interfaces
 {
     public interface IVpnProtocol
     {
-        ProtocolType Type { get; }
+        /// <summary>Offer id of the config currently loaded, or empty.</summary>
+        string ActiveOfferId { get; }
         ProtocolConfig Config { get; }
 
         Task ConnectAsync(ProtocolConfig config, CancellationToken ct = default);

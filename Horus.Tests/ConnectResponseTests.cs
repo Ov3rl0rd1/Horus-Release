@@ -5,161 +5,183 @@ using Xunit;
 namespace Horus.Tests;
 
 /// <summary>
-/// The shape of <c>GET /servers/connect</c>, pinned against the JSON the API actually
-/// sends.
+/// The <c>GET /servers/connect</c> payload, as HorusAPI renders it for the app.
 ///
-/// <para>This is a contract across a network boundary with no compiler between the two
-/// sides, and it broke silently once already: the endpoint used to answer with a flat
-/// <c>{ key: link }</c> map and now answers with a structured object where <c>vless</c> is
-/// an array and <c>olcrtc</c> is not a link at all. A deserialiser that quietly produces
-/// an empty object is indistinguishable from a node with nothing to offer, so the failure
-/// would present as "no protocols available" rather than as a parsing problem.</para>
-///
-/// <para>The samples below are copied from the API documentation rather than written to
-/// fit the models, which is the only way this test can catch the models drifting.</para>
+/// <para>The body below is the shape produced by <c>OfferRenderer.RenderOutbounds</c> from
+/// the node's <c>default.json</c> profile: the account substituted in, and the node's own
+/// placeholders (ports, keys, host) already resolved on the node side. Share links are no
+/// longer part of this path — they survive only on the base64 subscription URL third-party
+/// clients use.</para>
 /// </summary>
 public class ConnectResponseTests
 {
-    private static ServerConnection Parse(string json) =>
-        JsonSerializer.Deserialize<ServerConnection>(json)
-        ?? throw new InvalidOperationException("deserialised to null");
-
-    private const string FullResponse = """
+    private const string Body = """
     {
-      "server": { "id": 12, "name": "Germany 1", "country": "DE", "city": "Frankfurt", "host": "de1.example.com" },
-      "vless": [ "vless://uid@de1.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=x.com&fp=randomized&pbk=KEY&sid=ab&type=tcp#Horus-DE" ],
-      "hysteria2": "hysteria2://pass@de1.example.com:8443,20000-30000/?sni=de1.example.com&obfs=salamander&obfs-password=p#Horus-DE",
-      "olcrtc": { "provider": "wbstream", "transport": "vp8channel", "room_id": "R1", "room_key": "K1", "uuid": "U1", "host": "de1.example.com" }
+      "server": { "id": 7, "name": "Horus-CH", "country": "CH", "city": "Zurich", "host": "ch1.horusping.com" },
+      "outbounds": [
+        {
+          "id": "vless-reality",
+          "label": "VLESS REALITY",
+          "tag": "vless-in",
+          "outbound": {
+            "tag": "proxy",
+            "protocol": "vless",
+            "settings": {
+              "vnext": [ { "address": "ch1.horusping.com", "port": 443,
+                           "users": [ { "id": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+                                        "encryption": "none", "flow": "xtls-rprx-vision", "level": 0 } ] } ]
+            },
+            "streamSettings": {
+              "network": "tcp",
+              "security": "reality",
+              "realitySettings": { "serverName": "www.microsoft.com", "fingerprint": "randomized",
+                                   "publicKey": "PUBKEY", "shortId": "a1b2", "spiderX": "" }
+            }
+          }
+        },
+        {
+          "id": "hysteria2",
+          "label": "Hysteria2",
+          "tag": "hy-in",
+          "outbound": {
+            "tag": "proxy",
+            "protocol": "hysteria",
+            "settings": { "version": 2, "address": "ch1.horusping.com", "port": 8443 },
+            "streamSettings": {
+              "network": "hysteria",
+              "security": "tls",
+              "tlsSettings": { "serverName": "ch1.horusping.com" },
+              "hysteriaSettings": { "version": 2, "auth": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" },
+              "finalmask": { "udp": [ { "type": "salamander", "settings": { "password": "OBFS" } } ] }
+            }
+          }
+        },
+        {
+          "id": "olcrtc",
+          "label": "olcRTC",
+          "tag": "olcrtc-in",
+          "outbound": {
+            "tag": "proxy",
+            "protocol": "olcrtc",
+            "settings": { "provider": "jitsi", "transport": "datachannel", "roomId": "R",
+                          "key": "K", "dnsServer": "8.8.8.8:53",
+                          "deviceId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301" }
+          }
+        }
+      ]
     }
     """;
 
+    private static ServerConnection Parse(string json) =>
+        JsonSerializer.Deserialize<ServerConnection>(json)!;
+
     [Fact]
-    public void Full_response_yields_one_candidate_per_endpoint()
+    public void Reads_the_bound_server()
     {
-        var connection = Parse(FullResponse);
-        var candidates = connection.Candidates();
+        var connection = Parse(Body);
+
+        Assert.NotNull(connection.Server);
+        Assert.Equal(7, connection.Server!.Id);
+        Assert.Equal("ch1.horusping.com", connection.Server.Host);
+        Assert.Equal("Zurich, CH", connection.Server.Location);
+    }
+
+    [Fact]
+    public void Every_offer_becomes_a_candidate()
+    {
+        var candidates = Parse(Body).Candidates();
 
         Assert.Equal(3, candidates.Count);
-        Assert.True(connection.Offers(ProtocolType.Hysteria2));
-        Assert.True(connection.Offers(ProtocolType.Vless));
-        Assert.True(connection.Offers(ProtocolType.OlcRtc));
-        Assert.Equal("Germany 1", connection.Server?.Name);
+        Assert.Equal(["vless-reality", "hysteria2", "olcrtc"], candidates.Select(c => c.Id));
+        Assert.Equal(["vless", "hysteria", "olcrtc"], candidates.Select(c => c.ProtocolName));
     }
 
     [Fact]
-    public void Vless_is_an_array_and_every_entry_becomes_a_candidate()
+    public void The_nodes_order_is_preserved()
     {
-        // The contract says a node may publish several VLESS endpoints. Taking only the
-        // first would silently discard the alternatives a node adds later.
+        // A profile lists its preferred offer first, and the node is the side that knows
+        // what it is running. The app used to re-sort by its own protocol preference, which
+        // is no longer expressible — and was the wrong place to decide anyway.
+        Assert.Equal("vless-reality", Parse(Body).Candidates()[0].Id);
+    }
+
+    [Fact]
+    public void The_outbound_survives_intact()
+    {
+        // It is passed to the core verbatim, so anything lost in deserialisation is lost
+        // for good — and would surface as a config the core rejects at start.
+        var vless = Parse(Body).Candidates()[0].Outbound;
+
+        Assert.Equal("vless", vless["protocol"]!.GetValue<string>());
+        Assert.Equal(443, vless["settings"]!["vnext"]![0]!["port"]!.GetValue<int>());
+        Assert.Equal("xtls-rprx-vision",
+            vless["settings"]!["vnext"]![0]!["users"]![0]!["flow"]!.GetValue<string>());
+        Assert.Equal("www.microsoft.com",
+            vless["streamSettings"]!["realitySettings"]!["serverName"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void The_label_falls_back_to_the_id()
+    {
         var connection = Parse("""
-        { "server": null,
-          "vless": [ "vless://a@h:443?security=reality&pbk=K&sid=ab#one",
-                     "vless://b@h:8443?security=reality&pbk=K&sid=cd#two" ],
-          "hysteria2": null, "olcrtc": null }
+        {
+          "server": { "id": 1, "host": "h.example" },
+          "outbounds": [ { "id": "custom", "label": "", "outbound": { "protocol": "x" } } ]
+        }
         """);
 
-        var vless = connection.Candidates().Where(c => c.Protocol == ProtocolType.Vless).ToList();
-
-        Assert.Equal(2, vless.Count);
-        Assert.All(vless, c => Assert.NotNull(c.Link));
+        Assert.Equal("custom", connection.Candidates()[0].Label);
     }
 
     [Fact]
-    public void Olcrtc_arrives_as_an_object_not_a_link()
+    public void An_offer_with_no_outbound_is_dropped()
     {
-        var connection = Parse(FullResponse);
-        var rtc = connection.Candidates().Single(c => c.Protocol == ProtocolType.OlcRtc);
-
-        // No URI: there is nowhere in one to put a signalling room, which is exactly why
-        // the API stopped pretending there was.
-        Assert.Null(rtc.Link);
-        Assert.NotNull(rtc.OlcRtc);
-        Assert.Equal("wbstream", rtc.OlcRtc!.Provider);
-        Assert.Equal("R1", rtc.OlcRtc.RoomId);
-        Assert.Equal("U1", rtc.OlcRtc.Uuid);
-    }
-
-    [Fact]
-    public void Null_and_empty_endpoints_are_dropped_rather_than_offered()
-    {
-        // A node that publishes nothing must read as "no candidates", not as three broken
-        // ones — the connect path would otherwise spend a full fallback cycle failing.
+        // The API skips these, but a malformed row must not reach the connect loop as a
+        // candidate that throws the moment it is used.
         var connection = Parse("""
-        { "server": null, "vless": [ "", "   " ], "hysteria2": "", "olcrtc": null }
+        {
+          "server": { "id": 1, "host": "h.example" },
+          "outbounds": [ { "id": "broken", "label": "Broken" },
+                         { "id": "ok", "outbound": { "protocol": "vless" } } ]
+        }
         """);
 
+        Assert.Equal(["ok"], connection.Candidates().Select(c => c.Id));
+    }
+
+    [Fact]
+    public void A_node_with_nothing_to_offer_reads_as_empty()
+    {
+        // 503 is what the API returns in this case, but a body with an empty list has to
+        // degrade to "no candidates" rather than to a null reference.
+        var connection = Parse("""{ "server": { "id": 1, "host": "h.example" }, "outbounds": [] }""");
+
+        Assert.False(connection.HasAny);
         Assert.Empty(connection.Candidates());
+    }
+
+    [Fact]
+    public void A_body_from_the_previous_contract_reads_as_empty()
+    {
+        // What a cache entry written by an older build looks like after the schema change.
+        // It must produce no candidates rather than a half-populated one — the cache key was
+        // versioned for the same reason.
+        var connection = Parse("""
+        {
+          "server": { "id": 1, "host": "h.example" },
+          "vless": [ "vless://uid@h.example:443?security=reality#t" ],
+          "hysteria2": "hysteria2://pw@h.example:8443?sni=s#t"
+        }
+        """);
+
         Assert.False(connection.HasAny);
     }
 
     [Fact]
-    public void Half_filled_olcrtc_is_not_offered()
+    public void Candidates_carry_the_node_host()
     {
-        // A room id with no key cannot be dialled. Offering it would burn an attempt and
-        // report a protocol failure for what is really a provisioning gap.
-        var connection = Parse("""
-        { "server": null, "vless": [], "hysteria2": null,
-          "olcrtc": { "provider": "wbstream", "transport": "vp8channel",
-                      "room_id": "R1", "room_key": "", "uuid": "U1", "host": "h" } }
-        """);
-
-        Assert.Empty(connection.Candidates());
-    }
-
-    [Fact]
-    public void Missing_fields_deserialise_to_an_empty_offer_rather_than_throwing()
-    {
-        // An older or partially deployed API must degrade to "nothing on offer", which the
-        // connect path reports cleanly, rather than to an exception mid-connect.
-        var connection = Parse("{}");
-
-        Assert.Empty(connection.Candidates());
-        Assert.Null(connection.Server);
-    }
-
-    [Fact]
-    public void Ping_candidate_maps_the_documented_fields()
-    {
-        // PingCandidate carries no name — only a bound server has one — so ServerInfo has
-        // to derive a label rather than show an empty string.
-        var server = JsonSerializer.Deserialize<ServerInfo>("""
-        { "id": 12, "country": "DE", "city": "Frankfurt",
-          "current_load": 3, "reserved_count": 4, "max_clients": 20, "host": "de1.example.com" }
-        """)!;
-
-        Assert.Equal(12, server.Id);
-        Assert.Equal(4, server.ReservedCount);
-        Assert.Equal(16, server.FreeSlots);
-        Assert.True(server.HasCapacity);
-        Assert.Equal("Frankfurt", server.Name);
-        Assert.Equal("Frankfurt, DE", server.Location);
-    }
-
-    [Fact]
-    public void A_full_node_reports_no_capacity()
-    {
-        // Reserved, not current_load, is what the API checks — a node can be full with
-        // nobody online, and showing it as selectable earns a 409 at connect time.
-        var server = JsonSerializer.Deserialize<ServerInfo>("""
-        { "id": 1, "country": "DE", "city": "F", "host": "h",
-          "current_load": 0, "reserved_count": 20, "max_clients": 20 }
-        """)!;
-
-        Assert.Equal(0, server.FreeSlots);
-        Assert.False(server.HasCapacity);
-    }
-
-    [Fact]
-    public void Bound_server_projects_onto_the_shape_the_ui_binds_to()
-    {
-        var bound = JsonSerializer.Deserialize<BoundServer>("""
-        { "id": 12, "name": "Germany 1", "country": "DE", "city": "Frankfurt", "host": "de1.example.com" }
-        """)!;
-
-        var info = bound.ToServerInfo();
-
-        Assert.Equal(12, info.Id);
-        Assert.Equal("de1.example.com", info.Host);
-        Assert.Equal("Frankfurt, DE", info.Location);
+        // Used for diagnostics; the address actually dialled is read out of the outbound,
+        // because a profile is free to point an offer somewhere other than the node.
+        Assert.All(Parse(Body).Candidates(), c => Assert.Equal("ch1.horusping.com", c.NodeHost));
     }
 }

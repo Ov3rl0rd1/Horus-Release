@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Horus.Domain.Models
@@ -25,43 +26,45 @@ namespace Horus.Domain.Models
     }
 
     /// <summary>
-    /// olcRTC connection parameters.
+    /// One ready-to-run outbound the node offers, with this account already substituted in.
     ///
-    /// <para>Unlike the other two protocols this does not arrive as a share link, and could
-    /// not: olcRTC is signalling-based, so it identifies a <i>room</i> rather than an
-    /// address, and a URI has nowhere sensible to put that. The API sends the same four
-    /// values the node registered (<c>olcrtc_provider</c>, <c>_transport</c>,
-    /// <c>_room_id</c>, <c>_room_key</c>) plus the account's stable identity.</para>
+    /// <para><b>The API stopped speaking in share links.</b> It now hands the app a complete
+    /// xray outbound object built by the node itself. That is a deliberate inversion: the
+    /// API models no protocol at all, so a node can start offering something this app has
+    /// never heard of and its users get a working config the same day, with no release
+    /// here. URIs still exist, but only on the subscription path for third-party clients.</para>
     ///
-    /// <para>Returned only to the app. The base64 subscription served to third-party
-    /// clients carries vless and hysteria2 only, because no other client understands
-    /// this.</para>
+    /// <para>Which means <see cref="Outbound"/> is deliberately untyped and mostly opaque to
+    /// us. The app reads exactly two things out of it — the <c>protocol</c> name, for a
+    /// label, and the <c>address</c> fields, which have to be pre-resolved — and passes
+    /// everything else through untouched.</para>
     /// </summary>
-    public sealed class OlcRtcEndpoint
+    public sealed class ClientOutbound
     {
-        [JsonPropertyName("provider")] public string Provider { get; set; } = string.Empty;
-        [JsonPropertyName("transport")] public string Transport { get; set; } = string.Empty;
-        [JsonPropertyName("room_id")] public string RoomId { get; set; } = string.Empty;
-        [JsonPropertyName("room_key")] public string RoomKey { get; set; } = string.Empty;
+        /// <summary>Stable id from the node's profile, e.g. <c>vless-reality</c>.</summary>
+        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
 
-        /// <summary>The account's <c>vpn_uuid</c> — its identity on the node.</summary>
-        [JsonPropertyName("uuid")] public string Uuid { get; set; } = string.Empty;
+        /// <summary>Human-readable, shown in the UI.</summary>
+        [JsonPropertyName("label")] public string Label { get; set; } = string.Empty;
 
-        /// <summary>Which node the room belongs to. Informational: nothing dials it.</summary>
-        [JsonPropertyName("host")] public string Host { get; set; } = string.Empty;
+        /// <summary>The node-side inbound tag. Informational here.</summary>
+        [JsonPropertyName("tag")] public string Tag { get; set; } = string.Empty;
 
-        public bool IsUsable =>
-            !string.IsNullOrWhiteSpace(RoomId) && !string.IsNullOrWhiteSpace(RoomKey);
+        /// <summary>A complete xray outbound object.</summary>
+        [JsonPropertyName("outbound")] public JsonNode? Outbound { get; set; }
+
+        [JsonIgnore]
+        public bool IsUsable => Outbound is JsonObject && !string.IsNullOrWhiteSpace(Id);
     }
 
     /// <summary>
     /// Answer of <c>GET /servers/connect</c> for a session in the <c>X-Session-Key</c>
     /// header.
     ///
-    /// <para>Binding is <b>not</b> done here any more — <c>POST /servers/select</c> owns
-    /// that, and this endpoint only reads back what the caller is already bound to. It
-    /// still binds by auto-pick if the account has no node at all, so a first connect
-    /// works without the client having chosen.</para>
+    /// <para>Binding is <b>not</b> done here — <c>POST /servers/select</c> owns that, and
+    /// this endpoint reads back what the caller is already bound to. It still binds by
+    /// auto-pick if the account has no node at all, so a first connect works without the
+    /// client having chosen.</para>
     /// </summary>
     public sealed class ServerConnection
     {
@@ -69,82 +72,79 @@ namespace Horus.Domain.Models
         public BoundServer? Server { get; set; }
 
         /// <summary>
-        /// Every VLESS variant the node publishes.
-        ///
-        /// <para>An array, and treated as one: today it holds a single REALITY endpoint,
-        /// but the contract says a node may expose several. They are all offered to the
-        /// fallback loop in order, so a node that adds a second transport gets used without
-        /// an app release.</para>
+        /// Everything the node offers, <b>in the node's own order</b> — a profile lists its
+        /// preferred outbound first. The connect path keeps that order and only moves an
+        /// endpoint that has just failed to the back; it no longer imposes a preference of
+        /// its own, because the node is the side that knows what it is running.
         /// </summary>
-        [JsonPropertyName("vless")]
-        public List<string> Vless { get; set; } = [];
-
-        [JsonPropertyName("hysteria2")]
-        public string? Hysteria2 { get; set; }
-
-        /// <summary>Null when the node has not announced a room.</summary>
-        [JsonPropertyName("olcrtc")]
-        public OlcRtcEndpoint? OlcRtc { get; set; }
+        [JsonPropertyName("outbounds")]
+        public List<ClientOutbound> Outbounds { get; set; } = [];
 
         [JsonIgnore]
         public bool HasAny => Candidates().Count > 0;
 
         /// <summary>
-        /// Everything this node can be dialled with, one entry per usable endpoint.
-        ///
-        /// <para>Order here is only the node's; the connect path re-orders by its own
-        /// preference (see <c>VpnManager.FallbackOrder</c>). Empty strings and a
-        /// half-filled olcRTC block are dropped, so a caller never has to re-check.</para>
+        /// Everything this node can be dialled with. Unusable entries are dropped here so a
+        /// caller never has to re-check.
         /// </summary>
         public IReadOnlyList<ConnectionCandidate> Candidates()
         {
             var result = new List<ConnectionCandidate>();
 
-            if (!string.IsNullOrWhiteSpace(Hysteria2))
-                result.Add(ConnectionCandidate.FromLink(ProtocolType.Hysteria2, Hysteria2.Trim()));
-
-            foreach (var link in Vless)
+            foreach (var offer in Outbounds)
             {
-                if (string.IsNullOrWhiteSpace(link)) continue;
-                result.Add(ConnectionCandidate.FromLink(ProtocolType.Vless, link.Trim()));
+                if (!offer.IsUsable) continue;
+                result.Add(ConnectionCandidate.From(offer, Server?.Host));
             }
-
-            if (OlcRtc is { IsUsable: true } rtc)
-                result.Add(ConnectionCandidate.FromOlcRtc(rtc));
 
             return result;
         }
-
-        /// <summary>Whether the node published anything for <paramref name="type"/>.</summary>
-        public bool Offers(ProtocolType type) => Candidates().Any(c => c.Protocol == type);
     }
 
     /// <summary>
-    /// One dialable endpoint. Carries either a share link or an olcRTC block, because the
-    /// two protocols are described in different shapes and collapsing them into a string
-    /// would mean inventing a URI the API does not speak.
+    /// One dialable endpoint: the node's outbound plus what the app needs to know about it.
+    ///
+    /// <para>Identity is the offer <b>id</b>, a free-form string from the node's profile,
+    /// not an enum. That is what lets the fallback loop demote "the thing that just failed"
+    /// without the app having a name for it.</para>
     /// </summary>
     public sealed class ConnectionCandidate
     {
-        public required ProtocolType Protocol { get; init; }
+        /// <summary>Stable id within the node's profile. The key everything else uses.</summary>
+        public required string Id { get; init; }
 
-        /// <summary>The <c>vless://</c> or <c>hysteria2://</c> link. Null for olcRTC.</summary>
-        public string? Link { get; init; }
+        /// <summary>What to show the user. Falls back to the id.</summary>
+        public required string Label { get; init; }
 
-        /// <summary>The olcRTC parameters. Null for the link-based protocols.</summary>
-        public OlcRtcEndpoint? OlcRtc { get; init; }
+        /// <summary>
+        /// The <c>protocol</c> field of the outbound (<c>vless</c>, <c>hysteria</c>,
+        /// <c>olcrtc</c>, …). Used for logging and for deciding nothing — a protocol this
+        /// build has never heard of still runs, because the core is what has to understand
+        /// it, not this app.
+        /// </summary>
+        public required string ProtocolName { get; init; }
 
-        public static ConnectionCandidate FromLink(ProtocolType protocol, string link) =>
-            new() { Protocol = protocol, Link = link };
+        /// <summary>The outbound object, exactly as the node described it.</summary>
+        public required JsonNode Outbound { get; init; }
 
-        public static ConnectionCandidate FromOlcRtc(OlcRtcEndpoint endpoint) =>
-            new() { Protocol = ProtocolType.OlcRtc, OlcRtc = endpoint };
+        /// <summary>The node's hostname, from the <c>server</c> block. May be null.</summary>
+        public string? NodeHost { get; init; }
+
+        public static ConnectionCandidate From(ClientOutbound offer, string? nodeHost) => new()
+        {
+            Id = offer.Id,
+            Label = string.IsNullOrWhiteSpace(offer.Label) ? offer.Id : offer.Label,
+            ProtocolName = ReadProtocol(offer.Outbound),
+            Outbound = offer.Outbound!.DeepClone(),
+            NodeHost = nodeHost
+        };
+
+        private static string ReadProtocol(JsonNode? outbound) =>
+            outbound is JsonObject obj && obj.TryGetPropertyValue("protocol", out var value)
+                ? value?.GetValue<string>() ?? "unknown"
+                : "unknown";
 
         /// <summary>Short description for logs. Never includes the credential.</summary>
-        public override string ToString() => Protocol switch
-        {
-            ProtocolType.OlcRtc => $"olcRTC {OlcRtc?.Provider}/{OlcRtc?.Transport}",
-            _ => Protocol.ToString()
-        };
+        public override string ToString() => $"{Id} ({ProtocolName})";
     }
 }

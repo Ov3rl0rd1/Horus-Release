@@ -109,45 +109,6 @@ namespace Horus.Protocols
         /// server rendered the link wrong — interpolating a string[] into the URI is the
         /// classic case. Failing here turns that into something actionable.
         /// </summary>
-        /// <summary>
-        /// Builds a <see cref="ShareLink"/> from the structured olcRTC block the API sends.
-        ///
-        /// <para>olcRTC is the one protocol that does not arrive as a URI, because it
-        /// identifies a signalling room rather than an address. Everything downstream —
-        /// the fallback loop, the config builder, the diagnostics — is written against
-        /// <see cref="ShareLink"/>, so rather than teach all of it a second shape, the
-        /// block is projected onto one here.</para>
-        ///
-        /// <para><see cref="ShareLink.Port"/> stays 0 and <see cref="ShareLink.Host"/> is
-        /// the node the room belongs to. Neither is dialled: the outbound reaches the
-        /// provider's signalling service, not the node, which is also why this link needs
-        /// no DNS pre-resolution.</para>
-        /// </summary>
-        public static ShareLink FromOlcRtc(OlcRtcEndpoint endpoint)
-        {
-            ArgumentNullException.ThrowIfNull(endpoint);
-
-            if (string.IsNullOrWhiteSpace(endpoint.RoomId) || string.IsNullOrWhiteSpace(endpoint.RoomKey))
-                throw new FormatException("olcRTC endpoint is missing room_id or room_key.");
-
-            var parameters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["provider"] = endpoint.Provider,
-                ["transport"] = endpoint.Transport,
-                ["roomid"] = endpoint.RoomId,
-                ["uuid"] = endpoint.Uuid
-            };
-
-            return new ShareLink
-            {
-                Protocol = ProtocolType.OlcRtc,
-                Credential = endpoint.RoomKey,
-                Host = endpoint.Host,
-                Port = 0,
-                Tag = "olcRTC",
-                Params = parameters
-            };
-        }
 
         public static void Validate(ShareLink link)
         {

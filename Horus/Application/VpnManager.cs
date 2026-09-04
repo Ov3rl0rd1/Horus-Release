@@ -25,19 +25,6 @@ namespace Horus.Application
         private readonly IErrorReportingService _errorReporting;
 
         /// <summary>
-        /// Outbound fallback order. All three live inside the same xray instance, so a
-        /// fallback re-renders the config with a different proxy outbound rather than
-        /// swapping binaries.
-        ///
-        /// Hysteria2 leads: it is QUIC-based with salamander masking and port hopping, so
-        /// it survives conditions that kill a TCP/REALITY connection. Both its config and
-        /// the VLESS one are validated against the real core by
-        /// <c>Horus.Tests/XrayConfigBuilderTests</c>.
-        /// </summary>
-        private static readonly ProtocolType[] FallbackOrder =
-            [ProtocolType.Hysteria2, ProtocolType.Vless, ProtocolType.OlcRtc];
-
-        /// <summary>
         /// Backoff between automatic reconnect attempts. Deliberately reaching minutes:
         /// the common cause of a dead tunnel is a device with no usable network, and
         /// retrying every few seconds through that costs battery and fixes nothing.
@@ -53,7 +40,10 @@ namespace Horus.Application
         public VpnState State { get; private set; } = VpnState.Disconnected;
         public IVpnProtocol? ActiveProtocol { get; private set; }
         public ServerInfo? ActiveServer { get; private set; }
-        public ProtocolType? ActiveProtocolType { get; private set; }
+        public string? ActiveOfferId { get; private set; }
+
+        /// <summary>What the node calls the active offer. Shown to the user.</summary>
+        public string? ActiveOfferLabel { get; private set; }
         public string? LastProtocolLog { get; private set; }
 
         /// <summary>Egress IP seen without the proxy — i.e. the device's real address.</summary>
@@ -113,7 +103,7 @@ namespace Horus.Application
         /// Wi-Fi, the phone moves to mobile where that operator blocks it, and without this
         /// every reconnect picks Hysteria2 again because it is first in the fallback order.
         /// </summary>
-        private ProtocolType? _demotedProtocol;
+        private string? _demotedOffer;
 
         private int _reconnectAttempt;
         private CancellationTokenSource? _reconnectCts;
@@ -215,8 +205,8 @@ namespace Horus.Application
             yield return new("state", State.ToString());
             yield return new("userWantsConnection", _userWantsConnection.ToString());
             yield return new("tunnelState", _platform.CurrentState.ToString());
-            yield return new("protocol", ActiveProtocolType?.ToString());
-            yield return new("demoted", _demotedProtocol?.ToString());
+            yield return new("offer", ActiveOfferId);
+            yield return new("demoted", _demotedOffer?.ToString());
             yield return new("server", ActiveServer?.Name);
             yield return new("reconnectAttempt", _reconnectAttempt.ToString());
             yield return new("pendingRecovery", _recovery.Pending);
@@ -297,11 +287,12 @@ namespace Horus.Application
                     throw new InvalidOperationException(
                         "Сервер не предложил ни одного поддерживаемого способа подключения.");
 
-                var (protocol, usedType, usedConfig) =
+                var (protocol, usedConfig) =
                     await ConnectWithFallbackAsync(available, ct);
 
                 ActiveProtocol = protocol;
-                ActiveProtocolType = usedType;
+                ActiveOfferId = usedConfig.OfferId;
+                ActiveOfferLabel = usedConfig.DisplayName;
 
                 // Establish TUN, apply routing
                 var tunnelOptions = BuildTunnelOptions(server, usedConfig);
@@ -360,7 +351,7 @@ namespace Horus.Application
                 await SafeTeardownAsync();
                 SetState(VpnState.Disconnected, ex.Message);
                 ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(
-                    ActiveProtocolType?.ToString() ?? "Unknown", ex.Message, false));
+                    ActiveOfferId ?? "Unknown", ex.Message, false));
                 throw;
             }
         }
@@ -375,7 +366,7 @@ namespace Horus.Application
             _recovery.Cancel();
             _reconnectCts?.Cancel();
             _reconnectAttempt = 0;
-            _demotedProtocol = null;
+            _demotedOffer = null;
 
             if (State == VpnState.Disconnected) return;
 
@@ -388,7 +379,8 @@ namespace Horus.Application
                 await DetachProtocolAsync();
 
                 ActiveServer = null;
-                ActiveProtocolType = null;
+                ActiveOfferId = null;
+            ActiveOfferLabel = null;
                 SetState(VpnState.Disconnected, null);
             }
             catch (Exception ex)
@@ -439,7 +431,7 @@ namespace Horus.Application
 
             _errorReporting.SetContext("preflightDirectIp", direct);
             _errorReporting.SetContext("preflightProxiedIp", proxied);
-            _errorReporting.SetContext("protocol", ActiveProtocolType?.ToString());
+            _errorReporting.SetContext("offer", ActiveOfferId);
             _errorReporting.SetContext("coreVersion", XrayProtocol.CoreVersion);
 
             if (LastPreflightProxiedIp is not null)
@@ -542,9 +534,9 @@ namespace Horus.Application
                     $"[health] still carrying nothing after {dead.TotalMinutes:F0} min — rebuilding anyway");
             }
 
-            if (e.Health == TunnelHealth.OutboundDead && ActiveProtocolType is { } failing)
+            if (e.Health == TunnelHealth.OutboundDead && ActiveOfferId is { } failing)
             {
-                _demotedProtocol = failing;
+                _demotedOffer = failing;
                 OnProtocolOutput(this, $"[health] demoting {failing} for the next attempt");
             }
 
@@ -749,7 +741,7 @@ namespace Horus.Application
         {
             if (!WantsConnection) return;
 
-            var protocol = ActiveProtocolType?.ToString() ?? "Unknown";
+            var protocol = ActiveOfferId ?? "Unknown";
 
             // Captured before the teardown, which clears it. Without this the reconnect
             // would come back in Auto mode and the Home card would forget the server the
@@ -784,7 +776,8 @@ namespace Horus.Application
                 try { await DetachProtocolAsync(); } catch { /* already dead */ }
             }
 
-            ActiveProtocolType = null;
+            ActiveOfferId = null;
+            ActiveOfferLabel = null;
             SetState(VpnState.Disconnected, reason);
             ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, true));
 
@@ -905,12 +898,13 @@ namespace Horus.Application
         {
             if (State != VpnState.Connected) return;
 
-            var protocol = ActiveProtocolType?.ToString() ?? "Unknown";
+            var protocol = ActiveOfferId ?? "Unknown";
             SetState(VpnState.Disconnecting, reason);
 
             _health.Stop();
             await SafeTeardownAsync();
-            ActiveProtocolType = null;
+            ActiveOfferId = null;
+            ActiveOfferLabel = null;
             SetState(VpnState.Disconnected, reason);
 
             // Consults the persisted intent as well: a revoke clears it from inside the
@@ -924,7 +918,7 @@ namespace Horus.Application
 
         // ── Connect helpers ─────────────────────────────────────────────────
 
-        private async Task<(IVpnProtocol Protocol, ProtocolType Type, ProtocolConfig Config)> ConnectWithFallbackAsync(
+        private async Task<(IVpnProtocol Protocol, ProtocolConfig Config)> ConnectWithFallbackAsync(
             IReadOnlyList<ConnectionCandidate> available, CancellationToken ct)
         {
             Exception? lastEx = null;
@@ -932,16 +926,15 @@ namespace Horus.Application
             for (int i = 0; i < available.Count; i++)
             {
                 var candidate = available[i];
-                var protocolType = candidate.Protocol;
                 IVpnProtocol? protocol = null;
 
                 try
                 {
                     var config = await _protocolFactory.CreateConfigAsync(candidate, ct);
-                    protocol = _protocolFactory.Create(protocolType);
+                    protocol = _protocolFactory.Create();
                     Attach(protocol);
 
-                    if (config is XrayConfig xc) LogHandshakeParameters(protocolType, xc);
+                    if (config is XrayConfig xc) LogOfferParameters(xc);
 
                     await protocol.ConnectAsync(config, ct);
 
@@ -953,7 +946,7 @@ namespace Horus.Application
                     if (!await RunPreflightAsync(
                             config is XrayConfig pc ? pc.SocksPort : XrayConfig.DefaultSocksPort, ct))
                         throw new InvalidOperationException(
-                            $"{protocolType} came up but carried no traffic " +
+                            $"{candidate.Id} came up but carried no traffic " +
                             $"(preflight: direct={LastPreflightDirectIp ?? "—"}, " +
                             $"proxied={LastPreflightProxiedIp ?? "—"}).");
 
@@ -961,7 +954,7 @@ namespace Horus.Application
                         ProtocolFallback?.Invoke(this, new ProtocolFallbackEventArgs(
                             available[i - 1].ToString(), candidate.ToString(), lastEx.Message));
 
-                    return (protocol, protocolType, config);
+                    return (protocol, config);
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
@@ -977,7 +970,7 @@ namespace Horus.Application
 
                     var protocolLog = _protocolLogBuffer.ToString();
                     _errorReporting.RecordConnectionFailure(
-                        protocolType.ToString(), ex.Message, protocolLog);
+                        candidate.Id, ex.Message, protocolLog);
 
                     if (i == available.Count - 1)
                     {
@@ -1131,7 +1124,7 @@ namespace Horus.Application
         /// address bypassed, which the API does not publish.</para>
         /// </summary>
         private static string? NodeAddress(ProtocolConfig config) =>
-            config is XrayConfig xc && System.Net.IPAddress.TryParse(xc.Link.DialAddress, out var ip)
+            config is XrayConfig xc && System.Net.IPAddress.TryParse(xc.NodeAddress, out var ip)
                 ? ip.ToString()
                 : null;
 
@@ -1147,37 +1140,19 @@ namespace Horus.Application
         }
 
         /// <summary>
-        /// Logs the public half of the handshake parameters.
+        /// Logs what the node offered, without the credential.
         ///
-        /// <para>Never the credential. These are the values a server-side provisioning
-        /// mistake corrupts, and comparing them against a known-good endpoint is the
-        /// fastest way to spot one — which only works if they are safe to paste into a
-        /// support chat.</para>
+        /// <para>Much shorter than it used to be, and deliberately so. This used to print
+        /// the REALITY handshake parameters field by field, because the app assembled them
+        /// and a server-side provisioning mistake showed up as a subtly wrong config. The
+        /// node builds the outbound now, so there is nothing here the app could have got
+        /// wrong — what is worth recording is which offer was chosen and where it dials.</para>
         /// </summary>
-        private void LogHandshakeParameters(ProtocolType protocolType, XrayConfig config)
+        private void LogOfferParameters(XrayConfig config)
         {
-            var link = config.Link;
-
-            if (protocolType == ProtocolType.OlcRtc)
-            {
-                // Signalling-based: no address, no SNI, nothing resolved. The room id is
-                // omitted deliberately — paired with the key it is a credential.
-                OnProtocolOutput(this,
-                    $"[{protocolType}] provider={link.Params.GetValueOrDefault("provider")} " +
-                    $"transport={link.Params.GetValueOrDefault("transport")} node={link.Host}");
-                return;
-            }
-
             OnProtocolOutput(this,
-                $"[{protocolType}] {link.Host} -> {link.DialAddress}:{link.Port}" +
-                (link.ResolvedHost is null ? " (DNS FAILED, using hostname)" : ""));
-
-            OnProtocolOutput(this, protocolType == ProtocolType.Vless
-                ? $"[{protocolType}] sni={link.Sni} fp={link.Fingerprint} " +
-                  $"flow={link.Flow ?? "-"} pbk={link.PublicKey} sid={link.ShortId} " +
-                  $"net={link.Network} sec={link.Security}"
-                : $"[{protocolType}] sni={link.Sni} alpn=[{string.Join(',', link.Alpn)}] " +
-                  $"obfs={link.Obfs ?? "-"} hop={link.PortRange ?? "-"}");
+                $"[{config.OfferId}] {config.ProtocolName} -> {config.NodeAddress ?? "no address"} " +
+                $"(socks {config.SocksPort})");
         }
 
         /// <summary>
@@ -1258,16 +1233,18 @@ namespace Horus.Application
         /// </summary>
         private List<ConnectionCandidate> OrderCandidates(IReadOnlyList<ConnectionCandidate> offered)
         {
-            var ordered = offered
-                .Where(c => FallbackOrder.Contains(c.Protocol))
-                .OrderBy(c => Array.IndexOf(FallbackOrder, c.Protocol))
-                .ToList();
+            // The node's order is kept as given: a profile lists its preferred offer first,
+            // and the node is the side that knows what it is actually running. This used to
+            // impose the app's own protocol preference, which stopped being expressible when
+            // offers became free-form ids — and was the wrong place to decide anyway.
+            var ordered = offered.ToList();
 
-            if (_demotedProtocol is not { } demoted || ordered.Count < 2) return ordered;
-            if (ordered.All(c => c.Protocol == demoted)) return ordered;
+            if (_demotedOffer is not { } demoted || ordered.Count < 2) return ordered;
+            if (ordered.All(c => c.Id == demoted)) return ordered;
 
-            return [.. ordered.Where(c => c.Protocol != demoted),
-                    .. ordered.Where(c => c.Protocol == demoted)];
+            // Moved to the back rather than dropped: an offer that failed on one network
+            // may be the best choice on the next one.
+            return [.. ordered.Where(c => c.Id != demoted), .. ordered.Where(c => c.Id == demoted)];
         }
 
         private void SetState(VpnState newState, string? reason)

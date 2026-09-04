@@ -32,7 +32,11 @@ public class SocksPortContractTests
 
     private static XrayConfig XrayFor(int port) => new()
     {
-        Link = ShareLinkParser.Parse("vless://uid@h.example:443?security=reality&pbk=K&sid=S#t"),
+        // Any outbound will do: the port under test is the app's SOCKS inbound, which the
+        // node's outbound has nothing to do with.
+        Outbound = System.Text.Json.Nodes.JsonNode.Parse(
+            """{"tag":"proxy","protocol":"vless","settings":{}}""")!,
+        Offer = "vless-reality",
         SocksPort = port
     };
 

@@ -316,8 +316,11 @@ namespace Horus.Application
                              ?? throw new InvalidOperationException("Пустой ответ сервера подключения.");
 
             if (!connection.HasAny)
+                // 503 is what the API returns when a node's profile failed to render or it
+                // has not re-registered since an upgrade. A body that parses but carries no
+                // outbounds means the same thing.
                 throw new InvalidOperationException(
-                    "Сервер не вернул ни одного способа подключения (vless / hysteria2 / olcRTC).");
+                    "Сервер не вернул ни одного способа подключения.");
 
             var offered = string.Join(", ", connection.Candidates().Select(c => c.ToString()));
             Diag.Info("api", $"node {connection.Server?.Name ?? "?"} offers: {offered}");

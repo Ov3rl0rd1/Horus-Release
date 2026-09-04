@@ -141,15 +141,14 @@ namespace Horus.Presentation.ViewModels
         /// Which outbound is actually carrying traffic, for the caption under the status
         /// pill. Empty unless connected — naming a protocol we aren't using would be worse
         /// than saying nothing.
+        ///
+        /// The node's own label for the offer in use. Taken from the API rather than mapped
+        /// from an enum here: the node decides what it is running and what to call it, so a
+        /// protocol this build has never heard of still shows a sensible name instead of
+        /// falling through to blank.
         /// </summary>
         public string ActiveProtocolLabel => IsOn
-            ? _vpnManager.ActiveProtocolType switch
-            {
-                ProtocolType.Hysteria2 => "Hysteria2",
-                ProtocolType.Vless => "VLESS",
-                ProtocolType.OlcRtc => "olcRTC",
-                _ => string.Empty
-            }
+            ? _vpnManager.ActiveOfferLabel ?? string.Empty
             : string.Empty;
 
         public bool ShowActiveProtocol => ActiveProtocolLabel.Length > 0;
