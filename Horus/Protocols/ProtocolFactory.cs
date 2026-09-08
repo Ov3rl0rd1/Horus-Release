@@ -83,11 +83,56 @@ namespace Horus.Protocols
                 LogFilePath = DiagnosticPaths.XrayLog,
                 LogLevel = Horus.Application.UserPreferences.XrayLogLevel,
 
+                Geo = ResolveGeoRouting(),
+
                 // Chosen per attempt rather than fixed at 1080. The fallback loop stops the
                 // core between attempts, so a retry re-picks the same port unless something
                 // else took it meanwhile — which is exactly when moving is the right answer.
                 SocksPort = SocksPortAllocator.Allocate()
             };
+        }
+
+        /// <summary>
+        /// Turns the user's geo-routing preference into routing options the core can
+        /// actually resolve — or into nothing at all.
+        ///
+        /// <para><b>The preference is a request, not a state, and this is the one place
+        /// that decides.</b> Emitting <c>geoip:ru</c> without the <c>.dat</c> files present
+        /// is not a degraded configuration: xray rejects it during <c>XrayTest</c> and the
+        /// tunnel never comes up. So the order here matters — point the core at the asset
+        /// directory <i>first</i>, and only build the rules if that succeeded. Everything
+        /// that can go wrong (files never downloaded, a core too old to export
+        /// <c>XraySetAssetPath</c>, a platform where <c>direct</c> is not direct) collapses
+        /// into the same outcome: the user connects without geo routing rather than not
+        /// connecting.</para>
+        ///
+        /// <para>Deliberately in the config builder's path rather than at start-up. The
+        /// asset path is process-global state in the core, and this runs immediately before
+        /// the config that depends on it is rendered — which makes "the core knows where
+        /// the files are" and "the config names a category" impossible to get out of
+        /// step.</para>
+        /// </summary>
+        private GeoRoutingOptions ResolveGeoRouting()
+        {
+            if (!Horus.Application.UserPreferences.GeoRoutingEnabled)
+                return GeoRoutingOptions.Disabled;
+
+            var assets = _sp.GetService<IGeoAssetService>();
+
+            if (assets is null || !assets.IsSupported)
+            {
+                Diag.Info("geo", "geo routing requested but unsupported on this platform");
+                return GeoRoutingOptions.Disabled;
+            }
+
+            if (!assets.Activate())
+            {
+                Diag.Warn("geo", "geo routing requested but the rule files are not usable; connecting without it");
+                return GeoRoutingOptions.Disabled;
+            }
+
+            Diag.Info("geo", "geo routing on: Russian sites and networks go direct");
+            return GeoRoutingOptions.ForRussianBypass();
         }
 
         /// <summary>

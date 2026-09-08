@@ -31,19 +31,28 @@ namespace Horus
             "https://github.com/Ov3rl0rd1/Horus-Release/releases";
 
         /// <summary>
-        /// Where <c>geoip.dat</c> / <c>geosite.dat</c> and their <c>.sha256sum</c> sidecars
-        /// are fetched from. Empty disables geo routing entirely.
+        /// Where <c>geoip.dat</c> is fetched from. The <c>.sha256sum</c> sidecar is assumed
+        /// to sit beside it under the same name; nothing installs without one.
         ///
-        /// <para>Default is the Russia-specific rule set, which is the one that matters for
-        /// these users: it carries <c>geosite:ru-blocked</c> (what must be proxied) and
-        /// <c>geosite:ru-available-only-inside</c> (what must not be), alongside every
-        /// v2fly category. The generic v2fly build has neither.</para>
+        /// <para><b>Two URLs rather than one base, because the files come from two
+        /// repositories.</b> <c>horus-geoip</c> and <c>horus-geosite</c> are separate forks
+        /// with separate release cadences — geoip monthly from MaxMind, geosite daily from
+        /// v2fly's domain list — and each publishes a <c>release</c> branch holding exactly
+        /// its <c>.dat</c> and that file's checksum. Pointing at the branch rather than at a
+        /// GitHub release keeps the URL constant: the branch is force-pushed on every build,
+        /// so there is no tag to track and no API call to make.</para>
         ///
-        /// <para>The files are large — about 18 MB and 74 MB — which is why they are
-        /// downloaded on an unmetered network rather than shipped in the APK.</para>
+        /// <para>Both are Russia-only builds, which is what makes the pair small enough
+        /// (~400 KB together) to refresh casually. Empty disables geo routing entirely —
+        /// and it must be empty on both or neither, since the generated config names a
+        /// category from each file.</para>
         /// </summary>
-        public static string GeoAssetsBaseUrl { get; set; } =
-            "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download";
+        public static string GeoIpUrl { get; set; } =
+            "https://raw.githubusercontent.com/Ov3rl0rd1/horus-geoip/release/geoip.dat";
+
+        /// <summary>Where <c>geosite.dat</c> is fetched from. See <see cref="GeoIpUrl"/>.</summary>
+        public static string GeoSiteUrl { get; set; } =
+            "https://raw.githubusercontent.com/Ov3rl0rd1/horus-geosite/release/geosite.dat";
 
         /// <summary>
         /// Android package names that must always bypass the tunnel, whatever split-tunnel
