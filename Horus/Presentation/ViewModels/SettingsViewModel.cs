@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Horus.Application;
@@ -13,7 +13,7 @@ namespace Horus.Presentation.ViewModels
     public partial class SettingsViewModel : ObservableObject
     {
         private readonly IAuthService _auth;
-        private readonly IGeoDataService _geo;
+        private readonly IGeoAssetService _geoAssets;
         private readonly IRoutingService _routing;
         private readonly ISplitTunnelingService _splitTunneling;
         private readonly IErrorReportingService _errorReporting;
@@ -49,10 +49,44 @@ namespace Horus.Presentation.ViewModels
         public string SplitTunnelingValue =>
             SplitTunnelingMode == SplitTunnelingMode.Disabled ? "выкл" : "включён";
 
-        // ── GeoIP ────────────────────────────────────────────────────────────
-        [ObservableProperty] private string _geoDbStatus = "Not loaded";
+        // ── Гео-маршрутизация ────────────────────────────────────────────────
+
+        /// <summary>
+        /// Hidden entirely where the platform cannot make a direct rule direct — see
+        /// <see cref="IGeoAssetService.IsSupported"/>. The alternative, a visible switch
+        /// that quietly loops traffic back into the tunnel, is the failure this section is
+        /// most able to cause.
+        /// </summary>
+        [ObservableProperty] private bool _geoSupported;
+
+        /// <summary>True once both .dat files are on disk.</summary>
+        [ObservableProperty] private bool _geoInstalled;
+
+        /// <summary>Subtitle for the rule-file row: when it was installed, or that it is not.</summary>
+        [ObservableProperty] private string _geoDbStatus = "не загружена";
+
+        /// <summary>Subtitle for the check row. Carries the result of the last check.</summary>
+        [ObservableProperty] private string _geoCheckStatus = "нажмите, чтобы проверить";
+
         [ObservableProperty] private bool _isUpdatingGeoDb;
-        [ObservableProperty] private bool _ruBypassEnabled = true;
+        [ObservableProperty] private bool _isCheckingGeoDb;
+
+        /// <summary>
+        /// The user's request to route Russian traffic around the tunnel.
+        ///
+        /// <para>Backed by <see cref="UserPreferences.GeoRoutingEnabled"/> rather than by
+        /// the service, because the connect path reads it from a place with no DI scope.
+        /// The setter refuses to switch on without the files: naming a category the core
+        /// cannot resolve does not degrade the tunnel, it stops the tunnel starting at
+        /// all.</para>
+        /// </summary>
+        [ObservableProperty] private bool _geoRoutingEnabled = UserPreferences.GeoRoutingEnabled;
+
+        /// <summary>Label for the rule-file row's action, which depends on whether there is one.</summary>
+        public string GeoUpdateAction => GeoInstalled ? "Обновить" : "Загрузить";
+
+        /// <summary>Dimmed while there is nothing to enable.</summary>
+        public double GeoToggleOpacity => GeoInstalled ? 1.0 : 0.4;
 
         // ── Routing rules ─────────────────────────────────────────────────────
         [ObservableProperty] private string _routingRulesStatus = "Not fetched";
@@ -108,7 +142,7 @@ namespace Horus.Presentation.ViewModels
 
         public SettingsViewModel(
             IAuthService auth,
-            IGeoDataService geo,
+            IGeoAssetService geoAssets,
             IRoutingService routing,
             ISplitTunnelingService splitTunneling,
             IErrorReportingService errorReporting,
@@ -117,7 +151,7 @@ namespace Horus.Presentation.ViewModels
             PaymentViewModel payment)
         {
             _auth = auth;
-            _geo = geo;
+            _geoAssets = geoAssets;
             _routing = routing;
             _splitTunneling = splitTunneling;
             _errorReporting = errorReporting;
@@ -161,8 +195,16 @@ namespace Horus.Presentation.ViewModels
             await Task.CompletedTask;
         }
 
-        // ── GeoIP ────────────────────────────────────────────────────────────
+        // ── Гео-маршрутизация ────────────────────────────────────────────────
 
+        /// <summary>
+        /// Downloads or refreshes the rule files.
+        ///
+        /// <para>Both files or neither, verified against the checksums the provider
+        /// publishes beside them — see <see cref="Horus.Application.Routing.GeoAssetService"/>.
+        /// A failure here is reported and nothing else changes: the previous pair, if any,
+        /// is still installed and still correct.</para>
+        /// </summary>
         [RelayCommand]
         async Task UpdateGeoDbAsync()
         {
@@ -170,18 +212,101 @@ namespace Horus.Presentation.ViewModels
             IsUpdatingGeoDb = true;
             try
             {
-                await _geo.UpdateGeoDataAsync(string.Empty, string.Empty);
+                var ok = await _geoAssets.UpdateAsync();
                 RefreshGeoStatus();
-                ShowStatus("GeoIP database updated.");
+
+                if (ok)
+                {
+                    GeoCheckStatus = "актуальна";
+                    ShowStatus("База гео-правил обновлена.");
+                }
+                else
+                {
+                    // Not an exception path. The provider being unreachable is the normal
+                    // state for these users with the tunnel down, and saying so plainly is
+                    // more useful than an error dialog.
+                    ShowStatus("Не удалось загрузить базу — источник недоступен.");
+                }
             }
             catch (Exception ex)
             {
-                ShowStatus($"GeoIP update failed: {ex.Message}");
+                ShowStatus($"Ошибка загрузки базы: {ex.Message}");
             }
             finally
             {
                 IsUpdatingGeoDb = false;
             }
+        }
+
+        /// <summary>
+        /// Asks the provider whether the installed files are current, without downloading
+        /// them — two checksum sidecars, about a hundred bytes each.
+        /// </summary>
+        [RelayCommand]
+        async Task CheckGeoDbAsync()
+        {
+            if (IsCheckingGeoDb) return;
+            IsCheckingGeoDb = true;
+            try
+            {
+                var check = await _geoAssets.CheckAsync();
+
+                GeoCheckStatus = check.State switch
+                {
+                    GeoAssetState.Missing => "база не установлена",
+                    GeoAssetState.UpToDate => $"актуальна · проверено {DateTime.Now:HH:mm}",
+                    GeoAssetState.UpdateAvailable => "доступно обновление",
+                    _ => "источник недоступен"
+                };
+
+                if (check.State == GeoAssetState.UpdateAvailable)
+                    ShowStatus("Доступно обновление базы гео-правил.");
+            }
+            catch (Exception ex)
+            {
+                GeoCheckStatus = "источник недоступен";
+                ShowStatus($"Проверка не удалась: {ex.Message}");
+            }
+            finally
+            {
+                IsCheckingGeoDb = false;
+            }
+        }
+
+        /// <summary>
+        /// Persists the toggle, and refuses it when there is nothing installed to route
+        /// with. Bouncing the property back is deliberate: the alternative is a switch that
+        /// reads "on" while every connect silently drops the setting.
+        /// </summary>
+        /// <summary>Set while the ViewModel is writing the toggle back to itself, so the
+        /// bounce below does not also announce itself as a second, contradictory message.</summary>
+        private bool _revertingGeoToggle;
+
+        partial void OnGeoRoutingEnabledChanged(bool value)
+        {
+            if (_revertingGeoToggle) return;
+
+            if (value && !GeoInstalled)
+            {
+                _revertingGeoToggle = true;
+                GeoRoutingEnabled = false;
+                _revertingGeoToggle = false;
+
+                UserPreferences.GeoRoutingEnabled = false;
+                ShowStatus("Сначала загрузите базу гео-правил.");
+                return;
+            }
+
+            UserPreferences.GeoRoutingEnabled = value;
+            ShowStatus(value
+                ? "Российские сайты пойдут напрямую при следующем подключении."
+                : "Гео-маршрутизация выключена.");
+        }
+
+        partial void OnGeoInstalledChanged(bool value)
+        {
+            OnPropertyChanged(nameof(GeoUpdateAction));
+            OnPropertyChanged(nameof(GeoToggleOpacity));
         }
 
         // ── Routing rules ─────────────────────────────────────────────────────
@@ -583,12 +708,34 @@ namespace Horus.Presentation.ViewModels
 
         // ── Helpers ──────────────────────────────────────────────────────────
 
+        /// <summary>
+        /// Re-reads what is on disk. Cheap and side-effect free — deliberately not a check
+        /// against the provider, which costs a network round trip and belongs behind the
+        /// user's own tap.
+        /// </summary>
         private void RefreshGeoStatus()
         {
-            if (_geo.IsGeoIpLoaded)
-                GeoDbStatus = $"Loaded — {_geo.GeoIpLastUpdated?.ToLocalTime().ToString("d MMM yyyy") ?? "unknown date"}";
-            else
-                GeoDbStatus = "Not loaded";
+            GeoSupported = _geoAssets.IsSupported;
+            GeoInstalled = _geoAssets.IsInstalled;
+
+            var installedAt = _geoAssets.LastUpdatedUtc;
+
+            GeoDbStatus = !GeoInstalled
+                ? "не загружена"
+                : installedAt is { } at
+                    ? $"обновлена {at.ToLocalTime():d MMM yyyy}"
+                    : "установлена";
+
+            // The files can go missing between sessions — cleared storage, a restored
+            // backup — while the preference survives. Connecting would silently drop the
+            // setting anyway; showing it as off is the honest version of the same thing.
+            // Written through the field so this does not read as the user flipping it.
+            if (!GeoInstalled && GeoRoutingEnabled)
+            {
+                UserPreferences.GeoRoutingEnabled = false;
+                _geoRoutingEnabled = false;
+                OnPropertyChanged(nameof(GeoRoutingEnabled));
+            }
         }
 
         private void ShowStatus(string message)

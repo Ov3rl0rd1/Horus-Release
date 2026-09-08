@@ -75,6 +75,70 @@
                 </Border>
             </VerticalStackLayout>
 
+            <!-- ГЕО-МАРШРУТИЗАЦИЯ
+                 Hidden entirely where the platform cannot make a "direct" rule direct.
+                 On Windows the direct outbound is the OS route table, and with a default
+                 route into the tunnel a direct packet comes straight back in — the node and
+                 the resolvers escape only because each gets its own /32, and the Russian
+                 set is 23 000 prefixes. A switch that silently loops traffic is worse than
+                 no switch. -->
+            <VerticalStackLayout Spacing="6" IsVisible="{Binding GeoSupported}">
+                <Label Text="ГЕО-МАРШРУТИЗАЦИЯ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout Spacing="0">
+                        <!-- Dimmed rather than hidden while there is no database: the row
+                             explains what the download below is for. -->
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56" ColumnSpacing="12"
+                              Opacity="{Binding GeoToggleOpacity}">
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Российские сайты напрямую" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="Банки и госуслуги мимо VPN, заблокированные — через"
+                                       Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <controls:PillToggle Grid.Column="1" VerticalOptions="Center" IsToggled="{Binding GeoRoutingEnabled}" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding UpdateGeoDbCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="База гео-правил" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="{Binding GeoDbStatus}" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <ActivityIndicator Grid.Column="1" IsRunning="{Binding IsUpdatingGeoDb}"
+                                               IsVisible="{Binding IsUpdatingGeoDb}"
+                                               Color="{StaticResource HzGoldLight}" HeightRequest="16" WidthRequest="16"
+                                               VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding GeoUpdateAction}" Style="{StaticResource HzDim}"
+                                   FontSize="13" VerticalOptions="Center"
+                                   IsVisible="{Binding IsUpdatingGeoDb, Converter={StaticResource InvertBoolConverter}}" />
+                            <controls:IconView Grid.Column="2" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
+                        <!-- A check is two checksum sidecars, ~100 bytes each — not a
+                             download of the database. Separate from the update row so
+                             looking is never the same act as replacing. -->
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" MinimumHeightRequest="56" ColumnSpacing="8">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding CheckGeoDbCommand}" />
+                            </Grid.GestureRecognizers>
+                            <VerticalStackLayout Grid.Column="0" Spacing="2" VerticalOptions="Center">
+                                <Label Text="Проверить обновления" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <Label Text="{Binding GeoCheckStatus}" Style="{StaticResource HzDim}" FontSize="12" />
+                            </VerticalStackLayout>
+                            <ActivityIndicator Grid.Column="1" IsRunning="{Binding IsCheckingGeoDb}"
+                                               IsVisible="{Binding IsCheckingGeoDb}"
+                                               Color="{StaticResource HzGoldLight}" HeightRequest="16" WidthRequest="16"
+                                               VerticalOptions="Center" />
+                            <controls:IconView Grid.Column="2" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                                Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
             <!-- АККАУНТ -->
             <VerticalStackLayout Spacing="6">
                 <Label Text="АККАУНТ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />

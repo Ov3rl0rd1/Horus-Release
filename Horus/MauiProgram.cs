@@ -103,8 +103,9 @@ namespace Horus
             // on a permission re-read at resume, and when the updater reports it is parked.
             services.AddSingleton<INoticeService, Horus.Application.Notices.NoticeService>();
 
-            // Geo rule files. Scaffolding: registered and usable, but nothing enables geo
-            // routing yet and there is no settings screen for it.
+            // Geo rule files. Switched on from Settings, off by default, and dropped at
+            // connect time on any platform where a "direct" rule would loop back into the
+            // tunnel — see IGeoAssetService.IsSupported.
             services.AddSingleton<IGeoAssetService, Horus.Application.Routing.GeoAssetService>();
 
             // ── Platform Services ────────────────────────────────────────────
@@ -206,6 +207,15 @@ namespace Horus
 
                 if (root.TryGetProperty("UpdateReleasesUrl", out var releases))
                     AppConfiguration.UpdateReleasesUrl = releases.GetString() ?? AppConfiguration.UpdateReleasesUrl;
+
+                // Two separate repositories, so two URLs. Setting either to an empty string
+                // disables geo routing: the generated config names a category from each
+                // file, so one without the other fails the core's parse.
+                if (root.TryGetProperty("GeoIpUrl", out var geoIp))
+                    AppConfiguration.GeoIpUrl = geoIp.GetString() ?? AppConfiguration.GeoIpUrl;
+
+                if (root.TryGetProperty("GeoSiteUrl", out var geoSite))
+                    AppConfiguration.GeoSiteUrl = geoSite.GetString() ?? AppConfiguration.GeoSiteUrl;
 
                 if (root.TryGetProperty("BlockedPackages", out var blocked)
                     && blocked.ValueKind == JsonValueKind.Array)

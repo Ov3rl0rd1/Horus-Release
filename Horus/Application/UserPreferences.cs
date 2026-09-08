@@ -17,6 +17,7 @@ namespace Horus.Application
         private const string AutoConnectKey = "horus.pref.autoconnect";
         private const string VerboseLogKey = "horus.pref.verboselog";
         private const string MeteredKey = "horus.pref.metered";
+        private const string GeoRoutingKey = "horus.pref.georouting";
 
         /// <summary>
         /// Bring the tunnel back after a reboot. Read by <c>BootReceiver</c>, which also
@@ -73,6 +74,26 @@ namespace Horus.Application
         }
 
         /// <summary>
+        /// Route Russian sites and networks around the tunnel.
+        ///
+        /// <para>Off by default, and the default is not timidity: turning it on with no
+        /// rule files installed would name a category the core cannot resolve, and xray
+        /// answers that by refusing the config outright — the tunnel would simply stop
+        /// coming up. The connect path therefore treats this as a request rather than a
+        /// state, and drops it unless <c>IGeoAssetService.Activate</c> succeeded. The
+        /// settings screen enforces the same thing from the other side by not offering the
+        /// toggle until the files are there.</para>
+        ///
+        /// <para>Takes effect on the next connect: the routing rules are rendered once,
+        /// when the config is built.</para>
+        /// </summary>
+        public static bool GeoRoutingEnabled
+        {
+            get => Get(GeoRoutingKey, false);
+            set => Set(GeoRoutingKey, value);
+        }
+
+        /// <summary>
         /// Verbose diagnostics: <see cref="DiagLevel.Trace"/> in the event log, <c>info</c>
         /// out of hev-socks5-tunnel and <c>debug</c> out of xray.
         ///
@@ -120,6 +141,7 @@ namespace Horus.Application
             yield return new("autoConnectOnLaunch", AutoConnectOnLaunch.ToString());
             yield return new("verboseLogging", VerboseLogging.ToString());
             yield return new("meteredConnection", MeteredConnection.ToString());
+            yield return new("geoRouting", GeoRoutingEnabled.ToString());
         }
 
         private static bool Get(string key, bool fallback)
