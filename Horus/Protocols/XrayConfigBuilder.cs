@@ -91,12 +91,7 @@ namespace Horus.Protocols
                 ["outbounds"] = new object[]
                 {
                     BuildProxyOutbound(cfg),
-                    new Dictionary<string, object?>
-                    {
-                        ["tag"] = DirectTag,
-                        ["protocol"] = "freedom",
-                        ["settings"] = new Dictionary<string, object?> { ["domainStrategy"] = "UseIP" }
-                    },
+                    BuildDirectOutbound(cfg),
                     new Dictionary<string, object?>
                     {
                         ["tag"] = BlockTag,
@@ -268,6 +263,46 @@ namespace Horus.Protocols
         };
 
         // ── Outbounds ────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// The <c>freedom</c> outbound everything routed <c>direct</c> leaves through,
+        /// optionally pinned to a named interface.
+        ///
+        /// <para><b>The pin is what makes "direct" true on Windows.</b> There, <c>direct</c>
+        /// is nothing but the OS route table, and while the tunnel is up the default route
+        /// points at the TUN — so a packet emitted here is handed back to hev, arrives at
+        /// this core's own SOCKS5 inbound, matches the same rule and is emitted again. The
+        /// loop has no bound and burns a session per turn. The node escapes it only because
+        /// it gets an explicit <c>/32</c> on the physical interface, which does not
+        /// generalise: <c>geoip:ru</c> alone is 23 000 prefixes.</para>
+        ///
+        /// <para>xray turns <c>sockopt.interface</c> into <c>IP_UNICAST_IF</c> on Windows,
+        /// which overrides the route lookup for that socket — one string in place of a host
+        /// route per destination. Left unset on Android, where the app's UID is already
+        /// outside the tunnel and there is nothing to override.</para>
+        /// </summary>
+        private static Dictionary<string, object?> BuildDirectOutbound(XrayConfig cfg)
+        {
+            var outbound = new Dictionary<string, object?>
+            {
+                ["tag"] = DirectTag,
+                ["protocol"] = "freedom",
+                ["settings"] = new Dictionary<string, object?> { ["domainStrategy"] = "UseIP" }
+            };
+
+            if (!string.IsNullOrWhiteSpace(cfg.DirectInterface))
+            {
+                outbound["streamSettings"] = new Dictionary<string, object?>
+                {
+                    ["sockopt"] = new Dictionary<string, object?>
+                    {
+                        ["interface"] = cfg.DirectInterface
+                    }
+                };
+            }
+
+            return outbound;
+        }
 
         /// <summary>
         /// The node's own outbound, with only the routing tag forced.

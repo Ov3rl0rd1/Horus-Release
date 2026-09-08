@@ -48,13 +48,20 @@ namespace Horus.Application.Routing
         public GeoAssetService(IHttpClientFactory http) => _http = http;
 
         /// <summary>
-        /// Android only. See <see cref="IGeoAssetService.IsSupported"/> for why Windows is
-        /// excluded rather than merely untested — a direct rule there loops back into the
-        /// tunnel, and the 23 000 prefixes of <c>geoip:ru</c> cannot each be given the
-        /// <c>/32</c> host route that keeps the node and the resolvers out of it.
+        /// Android and Windows, by two different mechanisms — see
+        /// <see cref="IGeoAssetService.IsSupported"/>.
+        ///
+        /// <para>Windows is supported only because the direct outbound can be pinned to the
+        /// physical adapter (<c>sockopt.interface</c> → <c>IP_UNICAST_IF</c>). That pin is
+        /// resolved per connect and can come back empty, so this property is a statement
+        /// about the platform, not a guarantee about the next attempt: the connect path
+        /// still refuses geo routing when no interface can be identified.</para>
+        ///
+        /// <para>iOS and macOS have no tunnel yet, so there is nothing to be direct
+        /// <i>from</i>.</para>
         /// </summary>
         public bool IsSupported =>
-#if ANDROID
+#if ANDROID || WINDOWS
             true;
 #else
             false;

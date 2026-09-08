@@ -121,6 +121,11 @@ namespace Horus
 #elif WINDOWS
             services
                 .AddSingleton<IVpnPlatformService, WindowsVpnService>()
+                // The same instance under a second contract: it already knows how to ask
+                // the OS which interface currently reaches the internet, and geo routing
+                // needs that answer to pin the direct outbound off the tunnel.
+                .AddSingleton<IDirectPathProvider>(sp =>
+                    (WindowsVpnService)sp.GetRequiredService<IVpnPlatformService>())
                 .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>()
                 .AddSingleton<INetworkMonitor, WindowsNetworkMonitor>()
                 .AddSingleton<ISystemPermissions, Application.PlatformStubs.StubSystemPermissions>()
