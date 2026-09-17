@@ -35,7 +35,7 @@ namespace Horus.Platforms.Windows
     /// <i>exe</i>, not of this app.
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public class WindowsVpnService : IVpnPlatformService
+    public class WindowsVpnService : IVpnPlatformService, IDirectPathProvider
     {
         private const string HevExeName = "hev-socks5-tunnel.exe";
         private const string TunAlias = HevTunnelConfig.TunnelName;
@@ -437,6 +437,70 @@ namespace Horus.Platforms.Windows
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// The interface a <c>direct</c> socket must be pinned to — the one currently
+        /// carrying this machine's traffic to the internet.
+        ///
+        /// <para>Asked the same way and for the same reason as the bypass routes: one
+        /// <c>GetBestRoute</c> call answers "how would this machine reach the internet right
+        /// now", and it has to be asked <b>while the tunnel is still down</b>. Once the TUN
+        /// holds the default route the honest answer becomes the tunnel, and pinning
+        /// <c>direct</c> to the tunnel is the loop this exists to prevent. The connect path
+        /// calls it when the config is built, which is before <c>XrayStart</c>.</para>
+        ///
+        /// <para>The probe target is a public address rather than the node: the answer
+        /// wanted is "the interface with the default route", and the node may sit on the
+        /// local segment, where the best route is on-link and names the right interface for
+        /// the wrong reason.</para>
+        ///
+        /// <para>Returns the adapter's <b>friendly name</b> ("Ethernet", "Wi-Fi"), because
+        /// that is what Go's <c>net.InterfaceByName</c> matches on Windows — the core looks
+        /// the name up before setting <c>IP_UNICAST_IF</c>, so a name it cannot resolve
+        /// fails the dial rather than the config. Null when nothing matches, which the
+        /// caller must treat as "no geo routing here".</para>
+        /// </summary>
+        public string? ResolveDirectInterface()
+        {
+            try
+            {
+                var route = new MibIpForwardRow();
+
+                // 1.1.1.1, as a stand-in for "the internet". Only the interface index of the
+                // answer is used; nothing is sent.
+                var probe = BitConverter.ToUInt32(IPAddress.Parse("1.1.1.1").GetAddressBytes(), 0);
+
+                if (GetBestRoute(probe, 0, ref route) != 0) return null;
+
+                var index = (int)route.ForwardIfIndex;
+
+                foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up) continue;
+
+                    // The tunnel would be a legitimate answer to "best route" once it is up,
+                    // and the one answer that must never be returned.
+                    if (nic.Name.Equals(TunAlias, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    try
+                    {
+                        if (nic.GetIPProperties().GetIPv4Properties()?.Index == index)
+                            return nic.Name;
+                    }
+                    catch (NetworkInformationException)
+                    {
+                        // An adapter without IPv4 properties is simply not the one.
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Horus] direct interface: {ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>MIB_IPFORWARDROW — flat, IPv4-only, which is all the bypass needs.</summary>

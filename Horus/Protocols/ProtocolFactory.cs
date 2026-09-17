@@ -72,6 +72,10 @@ namespace Horus.Protocols
                     $"{candidate.Id} ({candidate.ProtocolName}) {dialHost} -> {resolved}, {rewritten} address field(s)");
             }
 
+            // Resolved before the config is built and while the tunnel is still down —
+            // both halves of the answer stop being truthful once the TUN is up.
+            var geo = ResolveGeoRouting();
+
             return new XrayConfig
             {
                 Outbound = outbound,
@@ -83,7 +87,8 @@ namespace Horus.Protocols
                 LogFilePath = DiagnosticPaths.XrayLog,
                 LogLevel = Horus.Application.UserPreferences.XrayLogLevel,
 
-                Geo = ResolveGeoRouting(),
+                Geo = geo.Options,
+                DirectInterface = geo.DirectInterface,
 
                 // Chosen per attempt rather than fixed at 1080. The fallback loop stops the
                 // core between attempts, so a retry re-picks the same port unless something
@@ -97,42 +102,75 @@ namespace Horus.Protocols
         /// actually resolve — or into nothing at all.
         ///
         /// <para><b>The preference is a request, not a state, and this is the one place
-        /// that decides.</b> Emitting <c>geoip:ru</c> without the <c>.dat</c> files present
-        /// is not a degraded configuration: xray rejects it during <c>XrayTest</c> and the
-        /// tunnel never comes up. So the order here matters — point the core at the asset
-        /// directory <i>first</i>, and only build the rules if that succeeded. Everything
-        /// that can go wrong (files never downloaded, a core too old to export
-        /// <c>XraySetAssetPath</c>, a platform where <c>direct</c> is not direct) collapses
-        /// into the same outcome: the user connects without geo routing rather than not
-        /// connecting.</para>
+        /// that decides.</b> Two independent things have to be true, and each fails
+        /// silently in its own way:</para>
         ///
-        /// <para>Deliberately in the config builder's path rather than at start-up. The
-        /// asset path is process-global state in the core, and this runs immediately before
-        /// the config that depends on it is rendered — which makes "the core knows where
-        /// the files are" and "the config names a category" impossible to get out of
-        /// step.</para>
+        /// <list type="number">
+        /// <item><b>The core must be able to resolve the categories.</b> Emitting
+        /// <c>geoip:ru</c> without the <c>.dat</c> files is not a degraded configuration —
+        /// xray rejects it during <c>XrayTest</c> and the tunnel never comes up. So the
+        /// asset path is set <i>first</i>, and the rules are built only if that
+        /// succeeded.</item>
+        /// <item><b><c>direct</c> must actually leave the machine.</b> On Android it does,
+        /// because the app's UID is outside the tunnel. On Windows it does not unless the
+        /// outbound is pinned to the physical interface, and an unpinned direct rule there
+        /// is an unbounded loop through the tunnel rather than a missing feature. So a
+        /// platform that advertises an <see cref="IDirectPathProvider"/> must produce an
+        /// answer, or geo routing is dropped.</item>
+        /// </list>
+        ///
+        /// <para>Everything that can go wrong collapses into the same outcome: the user
+        /// connects without geo routing rather than not connecting.</para>
+        ///
+        /// <para>Deliberately in the config builder's path rather than at start-up. Both
+        /// halves are time-sensitive — the asset path is process-global state in the core,
+        /// and the direct interface is only truthful while the tunnel is down — and this
+        /// runs immediately before the config that depends on them is rendered.</para>
         /// </summary>
-        private GeoRoutingOptions ResolveGeoRouting()
+        private (GeoRoutingOptions Options, string? DirectInterface) ResolveGeoRouting()
         {
             if (!Horus.Application.UserPreferences.GeoRoutingEnabled)
-                return GeoRoutingOptions.Disabled;
+                return (GeoRoutingOptions.Disabled, null);
 
             var assets = _sp.GetService<IGeoAssetService>();
 
             if (assets is null || !assets.IsSupported)
             {
                 Diag.Info("geo", "geo routing requested but unsupported on this platform");
-                return GeoRoutingOptions.Disabled;
+                return (GeoRoutingOptions.Disabled, null);
             }
 
             if (!assets.Activate())
             {
                 Diag.Warn("geo", "geo routing requested but the rule files are not usable; connecting without it");
-                return GeoRoutingOptions.Disabled;
+                return (GeoRoutingOptions.Disabled, null);
+            }
+
+            // Absent on Android by design — nothing to pin, because the UID exclusion has
+            // already taken the core's sockets off the tunnel.
+            var directPath = _sp.GetService<IDirectPathProvider>();
+            string? directInterface = null;
+
+            if (directPath is not null)
+            {
+                directInterface = directPath.ResolveDirectInterface();
+
+                if (string.IsNullOrWhiteSpace(directInterface))
+                {
+                    // Refusing is the whole point. Emitting the rules anyway would route
+                    // every Russian destination into a loop through the tunnel rather than
+                    // out of it, and the tunnel would come up looking healthy.
+                    Diag.Warn("geo",
+                        "geo routing requested but the physical interface could not be identified; " +
+                        "connecting without it rather than looping direct traffic back into the tunnel");
+                    return (GeoRoutingOptions.Disabled, null);
+                }
+
+                Diag.Info("geo", $"direct outbound pinned to '{directInterface}'");
             }
 
             Diag.Info("geo", "geo routing on: Russian sites and networks go direct");
-            return GeoRoutingOptions.ForRussianBypass();
+            return (GeoRoutingOptions.ForRussianBypass(), directInterface);
         }
 
         /// <summary>

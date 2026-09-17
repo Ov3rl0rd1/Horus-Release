@@ -76,12 +76,12 @@
             </VerticalStackLayout>
 
             <!-- ГЕО-МАРШРУТИЗАЦИЯ
-                 Hidden entirely where the platform cannot make a "direct" rule direct.
-                 On Windows the direct outbound is the OS route table, and with a default
-                 route into the tunnel a direct packet comes straight back in — the node and
-                 the resolvers escape only because each gets its own /32, and the Russian
-                 set is 23 000 prefixes. A switch that silently loops traffic is worse than
-                 no switch. -->
+                 Hidden entirely where the platform cannot make a "direct" rule direct —
+                 iOS and macOS, which have no tunnel to be direct from. Android qualifies
+                 through the UID exclusion; Windows through pinning the direct outbound to
+                 the physical adapter (IP_UNICAST_IF), without which a direct rule loops
+                 back through the tunnel forever. A switch that silently loops traffic is
+                 worse than no switch. -->
             <VerticalStackLayout Spacing="6" IsVisible="{Binding GeoSupported}">
                 <Label Text="ГЕО-МАРШРУТИЗАЦИЯ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
                 <Border Style="{StaticResource HzListCard}">

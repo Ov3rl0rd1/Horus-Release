@@ -48,6 +48,22 @@ namespace Horus.Domain.Models
         public GeoRoutingOptions Geo { get; set; } = GeoRoutingOptions.Disabled;
 
         /// <summary>
+        /// Interface the <c>direct</c> outbound is pinned to, or null to leave it to the
+        /// route table.
+        ///
+        /// <para>Set on Windows, where the route table is the wrong answer: with the
+        /// tunnel holding the default route, a packet the core emits on <c>direct</c> is
+        /// routed back into the TUN and returns to the core through its own SOCKS5 inbound,
+        /// forever. Pinning turns into <c>IP_UNICAST_IF</c>, which overrides the route
+        /// lookup for that socket, so <c>direct</c> means the physical link again.</para>
+        ///
+        /// <para>Null on Android and left null: the app's UID is already outside the
+        /// tunnel, so its sockets escape without help, and naming an interface there would
+        /// only add a way to name the wrong one.</para>
+        /// </summary>
+        public string? DirectInterface { get; set; }
+
+        /// <summary>
         /// Port of the SOCKS5 inbound. Hardcoded on the other side too — in
         /// <c>HevSocksTunnel</c>'s YAML — so the two must never drift apart.
         /// </summary>

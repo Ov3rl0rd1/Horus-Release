@@ -28,16 +28,28 @@ namespace Horus.Domain.Interfaces
         /// <summary>
         /// Whether this platform can route anything <c>direct</c> at all.
         ///
-        /// <para><b>False on Windows, and that is not a stub.</b> Geo routing works by
-        /// sending matched traffic out through <c>freedom</c>, which is only genuinely
-        /// direct where the host gives the core's own sockets a way around the tunnel.
-        /// Android does: the app's UID is excluded, and the core runs in-process. Windows
-        /// does not — its <c>direct</c> is the OS route table, and a default route pointing
-        /// at the TUN sends a "direct" packet straight back into it, where hev hands it to
-        /// the SOCKS5 inbound and routing sends it out <c>freedom</c> again. That loop is
-        /// unbounded and costs a session per turn. The node and the resolvers escape it
-        /// only because they get an explicit <c>/32</c>, and the Russian set is 23 000
-        /// prefixes, so that answer does not scale here.</para>
+        /// <para>Geo routing works by sending matched traffic out through <c>freedom</c>,
+        /// which is only genuinely direct where the host gives the core's own sockets a way
+        /// around the tunnel. The two supported platforms get there differently:</para>
+        ///
+        /// <list type="bullet">
+        /// <item><b>Android</b> — the app's UID is excluded from the tunnel and the core
+        /// runs in-process, so every socket it opens is already outside. Nothing to
+        /// configure.</item>
+        /// <item><b>Windows</b> — <c>direct</c> is otherwise just the OS route table, and a
+        /// default route pointing at the TUN sends a "direct" packet straight back into it,
+        /// where hev hands it to the SOCKS5 inbound and routing emits it again: an unbounded
+        /// loop costing a session per turn. The node escapes only because it gets an
+        /// explicit <c>/32</c>, which does not scale to the 23 000 prefixes of
+        /// <c>geoip:ru</c>. What does scale is pinning the outbound to the physical adapter
+        /// — <c>sockopt.interface</c>, which the core turns into <c>IP_UNICAST_IF</c> and
+        /// which overrides the route lookup for that socket alone. See
+        /// <see cref="IDirectPathProvider"/>.</item>
+        /// </list>
+        ///
+        /// <para>True here means "the mechanism exists on this platform", not "the next
+        /// connect will use it": on Windows the pin is resolved per attempt and can come
+        /// back empty, and the connect path drops geo routing when it does.</para>
         /// </summary>
         bool IsSupported { get; }
 

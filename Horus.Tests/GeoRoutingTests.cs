@@ -125,20 +125,68 @@ public class GeoRoutingTests
         }
     }
 
+    /// <summary>
+    /// <b>What keeps Windows from eating itself.</b>
+    ///
+    /// <para>There, <c>direct</c> is the OS route table and the tunnel holds the default
+    /// route, so an unpinned direct rule sends the packet back into the TUN, through hev,
+    /// into this core's own SOCKS5 inbound, and out <c>direct</c> again — forever. The pin
+    /// becomes <c>IP_UNICAST_IF</c>, which overrides the route lookup for that socket. If
+    /// this stops being emitted, the tunnel still comes up and still reports itself healthy.</para>
+    /// </summary>
+    [Fact]
+    public void The_direct_outbound_can_be_pinned_to_an_interface()
+    {
+        var direct = DirectOutbound(Build(cfg =>
+        {
+            cfg.Geo = GeoRoutingOptions.ForRussianBypass();
+            cfg.DirectInterface = "Ethernet";
+        }));
+
+        Assert.Equal("Ethernet", direct
+            .GetProperty("streamSettings")
+            .GetProperty("sockopt")
+            .GetProperty("interface").GetString());
+    }
+
+    /// <summary>
+    /// Nothing is emitted where nothing is needed. On Android the UID exclusion has already
+    /// taken the core's sockets off the tunnel, and naming an interface there would only add
+    /// a way to name the wrong one.
+    /// </summary>
+    [Fact]
+    public void No_sockopt_is_emitted_when_no_interface_is_named()
+    {
+        var direct = DirectOutbound(Build(cfg => cfg.Geo = GeoRoutingOptions.ForRussianBypass()));
+
+        Assert.False(direct.TryGetProperty("streamSettings", out _));
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static List<JsonElement> RoutingRules(GeoRoutingOptions geo)
+    private static JsonElement Build(Action<XrayConfig>? tweak = null)
     {
         var config = new XrayConfig
         {
             Outbound = JsonNode.Parse("""{"protocol":"vless","settings":{}}""")!,
-            Offer = "test",
-            Geo = geo
+            Offer = "test"
         };
 
-        using var doc = JsonDocument.Parse(XrayConfigBuilder.Build(config));
+        tweak?.Invoke(config);
 
-        return [.. doc.RootElement
+        using var doc = JsonDocument.Parse(XrayConfigBuilder.Build(config));
+        return doc.RootElement.Clone();
+    }
+
+    private static JsonElement DirectOutbound(JsonElement root) =>
+        root.GetProperty("outbounds").EnumerateArray()
+            .Single(o => o.GetProperty("tag").GetString() == XrayConfigBuilder.DirectTag);
+
+    private static List<JsonElement> RoutingRules(GeoRoutingOptions geo)
+    {
+        var root = Build(cfg => cfg.Geo = geo);
+
+        return [.. root
             .GetProperty("routing").GetProperty("rules")
             .EnumerateArray()
             .Select(e => e.Clone())];
