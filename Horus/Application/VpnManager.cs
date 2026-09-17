@@ -283,6 +283,10 @@ namespace Horus.Application
                 // link changes.
                 var available = OrderCandidates(connection.Candidates());
 
+                // DEV-PANEL ── pre-release test harness; delete this line with Horus/DevTools/.
+                // Returns the list untouched unless a tester has pinned one outbound.
+                available = Horus.DevTools.DevOutbound.Restrict(available);
+
                 if (available.Count == 0)
                     throw new InvalidOperationException(
                         "Сервер не предложил ни одного поддерживаемого способа подключения.");
