@@ -88,7 +88,17 @@
                         </Border>
                     </Grid>
 
-                    <Label Text="{Binding StatusSub}" Style="{StaticResource HzDim}" HorizontalTextAlignment="Center" />
+                    <Label Text="{Binding StatusSub}" Style="{StaticResource HzDim}" HorizontalTextAlignment="Center">
+                        <!-- DEV-PANEL: tap target for the pre-release protocol picker.
+                             Delete this gesture and the label below with Horus/DevTools/. -->
+                        <Label.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding DevPanelCommand}" />
+                        </Label.GestureRecognizers>
+                    </Label>
+                    <!-- DEV-PANEL: visible only while an outbound is pinned. -->
+                    <Label Text="{Binding DevBadge}" Style="{StaticResource HzDim}" FontSize="11"
+                           HorizontalTextAlignment="Center" TextColor="{StaticResource HzGoldLight}"
+                           IsVisible="{Binding DevBadge, Converter={StaticResource IsNotEmpty}}" />
                     <Label Text="{Binding SessionDuration}" IsVisible="{Binding ShowTimer}" FontSize="34"
                            TextColor="{StaticResource HzGoldLight}" CharacterSpacing="1" HorizontalOptions="Center"
                            FontFamily="{StaticResource FontBody}" Margin="0,4,0,0" />

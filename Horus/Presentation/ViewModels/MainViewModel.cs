@@ -299,6 +299,21 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void GoServers() => _nav.Go(AppScreen.Servers);
         [RelayCommand] private void OpenPay() => _payment.Open();
 
+        #region DEV-PANEL — pre-release test harness; delete this region with Horus/DevTools/
+
+        /// <summary>Caption showing a pinned outbound. Empty, and hidden, in normal use.</summary>
+        public string DevBadge => Horus.DevTools.DevOutbound.Badge;
+
+        /// <summary>Opened by tapping the grey status caption on the home screen.</summary>
+        [RelayCommand]
+        private async Task DevPanelAsync()
+        {
+            await Horus.DevTools.DevOutbound.ShowAsync(_vpnManager);
+            OnPropertyChanged(nameof(DevBadge));
+        }
+
+        #endregion
+
         // ── Recommended quick-connect list (Windows desktop Home right column) ──
         public ObservableCollection<ServerRow> QuickServers { get; } = new();
         public bool HasQuick => QuickServers.Count > 0;
