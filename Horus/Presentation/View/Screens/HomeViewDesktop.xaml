@@ -54,6 +54,17 @@
                         </HorizontalStackLayout>
                     </Border>
 
+                    <!-- Which outbound is carrying traffic, same as the phone layout has under
+                         its status pill. Deliberately faint: it matters when something
+                         misbehaves and should be invisible the rest of the time. The label is
+                         the node's own name for the offer, so a protocol this build has never
+                         heard of still reads sensibly. Centred here because the desktop pill is
+                         centred, where the phone's is end-aligned. -->
+                    <Label Text="{Binding ActiveProtocolLabel}" IsVisible="{Binding ShowActiveProtocol}"
+                           TextColor="{StaticResource HzTextMuted}" FontSize="10.5" CharacterSpacing="0.6"
+                           HorizontalTextAlignment="Center" HorizontalOptions="Center" Margin="0,6,0,0"
+                           FontFamily="{StaticResource FontBody}" />
+
                     <Grid WidthRequest="288" HeightRequest="288" Margin="0,22,0,8" HorizontalOptions="Center">
                         <Ellipse x:Name="GlowHalo" WidthRequest="288" HeightRequest="288" Opacity="0" InputTransparent="True">
                             <Ellipse.Fill>
