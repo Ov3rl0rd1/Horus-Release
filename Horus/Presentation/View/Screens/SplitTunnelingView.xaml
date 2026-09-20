@@ -75,22 +75,46 @@
                             </Grid>
                         </Border>
 
-                        <!-- Mode: selected direct -->
+                        <!-- Mode: selected bypass the tunnel (blacklist) -->
                         <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
-                                Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}">
+                                Stroke="{Binding IsModeBypass, Converter={StaticResource SelectionRingColor}}">
                             <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
                             <Border.GestureRecognizers>
-                                <TapGestureRecognizer Command="{Binding SetModeCustomCommand}" />
+                                <TapGestureRecognizer Command="{Binding SetModeBypassCommand}" />
                             </Border.GestureRecognizers>
                             <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
                                 <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
-                                    <Ellipse Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                    <Ellipse Stroke="{Binding IsModeBypass, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
                                     <Ellipse WidthRequest="10" HeightRequest="10"
-                                             Fill="{Binding IsModeCustom, Converter={StaticResource SelectionDotColor}}" />
+                                             Fill="{Binding IsModeBypass, Converter={StaticResource SelectionDotColor}}" />
                                 </Grid>
                                 <VerticalStackLayout Grid.Column="1" Spacing="1">
                                     <Label Text="Выбранные — напрямую" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
                                     <Label Text="Отмеченные приложения работают мимо VPN — банк напрямую, YouTube через Хорус"
+                                           Style="{StaticResource HzDim}" FontSize="12" />
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Border>
+
+                        <!-- Mode: only the selected enter the tunnel (whitelist).
+                             The tunnel has always supported this — ApplySplitTunneling has a
+                             Whitelist branch using AddAllowedApplication — but nothing in the
+                             UI could ever set it, so every choice behaved as a bypass list. -->
+                        <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
+                                Stroke="{Binding IsModeOnly, Converter={StaticResource SelectionRingColor}}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SetModeOnlyCommand}" />
+                            </Border.GestureRecognizers>
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
+                                <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                                    <Ellipse Stroke="{Binding IsModeOnly, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                    <Ellipse WidthRequest="10" HeightRequest="10"
+                                             Fill="{Binding IsModeOnly, Converter={StaticResource SelectionDotColor}}" />
+                                </Grid>
+                                <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                    <Label Text="Только выбранные — через VPN" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                    <Label Text="Всё остальное идёт напрямую. Отметьте хотя бы одно приложение, иначе туннель некому нести"
                                            Style="{StaticResource HzDim}" FontSize="12" />
                                 </VerticalStackLayout>
                             </Grid>
@@ -143,7 +167,7 @@
                             </Border>
                         </VerticalStackLayout>
 
-                        <Label Text="ПРИЛОЖЕНИЯ · НАПРЯМУЮ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,2,0,0" />
+                        <Label Text="{Binding SelectedAppsCaption}" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,2,0,0" />
                     </VerticalStackLayout>
                 </CollectionView.Header>
 

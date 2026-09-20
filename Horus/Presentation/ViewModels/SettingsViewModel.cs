@@ -102,12 +102,25 @@ namespace Horus.Presentation.ViewModels
         public ObservableCollection<SplitAppRow> SplitApps { get; } = new();
 
         // "Все — через VPN" == Disabled; "Выбранные — напрямую" == Blacklist (selected bypass).
-        public bool IsModeAll => SplitTunnelingMode == SplitTunnelingMode.Disabled;
+        public bool IsModeAll    => SplitTunnelingMode == SplitTunnelingMode.Disabled;
+        public bool IsModeBypass => SplitTunnelingMode == SplitTunnelingMode.Blacklist;
+        public bool IsModeOnly   => SplitTunnelingMode == SplitTunnelingMode.Whitelist;
+
+        /// <summary>Anything other than "everything through the VPN" — the app list is live.</summary>
         public bool IsModeCustom => !IsModeAll;
         public double AppsOpacity => IsModeCustom ? 1.0 : 0.4;
 
-        [RelayCommand] private void SetModeAll() => SplitTunnelingMode = SplitTunnelingMode.Disabled;
-        [RelayCommand] private void SetModeCustom() => SplitTunnelingMode = SplitTunnelingMode.Blacklist;
+        /// <summary>
+        /// The list header, because the checked rows mean the opposite thing in the two
+        /// custom modes: in Blacklist they are what bypasses the tunnel, in Whitelist they
+        /// are the only thing that enters it.
+        /// </summary>
+        public string SelectedAppsCaption =>
+            IsModeOnly ? "ПРИЛОЖЕНИЯ · ЧЕРЕЗ VPN" : "ПРИЛОЖЕНИЯ · НАПРЯМУЮ";
+
+        [RelayCommand] private void SetModeAll()    => SplitTunnelingMode = SplitTunnelingMode.Disabled;
+        [RelayCommand] private void SetModeBypass() => SplitTunnelingMode = SplitTunnelingMode.Blacklist;
+        [RelayCommand] private void SetModeOnly()   => SplitTunnelingMode = SplitTunnelingMode.Whitelist;
 
         // ── Connection ────────────────────────────────────────────────────────
         /// <summary>Connect when the app launches, if the VPN was on when it last stopped.</summary>
@@ -460,6 +473,12 @@ namespace Horus.Presentation.ViewModels
 
                 _allApps = user;
                 BlockedApps = blocked;
+
+                // Rows are built without knowing the mode, and a row that does not know it
+                // labels itself backwards in Whitelist. Cheaper to tell them once here than
+                // to thread the mode through the constructor of every row.
+                ApplyModeToRows(SplitTunnelingMode);
+
                 VisibleApps = Filter(AppSearch);
                 AlphabetIndex = BuildIndex(VisibleApps);
 
@@ -520,8 +539,22 @@ namespace Horus.Presentation.ViewModels
             _splitTunneling.Mode = value;
             OnPropertyChanged(nameof(SplitTunnelingValue));
             OnPropertyChanged(nameof(IsModeAll));
+            OnPropertyChanged(nameof(IsModeBypass));
+            OnPropertyChanged(nameof(IsModeOnly));
             OnPropertyChanged(nameof(IsModeCustom));
             OnPropertyChanged(nameof(AppsOpacity));
+            OnPropertyChanged(nameof(SelectedAppsCaption));
+
+            // The rows describe themselves ("Напрямую, мимо VPN" / "Через VPN"), and the
+            // same checkbox means the opposite in the two custom modes — so every row that
+            // already exists has to be told, not just the ones built after the switch.
+            ApplyModeToRows(value);
+        }
+
+        private void ApplyModeToRows(SplitTunnelingMode mode)
+        {
+            foreach (var row in _allApps) row.ApplyMode(mode);
+            foreach (var row in BlockedApps) row.ApplyMode(mode);
         }
 
         // ── Navigation (custom root, no Shell) ──
@@ -795,10 +828,37 @@ namespace Horus.Presentation.ViewModels
 
         public bool CanToggle => !IsLocked;
 
-        public string StatusText => IsLocked
-            ? "Всегда напрямую — задано в приложении"
-            : IsDirect ? "Напрямую, мимо VPN" : "Через VPN";
+        /// <summary>
+        /// Which mode the row is being read under. <see cref="IsDirect"/> is really "this
+        /// app is in the selected set", and what that means flips between modes: in
+        /// Blacklist the selected apps bypass the tunnel, in Whitelist they are the only
+        /// ones inside it. A row that did not know the mode described itself backwards in
+        /// one of the two.
+        /// </summary>
+        private SplitTunnelingMode _mode = SplitTunnelingMode.Blacklist;
 
+        public void ApplyMode(SplitTunnelingMode mode)
+        {
+            if (_mode == mode) return;
+            _mode = mode;
+            OnPropertyChanged(nameof(StatusText));
+        }
+
+        public string StatusText
+        {
+            get
+            {
+                if (IsLocked) return "Всегда напрямую — задано в приложении";
+
+                // Selected means "through the VPN" in Whitelist and "past it" everywhere else.
+                var selectedGoesThrough = _mode == SplitTunnelingMode.Whitelist;
+                var throughVpn = IsDirect == selectedGoesThrough;
+
+                return throughVpn ? "Через VPN" : "Напрямую, мимо VPN";
+            }
+        }
+
+        /// <summary>Accent marks the rows the user picked, whatever picking means here.</summary>
         public Color StatusColor => IsDirect ? Color.FromArgb("#F3D48E") : Color.FromArgb("#73EFEAF6");
 
         partial void OnIsDirectChanged(bool value)
