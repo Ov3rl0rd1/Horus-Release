@@ -1,26 +1,76 @@
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
+using Horus.Platforms.Windows.Wfp;
+using Horus.Protocols;
 using System.Diagnostics;
+using System.Net;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 
 namespace Horus.Platforms.Windows
 {
     /// <summary>
-    /// Per-process split tunneling on Windows using WinDivert to intercept
-    /// packets by process ID and reroute them either through the VPN TUN
-    /// adapter or bypass it entirely.
+    /// Per-process split tunneling on Windows.
     ///
-    /// WinDivert kernel driver must be present:
-    ///   Resources/Native/WinDivert.dll
-    ///   Resources/Native/WinDivert64.sys (or WinDivert32.sys for 32-bit)
+    /// <para><b>Why it takes three mechanisms.</b> Windows has no per-application routing.
+    /// WFP can decide whether a process may use an interface but cannot move it to another
+    /// one — redirects live at <c>ALE_*_REDIRECT</c>, layers only a kernel callout may attach
+    /// to. So the work is split: the <b>route table</b> sets the default for everyone,
+    /// <b>WinDivert</b> reports which process is opening which connection, and a host route
+    /// per destination moves that traffic off the default. WFP is the guard rail.</para>
+    ///
+    /// <para><b>Both modes reduce to the same operation.</b> The tunnel holds the default
+    /// route, so everything is tunnelled unless a host route says otherwise. Blacklist steers
+    /// the <i>selected</i> apps' destinations onto the physical path; Whitelist steers the
+    /// <i>unselected</i> ones. One mechanism, one inversion.</para>
+    ///
+    /// <para><b>The limitation, stated plainly.</b> A host route is per destination, not per
+    /// process. If a steered app and a tunnelled app talk to the same address, both follow
+    /// the route. For "the bank goes direct, everything else through the VPN" that is
+    /// harmless. For Whitelist it would be a leak, which is why the selected apps are also
+    /// blocked on the physical interface: if one ever rides a route installed for another
+    /// process, the connection fails instead of leaving unprotected.</para>
+    ///
+    /// <para>Requires WinDivert (<c>WinDivert.dll</c> + <c>WinDivert64.sys</c>) next to the
+    /// app; without it <see cref="IsSupported"/> is false and Settings hides the screen
+    /// rather than offering switches that do nothing.</para>
     /// </summary>
     [SupportedOSPlatform("windows")]
     public class WindowsSplitTunnelingService : ISplitTunnelingService
     {
+        /// <summary>Must match the adapter alias <see cref="WindowsVpnService"/> creates.</summary>
+        private const string TunAlias = "Horus";
+
+        /// <summary>
+        /// A ceiling on host routes. The input is "every destination every watched process
+        /// talks to", and a browser alone produces hundreds. Past this the steering stops
+        /// rather than filling the route table; the tunnel keeps working and the unsteered
+        /// traffic is over-protected, never leaked.
+        /// </summary>
+        private const int MaxSteeredRoutes = 256;
+
         private readonly string _nativeDir;
+        private readonly string _routeJournal;
         private readonly List<string> _selected = [];
         private SplitTunnelingMode _mode = SplitTunnelingMode.Disabled;
-        private WinDivertHandle? _divert;
+
+        private WfpEngine? _wfp;
+        private ProcessFlowWatcher? _watcher;
+
+        /// <summary>Destinations already given a host route, so a busy process is not re-run.</summary>
+        private readonly HashSet<string> _steered = new(StringComparer.Ordinal);
+
+        /// <summary>Executables already carrying a leak guard, keyed by full path.</summary>
+        private readonly HashSet<string> _guarded = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>pid → image path. Cleared with the rest; pid reuse is bounded by a session.</summary>
+        private readonly Dictionary<uint, string?> _pidPaths = [];
+
+        private readonly object _gate = new();
+
+        private string? _gateway;
+        private int _ifIndex;
 
         /// <summary>
         /// Only when the WinDivert driver is actually present. <c>ApplyAsync</c> returns
@@ -55,6 +105,7 @@ namespace Horus.Platforms.Windows
         public WindowsSplitTunnelingService()
         {
             _nativeDir = Path.Combine(AppContext.BaseDirectory, "Resources", "Native");
+            _routeJournal = Path.Combine(FileSystem.AppDataDirectory, "split-routes.txt");
         }
 
         public async Task<IReadOnlyList<AppOrProcessEntry>> GetAvailableEntriesAsync()
@@ -105,54 +156,283 @@ namespace Horus.Platforms.Windows
             return Task.CompletedTask;
         }
 
+        // ── Apply / stop ─────────────────────────────────────────────────────
+
         public async Task ApplyAsync()
         {
-            _divert?.Dispose();
-            _divert = null;
+            await StopAsync();
 
-            if (_mode == SplitTunnelingMode.Disabled || _selected.Count == 0)
-                return;
+            // Routes from a session that died without unwinding. They live on the physical
+            // interface and survive everything, so a stale one keeps sending that destination
+            // out of the tunnel forever, invisibly.
+            await SweepJournalAsync();
 
-            var divertDll = Path.Combine(_nativeDir, "WinDivert.dll");
-            if (!File.Exists(divertDll))
+            if (!IsSupported) return;
+            if (_mode == SplitTunnelingMode.Disabled || _selected.Count == 0) return;
+
+            // The physical next hop has to be read while the answer is still the physical
+            // one. Asked after the tunnel took the default route, "how do I reach the
+            // internet" answers "through the tunnel", and every host route built from it
+            // would point back into what it is meant to escape.
+            if (!ResolvePhysicalPath())
             {
-                // WinDivert not available — skip per-process filtering gracefully
+                Debug.WriteLine("[Horus] split: no physical gateway; steering disabled");
                 return;
             }
 
             try
             {
-                // Build WinDivert filter expression from selected process names
-                var filter = BuildFilter();
-                _divert = new WinDivertHandle(divertDll, filter, _mode);
-                await _divert.StartAsync();
+                if (_mode == SplitTunnelingMode.Whitelist)
+                {
+                    _wfp = new WfpEngine();
+                    _wfp.Open();
+                    GuardRunningSelection();
+                }
+
+                _watcher = new ProcessFlowWatcher(OnFlow);
+                _watcher.Start();
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[WinDivert] Failed to start: {ex.Message}");
-                _divert?.Dispose();
-                _divert = null;
+                // Half-configured is worse than off: a watcher with no guard, or a guard with
+                // no watcher, both send traffic somewhere nobody intended.
+                Debug.WriteLine($"[Horus] split: {ex.Message}");
+                await StopAsync();
             }
         }
 
-        private string BuildFilter()
+        public async Task StopAsync()
         {
-            // WinDivert doesn't natively filter by process name, so we collect
-            // the PIDs of matching processes and build a PID-based filter.
-            var pids = new List<int>();
-            foreach (var entry in _selected)
+            _watcher?.Dispose();
+            _watcher = null;
+
+            _wfp?.Dispose();
+            _wfp = null;
+
+            lock (_gate)
             {
-                foreach (var proc in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(entry)))
-                {
-                    pids.Add(proc.Id);
-                    proc.Dispose();
-                }
+                _guarded.Clear();
+                _pidPaths.Clear();
             }
 
-            if (pids.Count == 0) return "false"; // Block nothing
+            await RemoveSteeredRoutesAsync();
+        }
 
-            var pidClauses = pids.Select(p => $"tcp.srcPort == {p} or udp.srcPort == {p}");
-            return string.Join(" or ", pidClauses);
+        // ── Steering ─────────────────────────────────────────────────────────
+
+        private void OnFlow(FlowEvent flow)
+        {
+            // A host route for a LAN or loopback address would override the on-link route the
+            // machine already has, breaking the printer and the NAS in a way that outlives
+            // the VPN being switched off.
+            if (LocalNetworks.IsDirectRange(flow.Remote)) return;
+
+            var path = ResolveProcessPath(flow.ProcessId);
+            if (path is null) return;
+
+            var selected = _selected.Any(e =>
+                e.Equals(Path.GetFileName(path), StringComparison.OrdinalIgnoreCase));
+
+            // A selected app in Whitelist needs no route — it uses the default, which is the
+            // tunnel — but it does need the guard, and it may have started after Apply ran.
+            if (_mode == SplitTunnelingMode.Whitelist && selected)
+            {
+                Guard(path);
+                return;
+            }
+
+            // Blacklist steers what was picked; Whitelist steers everything that was not.
+            var wantsDirect = _mode == SplitTunnelingMode.Blacklist ? selected : !selected;
+            if (!wantsDirect) return;
+
+            _ = SteerAsync(flow.Remote);
+        }
+
+        private async Task SteerAsync(IPAddress destination)
+        {
+            var key = destination.ToString();
+
+            lock (_gate)
+            {
+                if (_steered.Count >= MaxSteeredRoutes) return;
+                if (!_steered.Add(key)) return;
+            }
+
+            try
+            {
+                await AppendJournalAsync(key);
+                await RunRouteAsync($"add {key} mask 255.255.255.255 {_gateway} metric 1 if {_ifIndex}");
+            }
+            catch (Exception ex)
+            {
+                lock (_gate) _steered.Remove(key);
+                Debug.WriteLine($"[Horus] split: route add {key}: {ex.Message}");
+            }
+        }
+
+        private async Task RemoveSteeredRoutesAsync()
+        {
+            string[] pending;
+            lock (_gate)
+            {
+                pending = [.. _steered];
+                _steered.Clear();
+            }
+
+            foreach (var key in pending)
+            {
+                try { await RunRouteAsync($"delete {key}"); }
+                catch (Exception ex) { Debug.WriteLine($"[Horus] split: route delete {key}: {ex.Message}"); }
+            }
+
+            TryDeleteJournal();
+        }
+
+        // ── Crash recovery ───────────────────────────────────────────────────
+
+        /// <summary>
+        /// Every steered destination is written down before its route is added, so a process
+        /// that dies mid-session leaves a list of what to undo. WFP needs nothing like this —
+        /// a dynamic session cleans itself up — but routes are ordinary system state and
+        /// nothing removes them on our behalf.
+        /// </summary>
+        private async Task AppendJournalAsync(string destination)
+        {
+            try { await File.AppendAllTextAsync(_routeJournal, destination + Environment.NewLine); }
+            catch (Exception ex) { Debug.WriteLine($"[Horus] split: journal: {ex.Message}"); }
+        }
+
+        private async Task SweepJournalAsync()
+        {
+            if (!File.Exists(_routeJournal)) return;
+
+            string[] lines;
+            try { lines = await File.ReadAllLinesAsync(_routeJournal); }
+            catch { return; }
+
+            foreach (var line in lines)
+            {
+                if (!IPAddress.TryParse(line.Trim(), out var ip)) continue;
+                try { await RunRouteAsync($"delete {ip}"); } catch { }
+            }
+
+            TryDeleteJournal();
+        }
+
+        private void TryDeleteJournal()
+        {
+            try { if (File.Exists(_routeJournal)) File.Delete(_routeJournal); }
+            catch { }
+        }
+
+        // ── Leak guard ───────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Blocks the selected applications on the <b>physical</b> interface, so a whitelisted
+        /// app cannot ride a host route installed for some other process. Without it the
+        /// per-destination nature of the routes would be a leak rather than an inconvenience.
+        /// </summary>
+        private void GuardRunningSelection()
+        {
+            foreach (var proc in Process.GetProcesses())
+            {
+                try
+                {
+                    var path = proc.MainModule?.FileName;
+                    if (path is null) continue;
+
+                    if (_selected.Any(e => e.Equals(Path.GetFileName(path), StringComparison.OrdinalIgnoreCase)))
+                        Guard(path);
+                }
+                catch { /* access denied is ordinary for system processes */ }
+                finally { proc.Dispose(); }
+            }
+        }
+
+        private void Guard(string exePath)
+        {
+            if (_wfp is null) return;
+
+            lock (_gate)
+            {
+                if (!_guarded.Add(exePath)) return;
+            }
+
+            var alias = PhysicalAlias();
+            if (alias.Length == 0) return;
+
+            var luid = WfpEngine.LookupInterfaceLuid(alias);
+            if (luid is null) return;
+
+            try { _wfp.BlockApp(exePath, luid.Value); }
+            catch (Exception ex) { Debug.WriteLine($"[Horus] split: guard {exePath}: {ex.Message}"); }
+        }
+
+        // ── Platform lookups ─────────────────────────────────────────────────
+
+        /// <summary>The next hop and interface currently carrying this machine to the internet.</summary>
+        private bool ResolvePhysicalPath()
+        {
+            var route = new MibIpForwardRow();
+            var probe = BitConverter.ToUInt32(IPAddress.Parse("1.1.1.1").GetAddressBytes(), 0);
+
+            if (GetBestRoute(probe, 0, ref route) != 0) return false;
+
+            _gateway = new IPAddress(BitConverter.GetBytes(route.ForwardNextHop)).ToString();
+            _ifIndex = (int)route.ForwardIfIndex;
+            return _ifIndex != 0;
+        }
+
+        private string PhysicalAlias()
+        {
+            foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.Name.Equals(TunAlias, StringComparison.OrdinalIgnoreCase)) continue;
+                try
+                {
+                    if (nic.GetIPProperties().GetIPv4Properties()?.Index == _ifIndex) return nic.Name;
+                }
+                catch { /* an adapter without IPv4 properties is simply not the one */ }
+            }
+
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Image path for a pid, cached. The cache matters: the watcher fires on every
+        /// connection the machine makes, and opening a process handle per event would cost
+        /// more than the steering it feeds.
+        /// </summary>
+        private string? ResolveProcessPath(uint pid)
+        {
+            lock (_gate)
+            {
+                if (_pidPaths.TryGetValue(pid, out var cached)) return cached;
+            }
+
+            string? path = null;
+            var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
+
+            if (handle != IntPtr.Zero)
+            {
+                try
+                {
+                    var buffer = new StringBuilder(1024);
+                    var size = buffer.Capacity;
+                    if (QueryFullProcessImageName(handle, 0, buffer, ref size))
+                        path = buffer.ToString();
+                }
+                finally { CloseHandle(handle); }
+            }
+
+            lock (_gate)
+            {
+                // Failures are cached too: a process we cannot open will not become openable,
+                // and retrying on every connection it makes is pure cost.
+                _pidPaths[pid] = path;
+            }
+
+            return path;
         }
 
         private static bool IsSystemProcess(string? path)
@@ -161,89 +441,45 @@ namespace Horus.Platforms.Windows
             var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             return path.StartsWith(winDir, StringComparison.OrdinalIgnoreCase);
         }
-    }
 
-    // ── WinDivert P/Invoke wrapper ────────────────────────────────────────────
-
-    [SupportedOSPlatform("windows")]
-    internal sealed class WinDivertHandle : IDisposable
-    {
-        private nint _dll;
-        private nint _handle = -1;
-        private Thread? _thread;
-        private CancellationTokenSource? _cts;
-
-        private readonly string _filter;
-        private readonly SplitTunnelingMode _mode;
-
-        private const int WINDIVERT_LAYER_NETWORK = 0;
-        private const int WINDIVERT_FLAG_DEFAULT = 0;
-        private const nint INVALID_HANDLE_VALUE = -1;
-
-        [System.Runtime.InteropServices.UnmanagedFunctionPointer(
-            System.Runtime.InteropServices.CallingConvention.Winapi,
-            CharSet = System.Runtime.InteropServices.CharSet.Ansi,
-            SetLastError = true)]
-        private delegate nint WinDivertOpenDelegate(string filter, int layer, short priority, ulong flags);
-
-        [System.Runtime.InteropServices.UnmanagedFunctionPointer(
-            System.Runtime.InteropServices.CallingConvention.Winapi,
-            SetLastError = true)]
-        private delegate bool WinDivertCloseDelegate(nint handle);
-
-        private WinDivertOpenDelegate? _open;
-        private WinDivertCloseDelegate? _close;
-
-        public WinDivertHandle(string dllPath, string filter, SplitTunnelingMode mode)
+        private static async Task RunRouteAsync(string arguments)
         {
-            _filter = filter;
-            _mode = mode;
-            _dll = System.Runtime.InteropServices.NativeLibrary.Load(dllPath);
-            _open = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<WinDivertOpenDelegate>(
-                System.Runtime.InteropServices.NativeLibrary.GetExport(_dll, "WinDivertOpen"));
-            _close = System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer<WinDivertCloseDelegate>(
-                System.Runtime.InteropServices.NativeLibrary.GetExport(_dll, "WinDivertClose"));
-        }
-
-        public Task StartAsync()
-        {
-            _handle = _open!(_filter, WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_DEFAULT);
-            if (_handle == INVALID_HANDLE_VALUE)
-                throw new InvalidOperationException(
-                    $"WinDivertOpen failed. Error: {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}");
-
-            _cts = new CancellationTokenSource();
-            _thread = new Thread(FilterLoop) { IsBackground = true, Name = "WinDivert" };
-            _thread.Start();
-            return Task.CompletedTask;
-        }
-
-        private void FilterLoop()
-        {
-            // Packet interception loop — actual routing logic depends on
-            // whether whitelist or blacklist mode is active.
-            // Packets matching the filter are either re-injected through
-            // the TUN adapter (whitelist = proxy these) or allowed to bypass (blacklist).
-            while (!(_cts?.IsCancellationRequested ?? true))
-                Thread.Sleep(50); // Placeholder: real impl reads/reinjects packets
-        }
-
-        public void Dispose()
-        {
-            _cts?.Cancel();
-            _thread?.Join(TimeSpan.FromSeconds(2));
-
-            if (_handle != INVALID_HANDLE_VALUE && _handle != nint.Zero)
+            using var proc = Process.Start(new ProcessStartInfo("route", arguments)
             {
-                _close?.Invoke(_handle);
-                _handle = INVALID_HANDLE_VALUE;
-            }
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }) ?? throw new InvalidOperationException("route did not start");
 
-            if (_dll != nint.Zero)
-            {
-                System.Runtime.InteropServices.NativeLibrary.Free(_dll);
-                _dll = nint.Zero;
-            }
+            await proc.WaitForExitAsync();
         }
+
+        // ── Interop ──────────────────────────────────────────────────────────
+
+        private const uint ProcessQueryLimitedInformation = 0x1000;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MibIpForwardRow
+        {
+            public uint ForwardDest, ForwardMask, ForwardPolicy, ForwardNextHop, ForwardIfIndex;
+            public uint ForwardType, ForwardProto, ForwardAge, ForwardNextHopAS;
+            public uint ForwardMetric1, ForwardMetric2, ForwardMetric3, ForwardMetric4, ForwardMetric5;
+        }
+
+        [DllImport("iphlpapi.dll")]
+        private static extern int GetBestRoute(uint dwDestAddr, uint dwSourceAddr, ref MibIpForwardRow pBestRoute);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseHandle(IntPtr handle);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool QueryFullProcessImageName(
+            IntPtr process, uint flags, StringBuilder exeName, ref int size);
     }
 }
