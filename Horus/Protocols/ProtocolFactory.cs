@@ -73,8 +73,25 @@ namespace Horus.Protocols
             }
 
             // Resolved before the config is built and while the tunnel is still down —
-            // both halves of the answer stop being truthful once the TUN is up.
-            var geo = ResolveGeoRouting();
+            // the answer stops being truthful once the TUN is up.
+            //
+            // Unconditional, and that is the fix for a loop that had nothing to do with geo
+            // routing. The routing rules send the private and loopback ranges to `direct`
+            // ALWAYS (XrayConfigBuilder, DirectRanges), while the pin used to be produced
+            // only as a by-product of geo routing. With geo off on Windows the direct
+            // outbound was therefore unpinned, and an unpinned direct rule there is the
+            // unbounded loop this class's own documentation warns about: the packet leaves
+            // over the default route, which is the tunnel, re-enters the core, matches
+            // `direct` again, and goes round. 198.18.0.0/15 — the TUN's own subnet — is in
+            // that list, so the loop is reachable by addressing the tunnel itself.
+            var directInterface = _sp.GetService<IDirectPathProvider>()?.ResolveDirectInterface();
+
+            if (_sp.GetService<IDirectPathProvider>() is not null && string.IsNullOrWhiteSpace(directInterface))
+                Diag.Warn("connect",
+                    "the physical interface could not be identified; direct rules are unpinned, " +
+                    "which on this platform can loop traffic back through the tunnel");
+
+            var geo = ResolveGeoRouting(directInterface);
 
             return new XrayConfig
             {
@@ -87,8 +104,8 @@ namespace Horus.Protocols
                 LogFilePath = DiagnosticPaths.XrayLog,
                 LogLevel = Horus.Application.UserPreferences.XrayLogLevel,
 
-                Geo = geo.Options,
-                DirectInterface = geo.DirectInterface,
+                Geo = geo,
+                DirectInterface = directInterface,
 
                 // Chosen per attempt rather than fixed at 1080. The fallback loop stops the
                 // core between attempts, so a retry re-picks the same port unless something
@@ -127,50 +144,43 @@ namespace Horus.Protocols
         /// and the direct interface is only truthful while the tunnel is down — and this
         /// runs immediately before the config that depends on them is rendered.</para>
         /// </summary>
-        private (GeoRoutingOptions Options, string? DirectInterface) ResolveGeoRouting()
+        private GeoRoutingOptions ResolveGeoRouting(string? directInterface)
         {
             if (!Horus.Application.UserPreferences.GeoRoutingEnabled)
-                return (GeoRoutingOptions.Disabled, null);
+                return GeoRoutingOptions.Disabled;
 
             var assets = _sp.GetService<IGeoAssetService>();
 
             if (assets is null || !assets.IsSupported)
             {
                 Diag.Info("geo", "geo routing requested but unsupported on this platform");
-                return (GeoRoutingOptions.Disabled, null);
+                return GeoRoutingOptions.Disabled;
             }
 
             if (!assets.Activate())
             {
                 Diag.Warn("geo", "geo routing requested but the rule files are not usable; connecting without it");
-                return (GeoRoutingOptions.Disabled, null);
+                return GeoRoutingOptions.Disabled;
             }
 
             // Absent on Android by design — nothing to pin, because the UID exclusion has
             // already taken the core's sockets off the tunnel.
-            var directPath = _sp.GetService<IDirectPathProvider>();
-            string? directInterface = null;
-
-            if (directPath is not null)
+            if (_sp.GetService<IDirectPathProvider>() is not null && string.IsNullOrWhiteSpace(directInterface))
             {
-                directInterface = directPath.ResolveDirectInterface();
-
-                if (string.IsNullOrWhiteSpace(directInterface))
-                {
-                    // Refusing is the whole point. Emitting the rules anyway would route
-                    // every Russian destination into a loop through the tunnel rather than
-                    // out of it, and the tunnel would come up looking healthy.
-                    Diag.Warn("geo",
-                        "geo routing requested but the physical interface could not be identified; " +
-                        "connecting without it rather than looping direct traffic back into the tunnel");
-                    return (GeoRoutingOptions.Disabled, null);
-                }
-
-                Diag.Info("geo", $"direct outbound pinned to '{directInterface}'");
+                // Refusing is the whole point. Geo routing sends every Russian destination
+                // direct, so it multiplies an unpinned direct outbound from an edge case
+                // into most of the user's traffic.
+                Diag.Warn("geo",
+                    "geo routing requested but the physical interface could not be identified; " +
+                    "connecting without it rather than looping direct traffic back into the tunnel");
+                return GeoRoutingOptions.Disabled;
             }
 
+            if (!string.IsNullOrWhiteSpace(directInterface))
+                Diag.Info("geo", $"direct outbound pinned to '{directInterface}'");
+
             Diag.Info("geo", "geo routing on: Russian sites and networks go direct");
-            return (GeoRoutingOptions.ForRussianBypass(), directInterface);
+            return GeoRoutingOptions.ForRussianBypass();
         }
 
         /// <summary>
