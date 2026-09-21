@@ -61,11 +61,53 @@ namespace Horus.Platforms.Android.Update
 
                 default:
                     Diag.Error("update", $"install failed (status {status})", message);
+
+                    // A refused session is not the end of the road. Some OEM builds decline
+                    // PackageInstaller outright while still honouring the ordinary "open this
+                    // APK" intent, and the payload is already downloaded and verified — so
+                    // offer that before telling the user it failed.
+                    //
+                    // Not for FailureBlocked: that is the install-unknown-apps app-op, which
+                    // the fallback needs just as much and which the user has to grant in
+                    // Settings. Retrying through another door would just fail again.
+                    if (status != (int)PackageInstallStatus.FailureBlocked && TryFallback(context))
+                        break;
+
                     Report(blocker: status == (int)PackageInstallStatus.FailureBlocked
                         ? UpdateBlocker.InstallPermission
                         : UpdateBlocker.PlatformRefused);
                     break;
             }
+        }
+
+        /// <summary>
+        /// Hands the APK to the system installer instead. Returns false when there is
+        /// nothing to hand over, so the caller can report the failure as before.
+        /// </summary>
+        private static bool TryFallback(Context context)
+        {
+            var install = AndroidUpdateInstaller.BuildSystemInstallIntent(context);
+            if (install is null) return false;
+
+            // Same foreground rule as the confirmation dialog: an activity may only be
+            // started from the background through a notification tap, and pretending
+            // otherwise is what made the original bug invisible.
+            if (AppVisibility.IsForeground)
+            {
+                try
+                {
+                    context.StartActivity(install);
+                    Diag.Info("update", "session refused; opened the system installer instead");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Diag.Warn("update", $"could not open the system installer: {ex.Message}");
+                }
+            }
+
+            PromptFromNotification(context, install);
+            return true;
         }
 
         /// <summary>

@@ -28,10 +28,22 @@ namespace Horus.Application.Update
         private const string KeyPendingVersion = "horus.update.pending.version";
         private const string KeyPendingSeen = "horus.update.pending.firstSeenUtc";
         private const string KeyPendingFile = "horus.update.pending.file";
+
+        /// <summary>
+        /// The digest the stored payload is supposed to have. Kept so a restored file can be
+        /// re-checked rather than trusted for existing: the download is verified before it is
+        /// moved into place, but a file that survived a restart has been out of our hands
+        /// since, and installing a payload we have not re-read is the one mistake here with
+        /// no recovery.
+        /// </summary>
+        private const string KeyPendingSha = "horus.update.pending.sha256";
         private const string KeyLastRunVersion = "horus.update.lastRunVersion";
 
         /// <summary>How often the sources are asked, independently of the condition polling.</summary>
         private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(6);
+
+        /// <summary>Set when <see cref="_readyFile"/> came from a previous run and has not been re-read.</summary>
+        private bool _readyFileNeedsRecheck;
 
         private readonly IUpdateSource[] _sources;
         private readonly IUpdateInstaller _installer;
@@ -221,6 +233,20 @@ namespace Horus.Application.Update
 
             var device = _conditions.Read();
 
+            // A payload carried over from a previous run has not been read since it was
+            // written. Check it before it is treated as ready, so a truncated or tampered
+            // file becomes another download rather than a failed install.
+            if (_readyFile is not null && _readyFileNeedsRecheck)
+            {
+                _readyFileNeedsRecheck = false;
+
+                if (!await RestoredPayloadIsIntactAsync(ct).ConfigureAwait(false))
+                {
+                    Log("the stored payload no longer matches its digest; downloading again");
+                    DiscardDownload();
+                }
+            }
+
             if (_readyFile is null)
             {
                 var hold = UpdatePolicy.CanDownload(plan, device, now);
@@ -234,6 +260,7 @@ namespace Horus.Application.Update
                 }
 
                 Preferences.Set(KeyPendingFile, _readyFile);
+                Preferences.Set(KeyPendingSha, plan.Asset.Sha256 ?? string.Empty);
                 Log($"{plan.Manifest.Version} downloaded and verified");
             }
 
@@ -333,9 +360,20 @@ namespace Horus.Application.Update
 
         // ── Download + verify ───────────────────────────────────────────────
 
+        /// <summary>
+        /// Where a downloaded payload lives until it is installed.
+        ///
+        /// <para><b>Not the cache directory.</b> Android reclaims that whenever it feels
+        /// short of space, with no warning and no callback — so a 60 MB download would
+        /// routinely vanish between the user seeing "готово к установке" and coming back to
+        /// press it, and the updater would start again from zero. That is the reported
+        /// symptom: the download restarting every time the app is reopened.</para>
+        /// </summary>
+        private static string UpdatesDirectory => Path.Combine(FileSystem.AppDataDirectory, "updates");
+
         private async Task<string?> DownloadAsync(UpdatePlan plan, CancellationToken ct)
         {
-            var dir = Path.Combine(FileSystem.CacheDirectory, "updates");
+            var dir = UpdatesDirectory;
             Directory.CreateDirectory(dir);
 
             // Named for the version so a stale payload from an abandoned update can never
@@ -376,6 +414,11 @@ namespace Horus.Application.Update
 
                 TryDelete(target);
                 File.Move(partial, target);
+
+                // Anything else in here belongs to a version that is no longer coming. These
+                // are 60 MB each and nothing else ever removes them.
+                PurgeDownloadsExcept(target);
+
                 return target;
             }
             catch (OperationCanceledException) { throw; }
@@ -606,7 +649,20 @@ namespace Horus.Application.Update
                 : DateTimeOffset.UtcNow;
 
             var file = Preferences.Get(KeyPendingFile, string.Empty);
-            if (!string.IsNullOrEmpty(file) && File.Exists(file)) _readyFile = file;
+            if (!string.IsNullOrEmpty(file) && File.Exists(file))
+            {
+                _readyFile = file;
+
+                // Hashing 60 MB is not something to do on the way to the first frame; the
+                // first tick does it, and until then the file is a candidate rather than a
+                // ready payload.
+                _readyFileNeedsRecheck = true;
+            }
+
+            // Whatever else is in there is from a version that has already been installed or
+            // abandoned. Startup is the natural moment: after a successful update the plan is
+            // cleared, so this is what actually removes the APK we were installed from.
+            PurgeDownloadsExcept(_readyFile);
 
             Log($"resuming pending update {pending}, first seen {_restoredFirstSeen:u}" +
                 (_readyFile is null ? "" : " (already downloaded)"));
@@ -626,7 +682,60 @@ namespace Horus.Application.Update
             var file = Preferences.Get(KeyPendingFile, string.Empty);
             if (!string.IsNullOrEmpty(file)) TryDelete(file);
             Preferences.Remove(KeyPendingFile);
+            Preferences.Remove(KeyPendingSha);
             _readyFile = null;
+            _readyFileNeedsRecheck = false;
+        }
+
+        /// <summary>
+        /// Re-reads the restored payload and compares it with the digest recorded when it was
+        /// downloaded. Missing digest counts as a failure: it means the file was written by a
+        /// build that did not record one, and "probably fine" is not a basis for installing
+        /// over the running app.
+        /// </summary>
+        private async Task<bool> RestoredPayloadIsIntactAsync(CancellationToken ct)
+        {
+            var file = _readyFile;
+            var expected = Preferences.Get(KeyPendingSha, string.Empty);
+
+            if (file is null || !File.Exists(file) || string.IsNullOrEmpty(expected)) return false;
+
+            try
+            {
+                var digest = await ComputeSha256Async(file, ct).ConfigureAwait(false);
+                return string.Equals(digest, expected, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Log($"could not re-read the stored payload: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Deletes every downloaded payload except the one named. Each is tens of megabytes
+        /// and nothing else removes them, so without this every update the device ever
+        /// downloaded stays on it.
+        /// </summary>
+        private static void PurgeDownloadsExcept(string? keep)
+        {
+            try
+            {
+                if (!Directory.Exists(UpdatesDirectory)) return;
+
+                foreach (var path in Directory.EnumerateFiles(UpdatesDirectory))
+                {
+                    if (keep is not null && string.Equals(path, keep, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    TryDelete(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Horus/update] purge failed: {ex.Message}");
+            }
         }
 
         private static void TryDelete(string path)
