@@ -34,6 +34,19 @@ namespace Horus.Application.Diagnostics
         private static bool _installed;
 
         /// <summary>
+        /// Whether the previous run ended without unwinding — no managed exception, no clean
+        /// exit, the process simply stopped existing.
+        ///
+        /// <para>This is the only evidence available for the crash class the handlers below
+        /// cannot see. xray-core runs in this process and a Go panic calls <c>abort()</c>
+        /// directly; so does a fault in any of the native libraries. Nothing managed is
+        /// raised, nothing is written, and the user's report is "it closed by itself and
+        /// there is nothing in the logs" — which is accurate and unactionable. A marker file
+        /// written at start and removed on a clean exit turns that into a fact.</para>
+        /// </summary>
+        public static bool PreviousSessionEndedAbruptly { get; private set; }
+
+        /// <summary>
         /// Hooks every managed crash path. Call as early as possible — before the DI
         /// container is built, and before MAUI initialises — so a failure during startup is
         /// covered too.
@@ -46,8 +59,15 @@ namespace Horus.Application.Diagnostics
                 _installed = true;
             }
 
+            // Read before the new one is written, or the run always looks like it crashed.
+            PreviousSessionEndedAbruptly = ClaimSessionMarker();
+
             AppDomain.CurrentDomain.UnhandledException += (_, e) =>
                 Capture("AppDomain", e.ExceptionObject as Exception, terminating: e.IsTerminating);
+
+            // A clean exit is the only thing that clears the marker. ProcessExit does not run
+            // for a kill or a native abort, which is exactly the distinction being drawn.
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => ReleaseSessionMarker();
 
             // Without SetObserved this escalates to a process kill on some configurations.
             // An unobserved task exception is a bug worth recording, not worth dying for.
@@ -68,6 +88,33 @@ namespace Horus.Application.Diagnostics
                 e.Handled = false;
             };
 #endif
+        }
+
+        /// <summary>
+        /// Notes that this session is running, and reports whether the previous one ever
+        /// said it had finished.
+        /// </summary>
+        private static bool ClaimSessionMarker()
+        {
+            var path = DiagnosticPaths.SessionMarker;
+
+            try
+            {
+                var abrupt = File.Exists(path);
+                File.WriteAllText(path, DateTimeOffset.Now.ToString("O"), Utf8NoBom);
+                return abrupt;
+            }
+            catch
+            {
+                // Unable to tell. Claiming a crash on no evidence would put a warning in
+                // front of the user every launch.
+                return false;
+            }
+        }
+
+        private static void ReleaseSessionMarker()
+        {
+            try { File.Delete(DiagnosticPaths.SessionMarker); } catch { }
         }
 
         /// <summary>
