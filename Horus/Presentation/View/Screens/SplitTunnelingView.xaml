@@ -201,21 +201,43 @@
                 </CollectionView.EmptyView>
             </CollectionView>
 
-            <!-- A–Z jump strip, pinned beside the list rather than scrolling with it -->
-            <VerticalStackLayout Grid.Column="1" Spacing="0" VerticalOptions="Center"
-                                 BindableLayout.ItemsSource="{Binding AlphabetIndex}">
-                <BindableLayout.ItemTemplate>
-                    <DataTemplate x:DataType="x:String">
-                        <Label Text="{Binding .}" FontSize="10" FontAttributes="Bold"
-                               TextColor="{StaticResource HzTextMuted}" FontFamily="{StaticResource FontBody}"
-                               WidthRequest="20" HorizontalTextAlignment="Center" Padding="0,1">
-                            <Label.GestureRecognizers>
-                                <TapGestureRecognizer Tapped="OnAlphabetTapped" />
-                            </Label.GestureRecognizers>
-                        </Label>
-                    </DataTemplate>
-                </BindableLayout.ItemTemplate>
-            </VerticalStackLayout>
+            <!-- Jump strip, pinned beside the list rather than scrolling with it.
+                 Tap jumps; dragging along it scrolls continuously and raises the bubble, the
+                 way a phone book does — tapping alone is unusable once two alphabets are in
+                 play, because the targets are four millimetres tall. -->
+            <Grid Grid.Column="1" VerticalOptions="Center">
+
+                <!-- The letter under the finger, shown to the left of the strip. Centred like
+                     the strip itself, so its offset is pure arithmetic on the entry index and
+                     needs no layout measurement. -->
+                <Border x:Name="LetterBubble" IsVisible="False" InputTransparent="True"
+                        BackgroundColor="{StaticResource HzGold}" Padding="11,6"
+                        HorizontalOptions="End" VerticalOptions="Center" TranslationX="-34">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="13" /></Border.StrokeShape>
+                    <Label x:Name="LetterBubbleText" FontSize="17" FontAttributes="Bold"
+                           TextColor="{StaticResource HzBg}" FontFamily="{StaticResource FontBody}"
+                           HorizontalTextAlignment="Center" />
+                </Border>
+
+                <VerticalStackLayout x:Name="AlphabetStrip" Spacing="0" VerticalOptions="Center"
+                                     BindableLayout.ItemsSource="{Binding AlphabetIndex}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <!-- Fixed height on purpose: the drag maps finger travel to entries
+                                 by dividing by it, so it has to be known rather than measured. -->
+                            <Label Text="{Binding .}" FontSize="10" FontAttributes="Bold"
+                                   TextColor="{StaticResource HzTextMuted}" FontFamily="{StaticResource FontBody}"
+                                   WidthRequest="22" HeightRequest="14"
+                                   HorizontalTextAlignment="Center" VerticalTextAlignment="Center">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnAlphabetTapped" />
+                                    <PanGestureRecognizer PanUpdated="OnAlphabetPan" />
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+            </Grid>
 
             <ActivityIndicator Grid.Column="0" IsVisible="{Binding IsLoadingApps}" IsRunning="{Binding IsLoadingApps}"
                                Color="{StaticResource HzGold}" VerticalOptions="Center" HorizontalOptions="Center" />

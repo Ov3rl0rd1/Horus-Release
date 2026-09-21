@@ -26,6 +26,7 @@
     Only files with no MAUI or platform dependency belong here.
   -->
   <ItemGroup>
+    <Compile Include="..\Horus\Application\AppListIndex.cs" Link="Linked\AppListIndex.cs" />
     <Compile Include="..\Horus\Domain\Models\ProtocolType.cs" Link="Linked\ProtocolType.cs" />
     <Compile Include="..\Horus\Domain\Models\ProtocolConfig.cs" Link="Linked\ProtocolConfig.cs" />
     <Compile Include="..\Horus\Domain\Models\ShareLink.cs" Link="Linked\ShareLink.cs" />

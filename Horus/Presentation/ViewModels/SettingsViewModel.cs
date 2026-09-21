@@ -429,12 +429,22 @@ namespace Horus.Presentation.ViewModels
                 || r.Id.Contains(query, StringComparison.OrdinalIgnoreCase))];
         }
 
+        /// <summary>Re-exported so the view can recognise a gap without knowing where it comes from.</summary>
+        public const string IndexGap = Horus.Application.AppListIndex.Gap;
+
+        /// <summary>
+        /// The jump strip for the current list. The arithmetic lives in
+        /// <see cref="Horus.Application.AppListIndex"/> — it is free of MAUI types so the test
+        /// project can link it, which is exactly what the previous version lacked.
+        /// </summary>
         private static IReadOnlyList<string> BuildIndex(IReadOnlyList<SplitAppRow> rows) =>
-            [.. rows.Select(r => r.IndexKey).Distinct().Take(28)];
+            Horus.Application.AppListIndex.Build(rows.Select(r => r.IndexKey));
 
         /// <summary>Index of the first row under a letter, for the jump strip. -1 if none.</summary>
         public int IndexOfLetter(string letter)
         {
+            if (letter == IndexGap) return -1;
+
             for (int i = 0; i < VisibleApps.Count; i++)
                 if (VisibleApps[i].IndexKey == letter) return i;
             return -1;
