@@ -48,6 +48,13 @@ namespace Horus.Domain.Models
         public GeoRoutingOptions Geo { get; set; } = GeoRoutingOptions.Disabled;
 
         /// <summary>
+        /// Sites the user has routed by hand. Emitted before the geo categories, which is the
+        /// only ordering that works: a geo set is thousands of entries and cannot be edited,
+        /// so a personal exception can win only by being matched first.
+        /// </summary>
+        public IReadOnlyList<Horus.Application.Routing.SiteRule> SiteRules { get; set; } = [];
+
+        /// <summary>
         /// Interface the <c>direct</c> outbound is pinned to, or null to leave it to the
         /// route table.
         ///

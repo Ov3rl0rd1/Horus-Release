@@ -44,6 +44,8 @@
     <Compile Include="..\Horus\Protocols\LocalNetworks.cs" Link="Linked\LocalNetworks.cs" />
     <Compile Include="..\Horus\Protocols\OutboundAddress.cs" Link="Linked\OutboundAddress.cs" />
     <Compile Include="..\Horus\Domain\Models\GeoRouting.cs" Link="Linked\GeoRouting.cs" />
+    <Compile Include="..\Horus\Domain\Models\RuleAction.cs" Link="Linked\RuleAction.cs" />
+    <Compile Include="..\Horus\Application\Routing\SiteRules.cs" Link="Linked\SiteRules.cs" />
 
     <!--
       The update path. Every one of these decides something whose failure is silent: a

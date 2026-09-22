@@ -106,6 +106,73 @@ public class XrayConfigBuilderTests
     private static JsonElement Rules(JsonElement root) =>
         root.GetProperty("routing").GetProperty("rules");
 
+    // ── The user's own site rules ───────────────────────────────────────────
+
+    [Fact]
+    public void Site_rules_reach_the_config_grouped_by_destination()
+    {
+        var root = Build(cfg => cfg.SiteRules = Horus.Application.Routing.SiteRules.Parse([
+            ("youtube.com", RuleAction.Proxy),
+            ("gosuslugi.ru", RuleAction.Direct),
+            ("ads.example", RuleAction.Reject),
+        ]));
+
+        var byTag = new Dictionary<string, List<string>>();
+
+        foreach (var rule in Rules(root).EnumerateArray())
+        {
+            if (!rule.TryGetProperty("domain", out var domains)) continue;
+
+            var tag = rule.GetProperty("outboundTag").GetString()!;
+            byTag[tag] = [.. domains.EnumerateArray().Select(d => d.GetString()!)];
+        }
+
+        Assert.Equal(["domain:youtube.com"], byTag[XrayConfigBuilder.ProxyTag]);
+        Assert.Equal(["domain:gosuslugi.ru"], byTag[XrayConfigBuilder.DirectTag]);
+        Assert.Equal(["domain:ads.example"], byTag[XrayConfigBuilder.BlockTag]);
+    }
+
+    [Fact]
+    public void A_site_rule_is_matched_before_the_geo_category_that_covers_it()
+    {
+        // The ordering the feature rests on. A geo set is thousands of entries and cannot be
+        // edited, so a personal exception can only win by being earlier — if these swap, the
+        // user's rule is dead weight and nothing says so.
+        var root = Build(cfg =>
+        {
+            cfg.SiteRules = Horus.Application.Routing.SiteRules.Parse([("gosuslugi.ru", RuleAction.Proxy)]);
+            cfg.Geo = new GeoRoutingOptions { Enabled = true, DirectSites = ["geosite:ru"] };
+        });
+
+        int site = -1, geo = -1, i = 0;
+
+        foreach (var rule in Rules(root).EnumerateArray())
+        {
+            if (rule.TryGetProperty("domain", out var domains))
+            {
+                var values = domains.EnumerateArray().Select(d => d.GetString()).ToList();
+                if (values.Contains("domain:gosuslugi.ru")) site = i;
+                if (values.Contains("geosite:ru")) geo = i;
+            }
+            i++;
+        }
+
+        Assert.True(site >= 0, "the site rule is missing");
+        Assert.True(geo >= 0, "the geo rule is missing");
+        Assert.True(site < geo, $"site rule at {site} must come before the geo rule at {geo}");
+    }
+
+    [Fact]
+    public void No_site_rules_means_no_extra_rules()
+    {
+        var withNone = Rules(Build()).EnumerateArray().Count();
+        var withOne = Rules(Build(cfg =>
+            cfg.SiteRules = Horus.Application.Routing.SiteRules.Parse([("a.com", RuleAction.Direct)])))
+            .EnumerateArray().Count();
+
+        Assert.Equal(withNone + 1, withOne);
+    }
+
     [Fact]
     public void Geo_rules_are_absent_unless_enabled()
     {
