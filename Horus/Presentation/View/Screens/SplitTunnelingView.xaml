@@ -39,6 +39,41 @@
                     </Label>
                 </Grid>
             </Border>
+
+            <!-- Windows only: the list here is running processes, not installed apps, and
+                 there are two to three hundred of them. Showing only the ones with a window
+                 is the difference between a picker and a haystack; the full list stays one
+                 tap away, and the refresh is there because processes come and go while the
+                 screen is open. Hidden on Android, where every entry is an installed app and
+                 the question does not arise. -->
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8"
+                  IsVisible="{Binding SupportsWindowFilter}">
+
+                <Border Grid.Column="0" Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                        Stroke="{Binding WindowedOnly, Converter={StaticResource SelectionRingColor}}">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnShowWindowed" />
+                    </Border.GestureRecognizers>
+                    <Label Text="С окнами" FontSize="12" FontAttributes="Bold"
+                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                </Border>
+
+                <Border Grid.Column="1" Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                        Stroke="{Binding WindowedOnly, Converter={StaticResource SelectionRingColorInverse}}">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnShowAllProcesses" />
+                    </Border.GestureRecognizers>
+                    <Label Text="Все процессы" FontSize="12" FontAttributes="Bold"
+                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                </Border>
+
+                <Button Grid.Column="3" Text="Обновить" Padding="0" HeightRequest="30"
+                        BackgroundColor="Transparent" TextColor="{StaticResource HzGold}"
+                        FontSize="12" FontAttributes="Bold" FontFamily="{StaticResource FontBody}"
+                        Command="{Binding LoadAppsCommand}" />
+            </Grid>
         </VerticalStackLayout>
 
         <!-- ── Scrolling: modes + blocked group (header) then the app list ── -->
@@ -186,6 +221,13 @@
                             </Grid>
                             <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
                                 <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <!-- Two processes can share a window title, and on Windows two
+                                     different programs can share an image name. The path is
+                                     what tells them apart. -->
+                                <Label Text="{Binding Subtitle}" IsVisible="{Binding HasSubtitle}"
+                                       TextColor="{StaticResource HzTextMuted}" FontSize="10.5"
+                                       LineBreakMode="MiddleTruncation" MaxLines="1"
+                                       FontFamily="{StaticResource FontBody}" />
                                 <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="12"
                                        FontFamily="{StaticResource FontBody}" />
                             </VerticalStackLayout>

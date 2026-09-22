@@ -33,6 +33,18 @@ public partial class SplitTunnelingView : ContentView
         AppList.ScrollTo(index, position: ScrollToPosition.Start, animate: false);
     }
 
+    /// <summary>Show only processes that have a window — the useful default on a desktop.</summary>
+    private void OnShowWindowed(object? sender, TappedEventArgs e)
+    {
+        if (BindingContext is SettingsViewModel vm) vm.WindowedOnly = true;
+    }
+
+    /// <summary>Show everything, for the case the user really is after a background service.</summary>
+    private void OnShowAllProcesses(object? sender, TappedEventArgs e)
+    {
+        if (BindingContext is SettingsViewModel vm) vm.WindowedOnly = false;
+    }
+
     /// <summary>
     /// Must match HeightRequest on the strip's entries. The drag turns finger travel into
     /// entries by dividing by it, so it is a contract with the markup rather than a guess.

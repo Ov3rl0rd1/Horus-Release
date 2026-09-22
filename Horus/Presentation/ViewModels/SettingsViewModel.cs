@@ -417,14 +417,46 @@ namespace Horus.Presentation.ViewModels
             }, cts.Token);
         }
 
+        /// <summary>
+        /// Whether the picker is showing only processes with a window.
+        ///
+        /// <para>On by default, because the alternative is the truth and the truth is useless:
+        /// Windows runs two to three hundred processes and perhaps fifteen are things anyone
+        /// would recognise. The full list stays one tap away for the case the user is actually
+        /// after a background service.</para>
+        /// </summary>
+        [ObservableProperty] private bool _windowedOnly = true;
+
+        /// <summary>Whether that switch means anything here — false where the list is installed apps.</summary>
+        public bool SupportsWindowFilter => _splitTunneling.DistinguishesWindows;
+
+        partial void OnWindowedOnlyChanged(bool value)
+        {
+            VisibleApps = Filter(AppSearch);
+            AlphabetIndex = BuildIndex(VisibleApps);
+            OnPropertyChanged(nameof(NoAppResults));
+        }
+
+        // Re-reading the list is LoadAppsCommand, which already exists — a process picker is a
+        // snapshot of something that changes while the screen is open, and without a way to
+        // ask again the only way to see an application started a moment ago is to leave and
+        // come back. The screen just needs to offer the button.
+
         private List<SplitAppRow> Filter(string query)
         {
             query = query.Trim();
-            if (query.Length == 0) return _allApps;
+
+            // A search is the user saying what they want; narrowing it further by window
+            // state would hide the thing they just typed the name of.
+            var source = WindowedOnly && SupportsWindowFilter && query.Length == 0
+                ? _allApps.Where(r => r.HasWindow).ToList()
+                : _allApps;
+
+            if (query.Length == 0) return source;
 
             // Matches the package name too: users looking for a specific app often know
             // the id from a forum post rather than the display name.
-            return [.. _allApps.Where(r =>
+            return [.. source.Where(r =>
                 r.SearchName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                 || r.Id.Contains(query, StringComparison.OrdinalIgnoreCase))];
         }
@@ -476,7 +508,11 @@ namespace Horus.Presentation.ViewModels
                         Color.FromArgb(ChipPalette[i++ % ChipPalette.Length]),
                         isDirect: forced.Contains(app.Id) || IsAppSelected(app.Id),
                         isLocked: forced.Contains(app.Id))
-                    { IconPath = app.IconPath };
+                    {
+                        IconPath = app.IconPath,
+                        HasWindow = app.HasWindow,
+                        Subtitle = app.Path
+                    };
 
                     (row.IsLocked ? blocked : user).Add(row);
                 }
@@ -821,6 +857,14 @@ namespace Horus.Presentation.ViewModels
         /// </summary>
         public string IndexKey => Letter.Length == 1 && char.IsLetter(Letter[0]) ? Letter : "#";
 
+        /// <summary>Has a window on screen. Only meaningful where the list is processes.</summary>
+        public bool HasWindow { get; init; }
+
+        /// <summary>Full image path, shown under the name so two same-named exes are tellable apart.</summary>
+        public string? Subtitle { get; init; }
+
+        public bool HasSubtitle => !string.IsNullOrEmpty(Subtitle);
+
         public SplitAppRow(string id, string name, Color chip, bool isDirect, bool isLocked = false)
         {
             Id = id;
@@ -828,7 +872,10 @@ namespace Horus.Presentation.ViewModels
             ChipColor = chip;
             _isDirect = isDirect;
             IsLocked = isLocked;
-            SearchName = name ?? string.Empty;
+
+            // The image name is searchable too: on a desktop the thing a user knows is often
+            // "chrome.exe" rather than whatever the window happens to be titled.
+            SearchName = string.IsNullOrEmpty(id) ? name ?? string.Empty : $"{name} {id}";
         }
 
         public bool HasIcon => !string.IsNullOrEmpty(IconPath);

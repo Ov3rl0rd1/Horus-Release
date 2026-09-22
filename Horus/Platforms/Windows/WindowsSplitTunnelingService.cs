@@ -79,6 +79,9 @@ namespace Horus.Platforms.Windows
         /// </summary>
         public bool IsSupported => File.Exists(Path.Combine(_nativeDir, "WinDivert.dll"));
 
+        /// <summary>The list here is running processes, so the distinction is real.</summary>
+        public bool DistinguishesWindows => true;
+
         public SplitTunnelingMode Mode
         {
             get => _mode;
@@ -112,30 +115,51 @@ namespace Horus.Platforms.Windows
         {
             return await Task.Run(() =>
             {
-                var result = new List<AppOrProcessEntry>();
+                // Keyed by image name because that is what a rule matches: several chrome.exe
+                // are one entry, and the one with a window is what names it. Scanning them all
+                // and merging beats stopping at the first, which used to pick whichever
+                // instance the enumeration happened to return and left the visible one out.
+                var byImage = new Dictionary<string, AppOrProcessEntry>(StringComparer.OrdinalIgnoreCase);
+
                 try
                 {
                     foreach (var proc in Process.GetProcesses())
                     {
                         try
                         {
-                            if (string.IsNullOrEmpty(proc.MainModule?.FileName)) continue;
-                            var exe = Path.GetFileName(proc.MainModule.FileName);
+                            var path = proc.MainModule?.FileName;
+                            if (string.IsNullOrEmpty(path)) continue;
+
+                            var exe = Path.GetFileName(path);
                             if (string.IsNullOrEmpty(exe)) continue;
 
-                            if (!result.Any(e => e.Id.Equals(exe, StringComparison.OrdinalIgnoreCase)))
+                            var title = proc.MainWindowTitle;
+                            var windowed = title is { Length: > 0 };
+
+                            if (!byImage.TryGetValue(exe, out var entry))
                             {
-                                result.Add(new AppOrProcessEntry
+                                byImage[exe] = new AppOrProcessEntry
                                 {
                                     Id = exe,
-                                    DisplayName = proc.MainWindowTitle is { Length: > 0 } t
-                                        ? t : Path.GetFileNameWithoutExtension(exe),
+                                    DisplayName = windowed ? title! : Path.GetFileNameWithoutExtension(exe),
+                                    Path = path,
+                                    HasWindow = windowed,
                                     // Deliberately null: IconPath feeds an Image source, and
                                     // an .exe path there renders as a broken image. Extracting
                                     // the real icon would need a Win32 shell call.
                                     IconPath = null,
-                                    IsSystem = IsSystemProcess(proc.MainModule?.FileName)
-                                });
+                                    IsSystem = IsSystemProcess(path)
+                                };
+                                continue;
+                            }
+
+                            // A later instance with a window upgrades the entry: the user is
+                            // looking for "the window called X", and a background instance
+                            // that started first must not hide it.
+                            if (windowed && !entry.HasWindow)
+                            {
+                                entry.HasWindow = true;
+                                entry.DisplayName = title!;
                             }
                         }
                         catch { /* Access denied to some system processes */ }
@@ -144,7 +168,13 @@ namespace Horus.Platforms.Windows
                 }
                 catch { }
 
-                return result.OrderBy(e => e.IsSystem).ThenBy(e => e.DisplayName).ToList();
+                // Windowed first, then non-system, then by name — the order someone hunting
+                // for a running application reads in.
+                return byImage.Values
+                    .OrderByDescending(e => e.HasWindow)
+                    .ThenBy(e => e.IsSystem)
+                    .ThenBy(e => e.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                    .ToList();
             });
         }
 
