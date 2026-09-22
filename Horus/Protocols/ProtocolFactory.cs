@@ -107,6 +107,10 @@ namespace Horus.Protocols
                 Geo = geo,
                 DirectInterface = directInterface,
 
+                // Emitted ahead of the geo categories — see XrayConfig.SiteRules. Empty when
+                // the user has added none, which costs the config nothing.
+                SiteRules = _sp.GetService<Horus.Application.Routing.SiteRuleStore>()?.Rules ?? [],
+
                 // Chosen per attempt rather than fixed at 1080. The fallback loop stops the
                 // core between attempts, so a retry re-picks the same port unless something
                 // else took it meanwhile — which is exactly when moving is the right answer.

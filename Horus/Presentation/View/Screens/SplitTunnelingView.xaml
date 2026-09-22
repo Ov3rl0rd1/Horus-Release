@@ -202,7 +202,87 @@
                             </Border>
                         </VerticalStackLayout>
 
-                        <Label Text="{Binding SelectedAppsCaption}" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,2,0,0" />
+                        <!-- ── Sites ──────────────────────────────────────────────
+                             Per-app rules cannot express "this site, whichever browser I
+                             open it in", which is most of what people actually want to
+                             route. These go into the core's routing section ahead of the
+                             geo categories, so a personal rule beats a category. -->
+                        <VerticalStackLayout Spacing="8" Margin="0,18,0,0">
+                            <Label Text="САЙТЫ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0,0,0" />
+
+                            <Border Style="{StaticResource HzInputBorder}" Padding="14,0" HeightRequest="46">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                    <Entry Grid.Column="0" Style="{StaticResource HzEntry}" HeightRequest="46"
+                                           Placeholder="youtube.com" Text="{Binding NewSiteRule}"
+                                           Keyboard="Url" />
+                                    <Button Grid.Column="1" Text="Добавить" Padding="0" HeightRequest="30"
+                                            BackgroundColor="Transparent" TextColor="{StaticResource HzGold}"
+                                            FontSize="12" FontAttributes="Bold" FontFamily="{StaticResource FontBody}"
+                                            Command="{Binding AddSiteRuleCommand}" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Where a newly added site goes. Proxy first: someone on this
+                                 screen is usually chasing something blocked. -->
+                            <HorizontalStackLayout Spacing="8">
+                                <Border Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                                        Stroke="{Binding IsSiteProxy, Converter={StaticResource SelectionRingColor}}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding SetSiteProxyCommand}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="Через VPN" FontSize="12" FontAttributes="Bold"
+                                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                                <Border Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                                        Stroke="{Binding IsSiteDirect, Converter={StaticResource SelectionRingColor}}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding SetSiteDirectCommand}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="Напрямую" FontSize="12" FontAttributes="Bold"
+                                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                                <Border Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                                        Stroke="{Binding IsSiteBlock, Converter={StaticResource SelectionRingColor}}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding SetSiteBlockCommand}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="Блокировать" FontSize="12" FontAttributes="Bold"
+                                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                            </HorizontalStackLayout>
+
+                            <Label Text="{Binding SiteRuleError}" IsVisible="{Binding HasSiteRuleError}"
+                                   TextColor="{StaticResource HzRed}" FontSize="12"
+                                   FontFamily="{StaticResource FontBody}" Margin="4,0,0,0" />
+
+                            <VerticalStackLayout IsVisible="{Binding HasSiteRules}" Spacing="0"
+                                                 BindableLayout.ItemsSource="{Binding SiteRules}">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:SiteRuleRow">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Padding="4,7">
+                                            <Label Grid.Column="0" Text="{Binding Input}" VerticalOptions="Center"
+                                                   Style="{StaticResource HzBodyLabel}" LineBreakMode="MiddleTruncation" />
+                                            <Label Grid.Column="1" Text="{Binding ActionLabel}" VerticalOptions="Center"
+                                                   TextColor="{Binding ActionColor}" FontSize="11.5"
+                                                   FontFamily="{StaticResource FontBody}" />
+                                            <Label Grid.Column="2" Text="✕" FontSize="14" VerticalOptions="Center"
+                                                   TextColor="{StaticResource HzTextMuted}" Padding="6,0,0,0">
+                                                <Label.GestureRecognizers>
+                                                    <TapGestureRecognizer
+                                                        Command="{Binding Source={RelativeSource AncestorType={x:Type ContentView}}, Path=BindingContext.RemoveSiteRuleCommand}"
+                                                        CommandParameter="{Binding .}" />
+                                                </Label.GestureRecognizers>
+                                            </Label>
+                                        </Grid>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+
+                        <Label Text="{Binding SelectedAppsCaption}" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,18,0,0" />
                     </VerticalStackLayout>
                 </CollectionView.Header>
 

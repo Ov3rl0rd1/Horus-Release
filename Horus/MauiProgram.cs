@@ -108,6 +108,10 @@ namespace Horus
             // tunnel — see IGeoAssetService.IsSupported.
             services.AddSingleton<IGeoAssetService, Horus.Application.Routing.GeoAssetService>();
 
+            // The user's own site rules. A singleton because it is the screen's model and the
+            // connect path's input at the same time, and the two must not see different lists.
+            services.AddSingleton<Horus.Application.Routing.SiteRuleStore>();
+
             // ── Platform Services ────────────────────────────────────────────
 #if ANDROID
             services

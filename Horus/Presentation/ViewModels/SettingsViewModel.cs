@@ -161,8 +161,10 @@ namespace Horus.Presentation.ViewModels
             IErrorReportingService errorReporting,
             Navigator nav,
             AuthFlowViewModel authFlow,
-            PaymentViewModel payment)
+            PaymentViewModel payment,
+            Horus.Application.Routing.SiteRuleStore siteRules)
         {
+            _siteRules = siteRules;
             _auth = auth;
             _geoAssets = geoAssets;
             _routing = routing;
@@ -171,6 +173,8 @@ namespace Horus.Presentation.ViewModels
             _nav = nav;
             _authFlow = authFlow;
             _payment = payment;
+
+            ReloadSiteRules();
 
             SplitTunnelingSupported = splitTunneling.IsSupported;
         }
@@ -441,6 +445,81 @@ namespace Horus.Presentation.ViewModels
         // snapshot of something that changes while the screen is open, and without a way to
         // ask again the only way to see an application started a moment ago is to leave and
         // come back. The screen just needs to offer the button.
+
+        // ── Site rules ───────────────────────────────────────────────────────
+
+        private readonly Horus.Application.Routing.SiteRuleStore _siteRules;
+
+        /// <summary>What the user has added, newest last, as the screen shows it.</summary>
+        public ObservableCollection<SiteRuleRow> SiteRules { get; } = [];
+
+        [ObservableProperty] private string _newSiteRule = string.Empty;
+
+        /// <summary>
+        /// Where a newly added site goes. Proxy by default: someone opening this screen is
+        /// usually trying to get to something that is blocked, not to exclude something.
+        /// </summary>
+        [ObservableProperty] private RuleAction _newSiteAction = RuleAction.Proxy;
+
+        [ObservableProperty] private string _siteRuleError = string.Empty;
+
+        public bool HasSiteRuleError => SiteRuleError.Length > 0;
+        public bool HasSiteRules => SiteRules.Count > 0;
+
+        public bool IsSiteProxy  => NewSiteAction == RuleAction.Proxy;
+        public bool IsSiteDirect => NewSiteAction == RuleAction.Direct;
+        public bool IsSiteBlock  => NewSiteAction == RuleAction.Reject;
+
+        [RelayCommand] private void SetSiteProxy()  => NewSiteAction = RuleAction.Proxy;
+        [RelayCommand] private void SetSiteDirect() => NewSiteAction = RuleAction.Direct;
+        [RelayCommand] private void SetSiteBlock()  => NewSiteAction = RuleAction.Reject;
+
+        partial void OnNewSiteActionChanged(RuleAction value)
+        {
+            OnPropertyChanged(nameof(IsSiteProxy));
+            OnPropertyChanged(nameof(IsSiteDirect));
+            OnPropertyChanged(nameof(IsSiteBlock));
+        }
+
+        partial void OnSiteRuleErrorChanged(string value) => OnPropertyChanged(nameof(HasSiteRuleError));
+
+        [RelayCommand]
+        private void AddSiteRule()
+        {
+            SiteRuleError = string.Empty;
+
+            // The store refuses anything the core would reject. Saying so is the whole point:
+            // an entry that is stored but never matches is worse than one that was refused,
+            // because nothing anywhere explains why the site still goes the wrong way.
+            if (!_siteRules.Add(NewSiteRule, NewSiteAction))
+            {
+                SiteRuleError = "Не похоже на адрес сайта. Например: youtube.com";
+                return;
+            }
+
+            NewSiteRule = string.Empty;
+            ReloadSiteRules();
+        }
+
+        [RelayCommand]
+        private void RemoveSiteRule(SiteRuleRow? row)
+        {
+            if (row is null) return;
+
+            _siteRules.RemoveAt(row.Index);
+            ReloadSiteRules();
+        }
+
+        private void ReloadSiteRules()
+        {
+            SiteRules.Clear();
+
+            var entries = _siteRules.Entries;
+            for (var i = 0; i < entries.Count; i++)
+                SiteRules.Add(new SiteRuleRow(i, entries[i].Input, entries[i].Action));
+
+            OnPropertyChanged(nameof(HasSiteRules));
+        }
 
         private List<SplitAppRow> Filter(string query)
         {
@@ -832,6 +911,25 @@ namespace Horus.Presentation.ViewModels
     }
 
     /// <summary>Display row for one app in the Split tunneling screen.</summary>
+    /// <summary>One user site rule, as the list shows it.</summary>
+    /// <param name="Index">Position in the store, which is what removal addresses.</param>
+    public sealed record SiteRuleRow(int Index, string Input, RuleAction Action)
+    {
+        public string ActionLabel => Action switch
+        {
+            RuleAction.Direct => "напрямую",
+            RuleAction.Reject => "блокировать",
+            _                 => "через VPN"
+        };
+
+        public Color ActionColor => Action switch
+        {
+            RuleAction.Direct => Color.FromArgb("#F3D48E"),
+            RuleAction.Reject => Color.FromArgb("#F2A6A0"),
+            _                 => Color.FromArgb("#7ED9A7")
+        };
+    }
+
     public partial class SplitAppRow : ObservableObject
     {
         [ObservableProperty] private bool _isDirect;
