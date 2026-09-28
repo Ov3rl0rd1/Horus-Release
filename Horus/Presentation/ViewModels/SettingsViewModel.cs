@@ -102,12 +102,25 @@ namespace Horus.Presentation.ViewModels
         public ObservableCollection<SplitAppRow> SplitApps { get; } = new();
 
         // "Все — через VPN" == Disabled; "Выбранные — напрямую" == Blacklist (selected bypass).
-        public bool IsModeAll => SplitTunnelingMode == SplitTunnelingMode.Disabled;
+        public bool IsModeAll    => SplitTunnelingMode == SplitTunnelingMode.Disabled;
+        public bool IsModeBypass => SplitTunnelingMode == SplitTunnelingMode.Blacklist;
+        public bool IsModeOnly   => SplitTunnelingMode == SplitTunnelingMode.Whitelist;
+
+        /// <summary>Anything other than "everything through the VPN" — the app list is live.</summary>
         public bool IsModeCustom => !IsModeAll;
         public double AppsOpacity => IsModeCustom ? 1.0 : 0.4;
 
-        [RelayCommand] private void SetModeAll() => SplitTunnelingMode = SplitTunnelingMode.Disabled;
-        [RelayCommand] private void SetModeCustom() => SplitTunnelingMode = SplitTunnelingMode.Blacklist;
+        /// <summary>
+        /// The list header, because the checked rows mean the opposite thing in the two
+        /// custom modes: in Blacklist they are what bypasses the tunnel, in Whitelist they
+        /// are the only thing that enters it.
+        /// </summary>
+        public string SelectedAppsCaption =>
+            IsModeOnly ? "ПРИЛОЖЕНИЯ · ЧЕРЕЗ VPN" : "ПРИЛОЖЕНИЯ · НАПРЯМУЮ";
+
+        [RelayCommand] private void SetModeAll()    => SplitTunnelingMode = SplitTunnelingMode.Disabled;
+        [RelayCommand] private void SetModeBypass() => SplitTunnelingMode = SplitTunnelingMode.Blacklist;
+        [RelayCommand] private void SetModeOnly()   => SplitTunnelingMode = SplitTunnelingMode.Whitelist;
 
         // ── Connection ────────────────────────────────────────────────────────
         /// <summary>Connect when the app launches, if the VPN was on when it last stopped.</summary>
@@ -148,8 +161,10 @@ namespace Horus.Presentation.ViewModels
             IErrorReportingService errorReporting,
             Navigator nav,
             AuthFlowViewModel authFlow,
-            PaymentViewModel payment)
+            PaymentViewModel payment,
+            Horus.Application.Routing.SiteRuleStore siteRules)
         {
+            _siteRules = siteRules;
             _auth = auth;
             _geoAssets = geoAssets;
             _routing = routing;
@@ -158,6 +173,8 @@ namespace Horus.Presentation.ViewModels
             _nav = nav;
             _authFlow = authFlow;
             _payment = payment;
+
+            ReloadSiteRules();
 
             SplitTunnelingSupported = splitTunneling.IsSupported;
         }
@@ -404,24 +421,141 @@ namespace Horus.Presentation.ViewModels
             }, cts.Token);
         }
 
+        /// <summary>
+        /// Whether the picker is showing only processes with a window.
+        ///
+        /// <para>On by default, because the alternative is the truth and the truth is useless:
+        /// Windows runs two to three hundred processes and perhaps fifteen are things anyone
+        /// would recognise. The full list stays one tap away for the case the user is actually
+        /// after a background service.</para>
+        /// </summary>
+        [ObservableProperty] private bool _windowedOnly = true;
+
+        /// <summary>Whether that switch means anything here — false where the list is installed apps.</summary>
+        public bool SupportsWindowFilter => _splitTunneling.DistinguishesWindows;
+
+        partial void OnWindowedOnlyChanged(bool value)
+        {
+            VisibleApps = Filter(AppSearch);
+            AlphabetIndex = BuildIndex(VisibleApps);
+            OnPropertyChanged(nameof(NoAppResults));
+        }
+
+        // Re-reading the list is LoadAppsCommand, which already exists — a process picker is a
+        // snapshot of something that changes while the screen is open, and without a way to
+        // ask again the only way to see an application started a moment ago is to leave and
+        // come back. The screen just needs to offer the button.
+
+        // ── Site rules ───────────────────────────────────────────────────────
+
+        private readonly Horus.Application.Routing.SiteRuleStore _siteRules;
+
+        /// <summary>What the user has added, newest last, as the screen shows it.</summary>
+        public ObservableCollection<SiteRuleRow> SiteRules { get; } = [];
+
+        [ObservableProperty] private string _newSiteRule = string.Empty;
+
+        /// <summary>
+        /// Where a newly added site goes. Proxy by default: someone opening this screen is
+        /// usually trying to get to something that is blocked, not to exclude something.
+        /// </summary>
+        [ObservableProperty] private RuleAction _newSiteAction = RuleAction.Proxy;
+
+        [ObservableProperty] private string _siteRuleError = string.Empty;
+
+        public bool HasSiteRuleError => SiteRuleError.Length > 0;
+        public bool HasSiteRules => SiteRules.Count > 0;
+
+        public bool IsSiteProxy  => NewSiteAction == RuleAction.Proxy;
+        public bool IsSiteDirect => NewSiteAction == RuleAction.Direct;
+        public bool IsSiteBlock  => NewSiteAction == RuleAction.Reject;
+
+        [RelayCommand] private void SetSiteProxy()  => NewSiteAction = RuleAction.Proxy;
+        [RelayCommand] private void SetSiteDirect() => NewSiteAction = RuleAction.Direct;
+        [RelayCommand] private void SetSiteBlock()  => NewSiteAction = RuleAction.Reject;
+
+        partial void OnNewSiteActionChanged(RuleAction value)
+        {
+            OnPropertyChanged(nameof(IsSiteProxy));
+            OnPropertyChanged(nameof(IsSiteDirect));
+            OnPropertyChanged(nameof(IsSiteBlock));
+        }
+
+        partial void OnSiteRuleErrorChanged(string value) => OnPropertyChanged(nameof(HasSiteRuleError));
+
+        [RelayCommand]
+        private void AddSiteRule()
+        {
+            SiteRuleError = string.Empty;
+
+            // The store refuses anything the core would reject. Saying so is the whole point:
+            // an entry that is stored but never matches is worse than one that was refused,
+            // because nothing anywhere explains why the site still goes the wrong way.
+            if (!_siteRules.Add(NewSiteRule, NewSiteAction))
+            {
+                SiteRuleError = "Не похоже на адрес сайта. Например: youtube.com";
+                return;
+            }
+
+            NewSiteRule = string.Empty;
+            ReloadSiteRules();
+        }
+
+        [RelayCommand]
+        private void RemoveSiteRule(SiteRuleRow? row)
+        {
+            if (row is null) return;
+
+            _siteRules.RemoveAt(row.Index);
+            ReloadSiteRules();
+        }
+
+        private void ReloadSiteRules()
+        {
+            SiteRules.Clear();
+
+            var entries = _siteRules.Entries;
+            for (var i = 0; i < entries.Count; i++)
+                SiteRules.Add(new SiteRuleRow(i, entries[i].Input, entries[i].Action));
+
+            OnPropertyChanged(nameof(HasSiteRules));
+        }
+
         private List<SplitAppRow> Filter(string query)
         {
             query = query.Trim();
-            if (query.Length == 0) return _allApps;
+
+            // A search is the user saying what they want; narrowing it further by window
+            // state would hide the thing they just typed the name of.
+            var source = WindowedOnly && SupportsWindowFilter && query.Length == 0
+                ? _allApps.Where(r => r.HasWindow).ToList()
+                : _allApps;
+
+            if (query.Length == 0) return source;
 
             // Matches the package name too: users looking for a specific app often know
             // the id from a forum post rather than the display name.
-            return [.. _allApps.Where(r =>
+            return [.. source.Where(r =>
                 r.SearchName.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                 || r.Id.Contains(query, StringComparison.OrdinalIgnoreCase))];
         }
 
+        /// <summary>Re-exported so the view can recognise a gap without knowing where it comes from.</summary>
+        public const string IndexGap = Horus.Application.AppListIndex.Gap;
+
+        /// <summary>
+        /// The jump strip for the current list. The arithmetic lives in
+        /// <see cref="Horus.Application.AppListIndex"/> — it is free of MAUI types so the test
+        /// project can link it, which is exactly what the previous version lacked.
+        /// </summary>
         private static IReadOnlyList<string> BuildIndex(IReadOnlyList<SplitAppRow> rows) =>
-            [.. rows.Select(r => r.IndexKey).Distinct().Take(28)];
+            Horus.Application.AppListIndex.Build(rows.Select(r => r.IndexKey));
 
         /// <summary>Index of the first row under a letter, for the jump strip. -1 if none.</summary>
         public int IndexOfLetter(string letter)
         {
+            if (letter == IndexGap) return -1;
+
             for (int i = 0; i < VisibleApps.Count; i++)
                 if (VisibleApps[i].IndexKey == letter) return i;
             return -1;
@@ -453,13 +587,23 @@ namespace Horus.Presentation.ViewModels
                         Color.FromArgb(ChipPalette[i++ % ChipPalette.Length]),
                         isDirect: forced.Contains(app.Id) || IsAppSelected(app.Id),
                         isLocked: forced.Contains(app.Id))
-                    { IconPath = app.IconPath };
+                    {
+                        IconPath = app.IconPath,
+                        HasWindow = app.HasWindow,
+                        Subtitle = app.Path
+                    };
 
                     (row.IsLocked ? blocked : user).Add(row);
                 }
 
                 _allApps = user;
                 BlockedApps = blocked;
+
+                // Rows are built without knowing the mode, and a row that does not know it
+                // labels itself backwards in Whitelist. Cheaper to tell them once here than
+                // to thread the mode through the constructor of every row.
+                ApplyModeToRows(SplitTunnelingMode);
+
                 VisibleApps = Filter(AppSearch);
                 AlphabetIndex = BuildIndex(VisibleApps);
 
@@ -520,8 +664,22 @@ namespace Horus.Presentation.ViewModels
             _splitTunneling.Mode = value;
             OnPropertyChanged(nameof(SplitTunnelingValue));
             OnPropertyChanged(nameof(IsModeAll));
+            OnPropertyChanged(nameof(IsModeBypass));
+            OnPropertyChanged(nameof(IsModeOnly));
             OnPropertyChanged(nameof(IsModeCustom));
             OnPropertyChanged(nameof(AppsOpacity));
+            OnPropertyChanged(nameof(SelectedAppsCaption));
+
+            // The rows describe themselves ("Напрямую, мимо VPN" / "Через VPN"), and the
+            // same checkbox means the opposite in the two custom modes — so every row that
+            // already exists has to be told, not just the ones built after the switch.
+            ApplyModeToRows(value);
+        }
+
+        private void ApplyModeToRows(SplitTunnelingMode mode)
+        {
+            foreach (var row in _allApps) row.ApplyMode(mode);
+            foreach (var row in BlockedApps) row.ApplyMode(mode);
         }
 
         // ── Navigation (custom root, no Shell) ──
@@ -753,6 +911,25 @@ namespace Horus.Presentation.ViewModels
     }
 
     /// <summary>Display row for one app in the Split tunneling screen.</summary>
+    /// <summary>One user site rule, as the list shows it.</summary>
+    /// <param name="Index">Position in the store, which is what removal addresses.</param>
+    public sealed record SiteRuleRow(int Index, string Input, RuleAction Action)
+    {
+        public string ActionLabel => Action switch
+        {
+            RuleAction.Direct => "напрямую",
+            RuleAction.Reject => "блокировать",
+            _                 => "через VPN"
+        };
+
+        public Color ActionColor => Action switch
+        {
+            RuleAction.Direct => Color.FromArgb("#F3D48E"),
+            RuleAction.Reject => Color.FromArgb("#F2A6A0"),
+            _                 => Color.FromArgb("#7ED9A7")
+        };
+    }
+
     public partial class SplitAppRow : ObservableObject
     {
         [ObservableProperty] private bool _isDirect;
@@ -778,6 +955,14 @@ namespace Horus.Presentation.ViewModels
         /// </summary>
         public string IndexKey => Letter.Length == 1 && char.IsLetter(Letter[0]) ? Letter : "#";
 
+        /// <summary>Has a window on screen. Only meaningful where the list is processes.</summary>
+        public bool HasWindow { get; init; }
+
+        /// <summary>Full image path, shown under the name so two same-named exes are tellable apart.</summary>
+        public string? Subtitle { get; init; }
+
+        public bool HasSubtitle => !string.IsNullOrEmpty(Subtitle);
+
         public SplitAppRow(string id, string name, Color chip, bool isDirect, bool isLocked = false)
         {
             Id = id;
@@ -785,7 +970,10 @@ namespace Horus.Presentation.ViewModels
             ChipColor = chip;
             _isDirect = isDirect;
             IsLocked = isLocked;
-            SearchName = name ?? string.Empty;
+
+            // The image name is searchable too: on a desktop the thing a user knows is often
+            // "chrome.exe" rather than whatever the window happens to be titled.
+            SearchName = string.IsNullOrEmpty(id) ? name ?? string.Empty : $"{name} {id}";
         }
 
         public bool HasIcon => !string.IsNullOrEmpty(IconPath);
@@ -795,10 +983,37 @@ namespace Horus.Presentation.ViewModels
 
         public bool CanToggle => !IsLocked;
 
-        public string StatusText => IsLocked
-            ? "Всегда напрямую — задано в приложении"
-            : IsDirect ? "Напрямую, мимо VPN" : "Через VPN";
+        /// <summary>
+        /// Which mode the row is being read under. <see cref="IsDirect"/> is really "this
+        /// app is in the selected set", and what that means flips between modes: in
+        /// Blacklist the selected apps bypass the tunnel, in Whitelist they are the only
+        /// ones inside it. A row that did not know the mode described itself backwards in
+        /// one of the two.
+        /// </summary>
+        private SplitTunnelingMode _mode = SplitTunnelingMode.Blacklist;
 
+        public void ApplyMode(SplitTunnelingMode mode)
+        {
+            if (_mode == mode) return;
+            _mode = mode;
+            OnPropertyChanged(nameof(StatusText));
+        }
+
+        public string StatusText
+        {
+            get
+            {
+                if (IsLocked) return "Всегда напрямую — задано в приложении";
+
+                // Selected means "through the VPN" in Whitelist and "past it" everywhere else.
+                var selectedGoesThrough = _mode == SplitTunnelingMode.Whitelist;
+                var throughVpn = IsDirect == selectedGoesThrough;
+
+                return throughVpn ? "Через VPN" : "Напрямую, мимо VPN";
+            }
+        }
+
+        /// <summary>Accent marks the rows the user picked, whatever picking means here.</summary>
         public Color StatusColor => IsDirect ? Color.FromArgb("#F3D48E") : Color.FromArgb("#73EFEAF6");
 
         partial void OnIsDirectChanged(bool value)

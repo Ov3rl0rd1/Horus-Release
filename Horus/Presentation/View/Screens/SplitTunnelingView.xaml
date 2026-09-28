@@ -39,6 +39,41 @@
                     </Label>
                 </Grid>
             </Border>
+
+            <!-- Windows only: the list here is running processes, not installed apps, and
+                 there are two to three hundred of them. Showing only the ones with a window
+                 is the difference between a picker and a haystack; the full list stays one
+                 tap away, and the refresh is there because processes come and go while the
+                 screen is open. Hidden on Android, where every entry is an installed app and
+                 the question does not arise. -->
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8"
+                  IsVisible="{Binding SupportsWindowFilter}">
+
+                <Border Grid.Column="0" Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                        Stroke="{Binding WindowedOnly, Converter={StaticResource SelectionRingColor}}">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnShowWindowed" />
+                    </Border.GestureRecognizers>
+                    <Label Text="С окнами" FontSize="12" FontAttributes="Bold"
+                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                </Border>
+
+                <Border Grid.Column="1" Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                        Stroke="{Binding WindowedOnly, Converter={StaticResource SelectionRingColorInverse}}">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OnShowAllProcesses" />
+                    </Border.GestureRecognizers>
+                    <Label Text="Все процессы" FontSize="12" FontAttributes="Bold"
+                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                </Border>
+
+                <Button Grid.Column="3" Text="Обновить" Padding="0" HeightRequest="30"
+                        BackgroundColor="Transparent" TextColor="{StaticResource HzGold}"
+                        FontSize="12" FontAttributes="Bold" FontFamily="{StaticResource FontBody}"
+                        Command="{Binding LoadAppsCommand}" />
+            </Grid>
         </VerticalStackLayout>
 
         <!-- ── Scrolling: modes + blocked group (header) then the app list ── -->
@@ -75,22 +110,46 @@
                             </Grid>
                         </Border>
 
-                        <!-- Mode: selected direct -->
+                        <!-- Mode: selected bypass the tunnel (blacklist) -->
                         <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
-                                Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}">
+                                Stroke="{Binding IsModeBypass, Converter={StaticResource SelectionRingColor}}">
                             <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
                             <Border.GestureRecognizers>
-                                <TapGestureRecognizer Command="{Binding SetModeCustomCommand}" />
+                                <TapGestureRecognizer Command="{Binding SetModeBypassCommand}" />
                             </Border.GestureRecognizers>
                             <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
                                 <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
-                                    <Ellipse Stroke="{Binding IsModeCustom, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                    <Ellipse Stroke="{Binding IsModeBypass, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
                                     <Ellipse WidthRequest="10" HeightRequest="10"
-                                             Fill="{Binding IsModeCustom, Converter={StaticResource SelectionDotColor}}" />
+                                             Fill="{Binding IsModeBypass, Converter={StaticResource SelectionDotColor}}" />
                                 </Grid>
                                 <VerticalStackLayout Grid.Column="1" Spacing="1">
                                     <Label Text="Выбранные — напрямую" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
                                     <Label Text="Отмеченные приложения работают мимо VPN — банк напрямую, YouTube через Хорус"
+                                           Style="{StaticResource HzDim}" FontSize="12" />
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Border>
+
+                        <!-- Mode: only the selected enter the tunnel (whitelist).
+                             The tunnel has always supported this — ApplySplitTunneling has a
+                             Whitelist branch using AddAllowedApplication — but nothing in the
+                             UI could ever set it, so every choice behaved as a bypass list. -->
+                        <Border Padding="14,12" BackgroundColor="{StaticResource HzSurface}"
+                                Stroke="{Binding IsModeOnly, Converter={StaticResource SelectionRingColor}}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SetModeOnlyCommand}" />
+                            </Border.GestureRecognizers>
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="11" VerticalOptions="Center">
+                                <Grid Grid.Column="0" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                                    <Ellipse Stroke="{Binding IsModeOnly, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                                    <Ellipse WidthRequest="10" HeightRequest="10"
+                                             Fill="{Binding IsModeOnly, Converter={StaticResource SelectionDotColor}}" />
+                                </Grid>
+                                <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                    <Label Text="Только выбранные — через VPN" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                    <Label Text="Всё остальное идёт напрямую. Отметьте хотя бы одно приложение, иначе туннель некому нести"
                                            Style="{StaticResource HzDim}" FontSize="12" />
                                 </VerticalStackLayout>
                             </Grid>
@@ -143,7 +202,87 @@
                             </Border>
                         </VerticalStackLayout>
 
-                        <Label Text="ПРИЛОЖЕНИЯ · НАПРЯМУЮ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,2,0,0" />
+                        <!-- ── Sites ──────────────────────────────────────────────
+                             Per-app rules cannot express "this site, whichever browser I
+                             open it in", which is most of what people actually want to
+                             route. These go into the core's routing section ahead of the
+                             geo categories, so a personal rule beats a category. -->
+                        <VerticalStackLayout Spacing="8" Margin="0,18,0,0">
+                            <Label Text="САЙТЫ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0,0,0" />
+
+                            <Border Style="{StaticResource HzInputBorder}" Padding="14,0" HeightRequest="46">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                    <Entry Grid.Column="0" Style="{StaticResource HzEntry}" HeightRequest="46"
+                                           Placeholder="youtube.com" Text="{Binding NewSiteRule}"
+                                           Keyboard="Url" />
+                                    <Button Grid.Column="1" Text="Добавить" Padding="0" HeightRequest="30"
+                                            BackgroundColor="Transparent" TextColor="{StaticResource HzGold}"
+                                            FontSize="12" FontAttributes="Bold" FontFamily="{StaticResource FontBody}"
+                                            Command="{Binding AddSiteRuleCommand}" />
+                                </Grid>
+                            </Border>
+
+                            <!-- Where a newly added site goes. Proxy first: someone on this
+                                 screen is usually chasing something blocked. -->
+                            <HorizontalStackLayout Spacing="8">
+                                <Border Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                                        Stroke="{Binding IsSiteProxy, Converter={StaticResource SelectionRingColor}}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding SetSiteProxyCommand}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="Через VPN" FontSize="12" FontAttributes="Bold"
+                                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                                <Border Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                                        Stroke="{Binding IsSiteDirect, Converter={StaticResource SelectionRingColor}}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding SetSiteDirectCommand}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="Напрямую" FontSize="12" FontAttributes="Bold"
+                                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                                <Border Padding="12,6" BackgroundColor="{StaticResource HzSurface}"
+                                        Stroke="{Binding IsSiteBlock, Converter={StaticResource SelectionRingColor}}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="99" /></Border.StrokeShape>
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding SetSiteBlockCommand}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="Блокировать" FontSize="12" FontAttributes="Bold"
+                                           TextColor="{StaticResource HzText}" FontFamily="{StaticResource FontBody}" />
+                                </Border>
+                            </HorizontalStackLayout>
+
+                            <Label Text="{Binding SiteRuleError}" IsVisible="{Binding HasSiteRuleError}"
+                                   TextColor="{StaticResource HzRed}" FontSize="12"
+                                   FontFamily="{StaticResource FontBody}" Margin="4,0,0,0" />
+
+                            <VerticalStackLayout IsVisible="{Binding HasSiteRules}" Spacing="0"
+                                                 BindableLayout.ItemsSource="{Binding SiteRules}">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:SiteRuleRow">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" Padding="4,7">
+                                            <Label Grid.Column="0" Text="{Binding Input}" VerticalOptions="Center"
+                                                   Style="{StaticResource HzBodyLabel}" LineBreakMode="MiddleTruncation" />
+                                            <Label Grid.Column="1" Text="{Binding ActionLabel}" VerticalOptions="Center"
+                                                   TextColor="{Binding ActionColor}" FontSize="11.5"
+                                                   FontFamily="{StaticResource FontBody}" />
+                                            <Label Grid.Column="2" Text="✕" FontSize="14" VerticalOptions="Center"
+                                                   TextColor="{StaticResource HzTextMuted}" Padding="6,0,0,0">
+                                                <Label.GestureRecognizers>
+                                                    <TapGestureRecognizer
+                                                        Command="{Binding Source={RelativeSource AncestorType={x:Type ContentView}}, Path=BindingContext.RemoveSiteRuleCommand}"
+                                                        CommandParameter="{Binding .}" />
+                                                </Label.GestureRecognizers>
+                                            </Label>
+                                        </Grid>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+
+                        <Label Text="{Binding SelectedAppsCaption}" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,18,0,0" />
                     </VerticalStackLayout>
                 </CollectionView.Header>
 
@@ -162,6 +301,13 @@
                             </Grid>
                             <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
                                 <Label Text="{Binding Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                                <!-- Two processes can share a window title, and on Windows two
+                                     different programs can share an image name. The path is
+                                     what tells them apart. -->
+                                <Label Text="{Binding Subtitle}" IsVisible="{Binding HasSubtitle}"
+                                       TextColor="{StaticResource HzTextMuted}" FontSize="10.5"
+                                       LineBreakMode="MiddleTruncation" MaxLines="1"
+                                       FontFamily="{StaticResource FontBody}" />
                                 <Label Text="{Binding StatusText}" TextColor="{Binding StatusColor}" FontSize="12"
                                        FontFamily="{StaticResource FontBody}" />
                             </VerticalStackLayout>
@@ -177,21 +323,43 @@
                 </CollectionView.EmptyView>
             </CollectionView>
 
-            <!-- A–Z jump strip, pinned beside the list rather than scrolling with it -->
-            <VerticalStackLayout Grid.Column="1" Spacing="0" VerticalOptions="Center"
-                                 BindableLayout.ItemsSource="{Binding AlphabetIndex}">
-                <BindableLayout.ItemTemplate>
-                    <DataTemplate x:DataType="x:String">
-                        <Label Text="{Binding .}" FontSize="10" FontAttributes="Bold"
-                               TextColor="{StaticResource HzTextMuted}" FontFamily="{StaticResource FontBody}"
-                               WidthRequest="20" HorizontalTextAlignment="Center" Padding="0,1">
-                            <Label.GestureRecognizers>
-                                <TapGestureRecognizer Tapped="OnAlphabetTapped" />
-                            </Label.GestureRecognizers>
-                        </Label>
-                    </DataTemplate>
-                </BindableLayout.ItemTemplate>
-            </VerticalStackLayout>
+            <!-- Jump strip, pinned beside the list rather than scrolling with it.
+                 Tap jumps; dragging along it scrolls continuously and raises the bubble, the
+                 way a phone book does — tapping alone is unusable once two alphabets are in
+                 play, because the targets are four millimetres tall. -->
+            <Grid Grid.Column="1" VerticalOptions="Center">
+
+                <!-- The letter under the finger, shown to the left of the strip. Centred like
+                     the strip itself, so its offset is pure arithmetic on the entry index and
+                     needs no layout measurement. -->
+                <Border x:Name="LetterBubble" IsVisible="False" InputTransparent="True"
+                        BackgroundColor="{StaticResource HzGold}" Padding="11,6"
+                        HorizontalOptions="End" VerticalOptions="Center" TranslationX="-34">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="13" /></Border.StrokeShape>
+                    <Label x:Name="LetterBubbleText" FontSize="17" FontAttributes="Bold"
+                           TextColor="{StaticResource HzBg}" FontFamily="{StaticResource FontBody}"
+                           HorizontalTextAlignment="Center" />
+                </Border>
+
+                <VerticalStackLayout x:Name="AlphabetStrip" Spacing="0" VerticalOptions="Center"
+                                     BindableLayout.ItemsSource="{Binding AlphabetIndex}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <!-- Fixed height on purpose: the drag maps finger travel to entries
+                                 by dividing by it, so it has to be known rather than measured. -->
+                            <Label Text="{Binding .}" FontSize="10" FontAttributes="Bold"
+                                   TextColor="{StaticResource HzTextMuted}" FontFamily="{StaticResource FontBody}"
+                                   WidthRequest="22" HeightRequest="14"
+                                   HorizontalTextAlignment="Center" VerticalTextAlignment="Center">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnAlphabetTapped" />
+                                    <PanGestureRecognizer PanUpdated="OnAlphabetPan" />
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+            </Grid>
 
             <ActivityIndicator Grid.Column="0" IsVisible="{Binding IsLoadingApps}" IsRunning="{Binding IsLoadingApps}"
                                Color="{StaticResource HzGold}" VerticalOptions="Center" HorizontalOptions="Center" />

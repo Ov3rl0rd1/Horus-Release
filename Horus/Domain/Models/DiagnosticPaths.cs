@@ -34,6 +34,13 @@ namespace Horus.Domain.Models
         /// </summary>
         public static string CrashLog => Path.Combine(LogDirectory, "crash.log");
 
+        /// <summary>
+        /// Present while a session is running, removed when one exits cleanly. Finding it at
+        /// start-up means the previous process stopped without unwinding — the signature of a
+        /// native abort, which no managed handler can see.
+        /// </summary>
+        public static string SessionMarker => Path.Combine(LogDirectory, "session.running");
+
         /// <summary>The previous session's copy of <paramref name="path"/>.</summary>
         public static string Previous(string path) => path + ".prev";
 

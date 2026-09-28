@@ -78,6 +78,47 @@ namespace Horus.Protocols
             "fc00::/7", "fe80::/10"
         ];
 
+        /// <summary>
+        /// Whether an address falls in one of the <see cref="Direct"/> ranges — loopback,
+        /// RFC 1918, link-local, the TUN's own block and the rest.
+        ///
+        /// <para>Third caller of the same list, and the reason it was worth adding here
+        /// rather than in the caller: the Windows split tunneling steers traffic by adding
+        /// host routes, and a host route for a LAN or loopback address would override the
+        /// on-link route the machine already has. That breaks reaching a printer or a NAS in
+        /// a way that has nothing to do with the VPN and does not go away when it is turned
+        /// off, because the route outlives it.</para>
+        /// </summary>
+        public static bool IsDirectRange(System.Net.IPAddress address)
+        {
+            foreach (var cidr in Direct)
+            {
+                var (network, prefix) = Split(cidr);
+                if (!System.Net.IPAddress.TryParse(network, out var start)) continue;
+                if (start.AddressFamily != address.AddressFamily) continue;
+                if (Contains(start, prefix, address)) return true;
+            }
+
+            return false;
+        }
+
+        private static bool Contains(System.Net.IPAddress network, int prefix, System.Net.IPAddress candidate)
+        {
+            var net = network.GetAddressBytes();
+            var ip = candidate.GetAddressBytes();
+            if (net.Length != ip.Length) return false;
+
+            var wholeBytes = prefix / 8;
+            for (var i = 0; i < wholeBytes; i++)
+                if (net[i] != ip[i]) return false;
+
+            var spareBits = prefix % 8;
+            if (spareBits == 0) return true;
+
+            var mask = (byte)(0xFF << (8 - spareBits));
+            return (net[wholeBytes] & mask) == (ip[wholeBytes] & mask);
+        }
+
         /// <summary>Splits "10.0.0.0/8" into its address and prefix length.</summary>
         public static (string Address, int Prefix) Split(string cidr)
         {

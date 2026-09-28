@@ -26,6 +26,7 @@
     Only files with no MAUI or platform dependency belong here.
   -->
   <ItemGroup>
+    <Compile Include="..\Horus\Application\AppListIndex.cs" Link="Linked\AppListIndex.cs" />
     <Compile Include="..\Horus\Domain\Models\ProtocolType.cs" Link="Linked\ProtocolType.cs" />
     <Compile Include="..\Horus\Domain\Models\ProtocolConfig.cs" Link="Linked\ProtocolConfig.cs" />
     <Compile Include="..\Horus\Domain\Models\ShareLink.cs" Link="Linked\ShareLink.cs" />
@@ -43,6 +44,8 @@
     <Compile Include="..\Horus\Protocols\LocalNetworks.cs" Link="Linked\LocalNetworks.cs" />
     <Compile Include="..\Horus\Protocols\OutboundAddress.cs" Link="Linked\OutboundAddress.cs" />
     <Compile Include="..\Horus\Domain\Models\GeoRouting.cs" Link="Linked\GeoRouting.cs" />
+    <Compile Include="..\Horus\Domain\Models\RuleAction.cs" Link="Linked\RuleAction.cs" />
+    <Compile Include="..\Horus\Application\Routing\SiteRules.cs" Link="Linked\SiteRules.cs" />
 
     <!--
       The update path. Every one of these decides something whose failure is silent: a

@@ -74,6 +74,39 @@
 				android:name="android.net.VpnService.SUPPORTS_LOCKDOWN"
 				android:value="true" />
 		</service>
+		<!--
+		  Hands the downloaded APK to the system package installer.
+
+		  Needed only for the fallback path: the normal install goes through PackageInstaller,
+		  which reads the file through our own process and needs no provider. When that route
+		  is refused outright — which some OEM builds do — the classic ACTION_VIEW install
+		  intent is the way through, and it requires a content:// URI the other app may read.
+		  A file:// path has been rejected since Android 7.
+
+		  The authority tracks ${applicationId} rather than being spelled out, because two
+		  apps may not declare the same provider authority: a literal would make the release
+		  build and the com.horus.vpn.test build mutually uninstallable, and device testing
+		  depends on having both. (The <service> above is spelled out for the opposite
+		  reason — see the note on it.)
+
+		  grantUriPermissions with exported=false is the whole point: nothing may read from us
+		  except a component we handed a URI to, for as long as that grant lasts.
+
+		  Named "updateprovider", not "fileprovider": MAUI already declares one at
+		  ${applicationId}.fileProvider, which differs from that only by a capital P. Android
+		  authorities are case-sensitive so both do install today, but two providers one
+		  keystroke apart is a collision waiting for someone to normalise a name — and the
+		  symptom would be an app that cannot be installed at all.
+		-->
+		<provider
+			android:name="androidx.core.content.FileProvider"
+			android:authorities="${applicationId}.updateprovider"
+			android:exported="false"
+			android:grantUriPermissions="true">
+			<meta-data
+				android:name="android.support.FILE_PROVIDER_PATHS"
+				android:resource="@xml/file_paths" />
+		</provider>
 	</application>
 	<!-- Required to enumerate launchable apps for the split-tunnelling picker. Without it
 	     PackageManager.QueryIntentActivities returns nothing on Android 11+. -->

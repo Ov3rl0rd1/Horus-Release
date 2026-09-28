@@ -143,6 +143,9 @@ namespace Horus.Protocols
                 }
             };
 
+            // Before the geo rules on purpose — see XrayConfig.SiteRules.
+            AddSiteRules(rules, cfg.SiteRules);
+
             AddGeoRules(rules, cfg.Geo);
 
             rules.Add(new Dictionary<string, object?>
@@ -153,6 +156,37 @@ namespace Horus.Protocols
             });
 
             return [.. rules];
+        }
+
+        /// <summary>
+        /// Emits the user's own site rules, one grouped rule per destination.
+        ///
+        /// <para>Nothing is validated here. <see cref="Horus.Application.Routing.SiteRules"/>
+        /// has already dropped anything the core would refuse, and it has to: xray does not
+        /// skip a rule it cannot parse, it rejects the entire config, so one mistyped entry
+        /// would stop the tunnel coming up at all rather than just not matching.</para>
+        /// </summary>
+        private static void AddSiteRules(
+            List<object> rules, IReadOnlyList<Horus.Application.Routing.SiteRule> siteRules)
+        {
+            if (siteRules.Count == 0) return;
+
+            Emit(RuleAction.Reject, BlockTag);
+            Emit(RuleAction.Direct, DirectTag);
+            Emit(RuleAction.Proxy, ProxyTag);
+
+            void Emit(RuleAction action, string tag)
+            {
+                var domains = Horus.Application.Routing.SiteRules.For(siteRules, action);
+                if (domains.Count == 0) return;
+
+                rules.Add(new Dictionary<string, object?>
+                {
+                    ["type"] = "field",
+                    ["domain"] = domains,
+                    ["outboundTag"] = tag
+                });
+            }
         }
 
         /// <summary>

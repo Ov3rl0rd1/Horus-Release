@@ -362,6 +362,16 @@ namespace Horus.Presentation.ViewModels
                 // The API picks and binds the server itself (GET /servers/connect takes no
                 // id); the resolved server is passed only so the UI can label the session.
                 await _vpnManager.ConnectAsync(await ResolveServerAsync());
+
+                // "Auto" has now resolved to something concrete: the account is bound to that
+                // node and its endpoints are cached, so every following connect lands on it
+                // too. Leaving the card on "Автовыбор" would describe a decision that has
+                // already been taken.
+                if (_vpnManager.ActiveServer is { } bound)
+                {
+                    _session.PinResolved(bound);
+                    RaiseServerCard();
+                }
             }
             catch (SubscriptionExpiredException)
             {
@@ -474,8 +484,11 @@ namespace Horus.Presentation.ViewModels
         /// <para>This used to return the least-loaded node it could find, which was
         /// harmless when the API ignored the argument and is not now.</para>
         /// </summary>
+        /// <para>Only an <i>explicit</i> choice is passed on. A selection this app pinned
+        /// after a connect (see <see cref="AppSession.PinResolved"/>) is there to label the
+        /// session, not to re-bind on every connect — which would undo the paragraph above.</para>
         private Task<ServerInfo?> ResolveServerAsync() =>
-            Task.FromResult(_session.IsAutoSelect ? null : _session.SelectedServer);
+            Task.FromResult(_session.IsExplicit ? _session.SelectedServer : null);
 
         // ── Event handlers ──
         private void OnVpnStateChanged(object? sender, VpnStateChangedEventArgs e)

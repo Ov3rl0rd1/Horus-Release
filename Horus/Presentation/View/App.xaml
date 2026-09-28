@@ -255,6 +255,10 @@
                 TrueColor="#F3D48E" FalseColor="#73EFEAF6" />
             <conv:BoolToColorConverter x:Key="SelectionRingColor"
                 TrueColor="#F0C46A" FalseColor="#40FFFFFF" />
+            <!-- The other half of a two-option choice: highlights on false, so one bound
+                 property can light exactly one of the pair. -->
+            <conv:BoolToColorConverter x:Key="SelectionRingColorInverse"
+                TrueColor="#40FFFFFF" FalseColor="#F0C46A" />
             <conv:BoolToColorConverter x:Key="SelectionDotColor"
                 TrueColor="#F0C46A" FalseColor="#00FFFFFF" />
             <conv:BoolToColorConverter x:Key="ActiveTabBg"

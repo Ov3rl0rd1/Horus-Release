@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the FileProvider is allowed to hand out, and nothing else.
+
+  Only the updates directory, because that is the only thing another app is ever meant to
+  read from us: the system package installer, opening the APK we just downloaded. The path
+  matches UpdateService.UpdatesDirectory — FileSystem.AppDataDirectory is the app's files/
+  directory on Android, so "updates/" under <files-path> is the same folder.
+
+  Declaring a wider root here would expose the app's private storage — which on this app
+  includes node credentials and the session token — to anything holding a granted URI.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+	<files-path name="updates" path="updates/" />
+</paths>

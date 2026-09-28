@@ -12,6 +12,14 @@ namespace Horus.Domain.Interfaces
         SplitTunnelingMode Mode { get; set; }
 
         /// <summary>
+        /// Whether <see cref="AppOrProcessEntry.HasWindow"/> carries information here, and so
+        /// whether the screen should offer to filter on it. True on Windows, where the list is
+        /// running processes; false on Android, where it is installed apps and every entry
+        /// would answer the same.
+        /// </summary>
+        bool DistinguishesWindows => false;
+
+        /// <summary>
         /// All installed apps/known processes that can be managed.
         /// Android: package names + display labels. Windows: process image names.
         /// </summary>

@@ -43,6 +43,15 @@ namespace Horus.Platforms.Android.Update
         /// </summary>
         private const int UserActionNotRequired = 2;
 
+        /// <summary>
+        /// Where the payload of the session in flight lives, so the fallback can find it.
+        ///
+        /// In Preferences rather than a static field because the broadcast that triggers the
+        /// fallback may arrive after the process has been restarted, and a static would be
+        /// empty exactly then.
+        /// </summary>
+        private const string KeyLastPayload = "horus.update.android.payload";
+
         public bool IsSupported => true;
 
         /// <summary>Always true — Android stops the process to replace it.</summary>
@@ -112,6 +121,10 @@ namespace Horus.Platforms.Android.Update
             if (OperatingSystem.IsAndroidVersionAtLeast(31))
                 parameters.SetRequireUserAction(UserActionNotRequired);
 
+            // Recorded before the session is opened: if the platform refuses the session
+            // outright, the receiver needs the path to offer the system installer instead.
+            Preferences.Set(KeyLastPayload, payloadPath);
+
             var sessionId = installer.CreateSession(parameters);
             using (var session = installer.OpenSession(sessionId))
             {
@@ -136,6 +149,44 @@ namespace Horus.Platforms.Android.Update
                     ?? throw new InvalidOperationException("Could not build the install callback.");
 
                 session.Commit(pending.IntentSender);
+            }
+        }
+
+        /// <summary>
+        /// The classic "open the APK and let the system install it" intent, or null when
+        /// there is nothing to open.
+        ///
+        /// <para>This is the fallback, not the normal path. <see cref="PackageInstaller"/> is
+        /// better in every way that matters — it reports its outcome, it can be silent for a
+        /// self-update, and it needs no provider — but it is also a route some OEM builds
+        /// decline outright rather than merely asking for confirmation. When that happens the
+        /// update has nowhere else to go, and a user who is told "обновление не удалось" with
+        /// a downloaded payload sitting on disk is being failed for no reason.</para>
+        ///
+        /// <para>A <c>content://</c> URI through our FileProvider, not a path: <c>file://</c>
+        /// URIs have been rejected since Android 7, and the read grant on the intent is what
+        /// lets the installer — and only the installer — open it.</para>
+        /// </summary>
+        public static Intent? BuildSystemInstallIntent(Context context)
+        {
+            try
+            {
+                var path = Preferences.Get(KeyLastPayload, string.Empty);
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+
+                var authority = context.PackageName + ".updateprovider";
+                var uri = AndroidX.Core.Content.FileProvider.GetUriForFile(
+                    context, authority, new Java.IO.File(path));
+
+                return new Intent(Intent.ActionView)
+                    .SetDataAndType(uri, "application/vnd.android.package-archive")
+                    .AddFlags(ActivityFlags.GrantReadUriPermission)
+                    .AddFlags(ActivityFlags.NewTask);
+            }
+            catch (Exception ex)
+            {
+                Diag.Warn("update", $"could not build the fallback install intent: {ex.Message}");
+                return null;
             }
         }
 
