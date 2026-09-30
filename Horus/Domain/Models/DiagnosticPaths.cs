@@ -41,6 +41,14 @@ namespace Horus.Domain.Models
         /// </summary>
         public static string SessionMarker => Path.Combine(LogDirectory, "session.running");
 
+        /// <summary>
+        /// This process's standard error, redirected to a file on Windows. The only place a
+        /// Go panic in xray-core, or the .NET runtime's own fatal-error message, is ever
+        /// written: both go to stderr, which a GUI process does not have. Rotated at start,
+        /// so the <c>.prev</c> copy is the output of the session that died.
+        /// </summary>
+        public static string NativeStderrLog => Path.Combine(LogDirectory, "native-stderr.log");
+
         /// <summary>The previous session's copy of <paramref name="path"/>.</summary>
         public static string Previous(string path) => path + ".prev";
 
@@ -105,6 +113,8 @@ namespace Horus.Domain.Models
                 (HevLog, "hev.log"),
                 (Previous(HevLog), "hev.prev.log"),
                 (CrashLog, "crash.log"),
+                (NativeStderrLog, "native-stderr.log"),
+                (Previous(NativeStderrLog), "native-stderr.prev.log"),
             })
             {
                 if (File.Exists(path)) yield return (path, name);

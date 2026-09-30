@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Horus.Application;
 using Horus.Application.Diagnostics;
 using Horus.Domain.Models;
+using Horus.Platforms.Windows;
 using Microsoft.UI.Xaml;
 
 // To learn more about WinUI, the WinUI project structure,
@@ -56,6 +57,13 @@ namespace Horus.WinUI
                 UserPreferences.ApplyLogLevel();
                 CrashHandler.Install();
 
+                // Before anything native is loaded: a Go panic in xray-core and the runtime's own
+                // fatal errors are only ever written to stderr, which a GUI process lacks.
+                NativeCrashCapture.Install();
+
+                // So the next start knows when this session ended, not just that it did.
+                CrashHandler.StartHeartbeat(TimeSpan.FromMinutes(1));
+
                 // WinUI keeps its own unhandled-exception path: an exception on the UI thread
                 // is caught by the XAML framework and raised here, and never reaches
                 // AppDomain.UnhandledException. Hooking only the AppDomain would have left the
@@ -65,21 +73,72 @@ namespace Horus.WinUI
 
                 Diag.Info("app", $"process start, version {AppConfiguration.AppVersion}");
 
-                var (crashed, at, summary) = CrashHandler.LastCrash();
-                if (crashed)
-                    Diag.Warn("app", $"previous session ended in a crash at {at:dd.MM HH:mm}", summary);
+                ReportPreviousSession();
 
-                // No managed exception and no clean exit: a native abort, which on this app
-                // most likely means a panic inside xray-core. Nothing else reports it.
-                if (CrashHandler.PreviousSessionEndedAbruptly && !crashed)
-                    Diag.Warn("app",
-                        "previous session ended without unwinding — no managed exception was raised, " +
-                        "which points at a fault in native code rather than in the app");
+                NativeCrashCapture.RestoreErrorReportingAfterCoreLoads();
             }
             catch
             {
                 // Diagnostics setup must never be the thing that stops the app starting.
             }
+        }
+
+        /// <summary>
+        /// Says how the previous session ended, from everything it left behind: a managed
+        /// crash record, its own stderr, the marker's heartbeat, and — in the background —
+        /// the Windows event log.
+        /// </summary>
+        private static void ReportPreviousSession()
+        {
+            var abrupt = CrashHandler.PreviousSessionEndedAbruptly;
+            var native = abrupt ? NativeCrashCapture.ReadPrevious() : null;
+
+            var (crashed, at, summary) = CrashHandler.LastCrash();
+
+            // crash.log is kept until the user acknowledges it in Settings, so its last record
+            // can be sessions old. Only one written after the previous session started says
+            // anything about how that session ended.
+            var recorded = crashed &&
+                           (at is null || CrashHandler.PreviousSessionStartedAt is not { } started || at >= started);
+
+            // The runtime's last words name the crash no handler saw. Recorded like any other
+            // crash, so Settings shows it — unless a managed handler already recorded this one,
+            // in which case stderr only repeats it.
+            if (native is { Headline: { } headline } && !recorded)
+            {
+                CrashHandler.RecordNative(native.At, headline, native.Text);
+                (crashed, at, summary) = CrashHandler.LastCrash();
+                recorded = true;
+            }
+
+            if (crashed)
+                Diag.Warn("app", $"previous session ended in a crash at {at:dd.MM HH:mm}", summary);
+
+            if (!abrupt) return;
+
+            // No managed exception and no clean exit. A native fault, a Windows shutdown or
+            // sign-out, and a kill from Task Manager all look like this from inside; the
+            // inspection below asks Windows which it was.
+            if (!recorded)
+            {
+                var lastAlive = CrashHandler.PreviousSessionLastAlive is { } alive
+                    ? $", last sign of life {alive:dd.MM HH:mm}"
+                    : string.Empty;
+
+                // Output without a fatal line is usually noise, but it is the only native trace
+                // there is; the head goes into the timeline, the whole file into the archive.
+                var excerpt = native?.Text is { } text && text.Length > 2000 ? text[..2000] : native?.Text;
+
+                Diag.Warn("app",
+                    "previous session ended without unwinding — no managed exception was raised, " +
+                    "which points at native code or at Windows ending the process" + lastAlive,
+                    excerpt);
+            }
+
+            PreviousSessionInspector.InspectInBackground(
+                CrashHandler.PreviousSessionStartedAt,
+                CrashHandler.PreviousSessionLastAlive,
+                nativeOutputFound: native is { Headline: not null });
         }
 
         protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp();
