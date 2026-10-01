@@ -54,6 +54,15 @@ namespace Horus
                 updates.RetryNow();
             };
 
+#if WINDOWS
+            // Closing the window is how a Windows user quits, so it is a clean exit whatever
+            // happens afterwards. Recorded here rather than left to ProcessExit alone: WinUI
+            // tears its native state down after this point, and a clean exit that never reaches
+            // ProcessExit would be reported as a crash at the next start.
+            window.Destroying += (_, __) =>
+                global::Horus.Application.Diagnostics.CrashHandler.MarkCleanExit("window closed");
+#endif
+
             window.Stopped += (_, __) =>
             {
                 AppVisibility.SetBackground();
