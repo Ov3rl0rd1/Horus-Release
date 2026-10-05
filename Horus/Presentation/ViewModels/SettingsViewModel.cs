@@ -19,7 +19,6 @@ namespace Horus.Presentation.ViewModels
         private readonly IErrorReportingService _errorReporting;
         private readonly Navigator _nav;
         private readonly AuthFlowViewModel _authFlow;
-        private readonly PaymentViewModel _payment;
 
         // ── Account ──────────────────────────────────────────────────────────
         [ObservableProperty] private string _username = string.Empty;
@@ -161,7 +160,6 @@ namespace Horus.Presentation.ViewModels
             IErrorReportingService errorReporting,
             Navigator nav,
             AuthFlowViewModel authFlow,
-            PaymentViewModel payment,
             Horus.Application.Routing.SiteRuleStore siteRules)
         {
             _siteRules = siteRules;
@@ -172,7 +170,6 @@ namespace Horus.Presentation.ViewModels
             _errorReporting = errorReporting;
             _nav = nav;
             _authFlow = authFlow;
-            _payment = payment;
 
             ReloadSiteRules();
 
@@ -709,7 +706,7 @@ namespace Horus.Presentation.ViewModels
 
         [RelayCommand] private void GoSplit() => _nav.Go(AppScreen.Split);
         [RelayCommand] private void BackToSettings() => _nav.Go(AppScreen.Settings);
-        [RelayCommand] private void OpenPay() => _payment.Open();
+        [RelayCommand] private Task OpenPayAsync() => SubscriptionPage.OpenAsync();
 
         // ── Error reporting ───────────────────────────────────────────────────
 

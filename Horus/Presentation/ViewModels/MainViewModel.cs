@@ -26,7 +26,6 @@ namespace Horus.Presentation.ViewModels
         private readonly IErrorReportingService _errorReporting;
         private readonly AppSession _session;
         private readonly Navigator _nav;
-        private readonly PaymentViewModel _payment;
         private readonly IPublisherTrustService _publisherTrust;
         private readonly INoticeService _notices;
 
@@ -93,7 +92,6 @@ namespace Horus.Presentation.ViewModels
             IErrorReportingService errorReporting,
             AppSession session,
             Navigator nav,
-            PaymentViewModel payment,
             IPublisherTrustService publisherTrust,
             INoticeService notices)
         {
@@ -109,7 +107,6 @@ namespace Horus.Presentation.ViewModels
             _errorReporting = errorReporting;
             _session = session;
             _nav = nav;
-            _payment = payment;
             _notices = notices;
 
             _notices.Changed += (_, __) => SyncNotices();
@@ -250,16 +247,16 @@ namespace Horus.Presentation.ViewModels
         }
 
         /// <summary>
-        /// Runs a notice's action. Subscription opens the payment sheet, which lives here
-        /// rather than in the service — the Application layer has no business knowing about
-        /// an overlay view model.
+        /// Runs a notice's action. Subscription opens the site's tariff page, which is
+        /// handled here rather than in the service — the Application layer has no business
+        /// opening a browser.
         /// </summary>
         [RelayCommand]
         private async Task ActOnNoticeAsync(AppNotice? notice)
         {
             if (notice is null) return;
 
-            if (notice.Kind == NoticeKind.Subscription) { _payment.Open(); return; }
+            if (notice.Kind == NoticeKind.Subscription) { await SubscriptionPage.OpenAsync(); return; }
 
             await _notices.ActAsync(notice.Kind);
         }
@@ -288,7 +285,7 @@ namespace Horus.Presentation.ViewModels
 
                 if (SubscriptionKnown && SubDaysLeft <= 0)
                 {
-                    _payment.Open();
+                    await SubscriptionPage.OfferAsync();
                     return;
                 }
             }
@@ -297,7 +294,7 @@ namespace Horus.Presentation.ViewModels
         }
 
         [RelayCommand] private void GoServers() => _nav.Go(AppScreen.Servers);
-        [RelayCommand] private void OpenPay() => _payment.Open();
+        [RelayCommand] private Task OpenPayAsync() => SubscriptionPage.OpenAsync();
 
         #region DEV-PANEL — pre-release test harness; delete this region with Horus/DevTools/
 
@@ -378,7 +375,7 @@ namespace Horus.Presentation.ViewModels
                 // The server is the authority on this, and the local gate is deliberately
                 // optimistic — so this is the normal way an expired account is discovered.
                 await RefreshAccountAsync();
-                _payment.Open();
+                await SubscriptionPage.OfferAsync();
             }
             catch (UnauthorizedAccessException)
             {

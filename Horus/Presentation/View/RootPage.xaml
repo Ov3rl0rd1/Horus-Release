@@ -196,10 +196,5 @@
                 </Grid>
             </Border>
         </Grid>
-
-        <!-- ═══ PAYMENT OVERLAY ═══ -->
-        <Grid IsVisible="{Binding Payment.IsVisible}">
-            <screens:PaymentOverlayView BindingContext="{Binding Payment}" />
-        </Grid>
     </Grid>
 </ContentPage>

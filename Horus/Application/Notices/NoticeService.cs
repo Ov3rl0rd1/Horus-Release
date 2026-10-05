@@ -192,7 +192,7 @@ namespace Horus.Application.Notices
         {
             Diag.User("notice", $"acting on {kind}");
 
-            // The payment sheet belongs to the view model; everything else is handled here.
+            // The tariff page is opened by the view model; everything else is handled here.
             if (kind == NoticeKind.Subscription) return;
 
             if (kind == NoticeKind.UpdateReady)

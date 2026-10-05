@@ -56,7 +56,18 @@ namespace Horus.Application
                 using var response = await PostAsync(ApiConsts.AUTH_LOGIN, new { username, password }, ct);
 
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
-                    return AuthResult.Fail("Неверный логин или пароль.", status: 401);
+                    return AuthResult.Fail("Неверное имя пользователя или пароль.", status: 401);
+
+                // The account exists but its address was never confirmed. Not a dead end: the
+                // body carries a ticket that continues on the confirmation screen.
+                if (response.StatusCode == HttpStatusCode.Forbidden &&
+                    await ReadErrorCodeAsync(response) == ErrorCodes.EmailUnverified)
+                {
+                    var fail = AuthResult.Fail(
+                        "Адрес ещё не подтверждён. Введите код из письма.", ErrorCodes.EmailUnverified, 403);
+                    fail.Pending = await ReadBodyAsync<PendingVerification>(response);
+                    return fail;
+                }
 
                 if (!response.IsSuccessStatusCode)
                     return AuthResult.Fail(await ReadErrorAsync(response, "Не удалось войти."),
@@ -82,13 +93,8 @@ namespace Horus.Application
 
                 if (response.StatusCode == HttpStatusCode.Conflict)
                     return RegisterResult.Fail(
-                        await ReadErrorAsync(response, "Такой логин или email уже занят."),
+                        await ReadErrorAsync(response, "Такое имя пользователя или e-mail уже занято."),
                         await ReadErrorCodeAsync(response), 409);
-
-                if (response.StatusCode == HttpStatusCode.TooManyRequests)
-                    return RegisterResult.Fail(
-                        await ReadErrorAsync(response, "Слишком много попыток. Попробуйте позже."),
-                        await ReadErrorCodeAsync(response), 429);
 
                 if (!response.IsSuccessStatusCode)
                     return RegisterResult.Fail(
@@ -99,31 +105,39 @@ namespace Horus.Application
                 return new RegisterResult
                 {
                     Success = true,
-                    Email = body?.Email ?? email,
+                    Email = string.IsNullOrEmpty(body?.Email) ? email : body.Email,
                     CodeExpiresInSeconds = body?.CodeExpiresInSeconds ?? 0,
+                    ResendAvailableInSeconds = body?.ResendAvailableInSeconds ?? 0,
+                    PendingToken = body?.PendingToken,
                     Message = body?.Status
                 };
             }
             catch (Exception ex) { return RegisterResult.Fail(DescribeException(ex)); }
         }
 
-        public async Task<AuthResult> VerifyEmailAsync(string email, string code, CancellationToken ct = default)
+        public async Task<AuthResult> VerifyEmailAsync(
+            string email, string code, string? pendingToken = null, CancellationToken ct = default)
         {
             try
             {
-                using var response = await PostAsync(ApiConsts.AUTH_VERIFY, new { email, code }, ct);
+                // With a ticket the API identifies the account by it and ignores the address —
+                // which is what lets someone who signed in by username confirm at all.
+                using var response = await PostAsync(ApiConsts.AUTH_VERIFY,
+                    new { email, code, pending_token = pendingToken }, ct);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    var message = response.StatusCode switch
-                    {
-                        HttpStatusCode.BadRequest => "Неверный или просроченный код.",
-                        HttpStatusCode.Conflict => "Этот email уже подтверждён.",
-                        HttpStatusCode.TooManyRequests => "Слишком много попыток. Попробуйте позже.",
-                        _ => "Не удалось подтвердить email."
-                    };
-                    return AuthResult.Fail(await ReadErrorAsync(response, message),
-                        await ReadErrorCodeAsync(response), (int)response.StatusCode);
+                    var errorCode = await ReadErrorCodeAsync(response);
+                    var message = await ReadErrorAsync(response, "Не удалось подтвердить адрес.");
+
+                    // Wrong code on the ticket path also says how many guesses remain.
+                    if (errorCode == ErrorCodes.InvalidCode &&
+                        (await ReadBodyAsync<VerifyCodeError>(response))?.AttemptsLeft is int left)
+                        message = left > 0
+                            ? $"Код не подошёл. Осталось попыток: {left} из 5."
+                            : "Код заблокирован после пяти ошибок. Запросите новый.";
+
+                    return AuthResult.Fail(message, errorCode, (int)response.StatusCode);
                 }
 
                 var result = await DeserializeAsync<LoginResponse>(response, ct);
@@ -137,25 +151,26 @@ namespace Horus.Application
             catch (Exception ex) { return AuthResult.Fail(DescribeException(ex)); }
         }
 
-        public async Task<RegisterResult> ResendCodeAsync(string email, CancellationToken ct = default)
+        public async Task<RegisterResult> ResendCodeAsync(
+            string email, string? pendingToken = null, CancellationToken ct = default)
         {
             try
             {
-                using var response = await PostAsync(ApiConsts.AUTH_RESEND_CODE, new { email }, ct);
+                using var response = await PostAsync(ApiConsts.AUTH_RESEND_CODE,
+                    new { email = pendingToken is null ? email : null, pending_token = pendingToken }, ct);
 
                 if (!response.IsSuccessStatusCode)
                     return RegisterResult.Fail(
-                        await ReadErrorAsync(response, response.StatusCode == HttpStatusCode.TooManyRequests
-                            ? "Код уже отправлен. Подождите немного."
-                            : "Не удалось отправить код."),
+                        await ReadErrorAsync(response, "Не удалось отправить код."),
                         await ReadErrorCodeAsync(response), (int)response.StatusCode);
 
                 var body = await DeserializeAsync<RegisterResponse>(response, ct);
                 return new RegisterResult
                 {
                     Success = true,
-                    Email = body?.Email ?? email,
+                    Email = string.IsNullOrEmpty(body?.Email) ? email : body.Email,
                     CodeExpiresInSeconds = body?.CodeExpiresInSeconds ?? 0,
+                    ResendAvailableInSeconds = body?.ResendAvailableInSeconds ?? 0,
                     Message = body?.Status
                 };
             }
@@ -174,9 +189,7 @@ namespace Horus.Application
                 // failure here is a transport/rate-limit problem, never "unknown email".
                 if (!response.IsSuccessStatusCode)
                     return RegisterResult.Fail(
-                        await ReadErrorAsync(response, response.StatusCode == HttpStatusCode.TooManyRequests
-                            ? "Письмо уже отправлено. Подождите немного."
-                            : "Не удалось отправить письмо."),
+                        await ReadErrorAsync(response, "Не удалось отправить письмо."),
                         await ReadErrorCodeAsync(response), (int)response.StatusCode);
 
                 return new RegisterResult { Success = true, Email = email };
@@ -259,14 +272,14 @@ namespace Horus.Application
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
                 throw new SubscriptionExpiredException(
-                    await ReadErrorAsync(response, "Подписка истекла."));
+                    await ReadErrorAsync(response, "Подписка закончилась."));
 
             if (response.StatusCode == HttpStatusCode.Unauthorized)
                 throw new UnauthorizedAccessException("Сессия недействительна. Войдите заново.");
 
             if (response.StatusCode == HttpStatusCode.NotFound)
                 throw new InvalidOperationException(
-                    await ReadErrorAsync(response, "Такого сервера нет."));
+                    await ReadErrorAsync(response, "Этого сервера больше нет. Выберите другой."));
 
             // The node filled up between the catalogue being read and this call. Worth its
             // own message: the honest advice is to pick another, not to retry this one.
@@ -293,7 +306,7 @@ namespace Horus.Application
 
             if (response.StatusCode == HttpStatusCode.Forbidden)
                 throw new SubscriptionExpiredException(
-                    await ReadErrorAsync(response, "Подписка истекла."));
+                    await ReadErrorAsync(response, "Подписка закончилась."));
 
             if (response.StatusCode == HttpStatusCode.NotFound)
                 throw new InvalidOperationException(
@@ -408,11 +421,37 @@ namespace Horus.Application
             return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, ct);
         }
 
-        /// <summary>Pulls <c>message</c> out of the API error envelope, falling back to <paramref name="fallback"/>.</summary>
+        /// <summary>
+        /// What to tell the user about a refusal. The API's own <c>message</c> is English
+        /// and written for developers, so it is never shown: the refusal is named by its
+        /// <c>code</c> (and a 429's <c>Retry-After</c>) and explained in Russian here, falling
+        /// back to <paramref name="fallback"/>. The English text still goes to the log.
+        /// </summary>
         private static async Task<string> ReadErrorAsync(HttpResponseMessage response, string fallback)
         {
             var error = await TryReadErrorEnvelopeAsync(response);
-            return string.IsNullOrWhiteSpace(error?.Message) ? fallback : error!.Message;
+            if (!string.IsNullOrWhiteSpace(error?.Message))
+                Diag.Info("api", $"{(int)response.StatusCode} {error!.Code ?? "-"}: {error.Message}");
+
+            return ErrorText.Explain(error?.Code, (int)response.StatusCode, RetryAfterSeconds(response)) ?? fallback;
+        }
+
+        private static int? RetryAfterSeconds(HttpResponseMessage response)
+        {
+            var retry = response.Headers.RetryAfter;
+            if (retry?.Delta is { } delta) return (int)Math.Ceiling(delta.TotalSeconds);
+            if (retry?.Date is { } date) return Math.Max(0, (int)Math.Ceiling((date - DateTimeOffset.UtcNow).TotalSeconds));
+            return null;
+        }
+
+        private static async Task<T?> ReadBodyAsync<T>(HttpResponseMessage response)
+        {
+            try
+            {
+                var text = await response.Content.ReadAsStringAsync();
+                return string.IsNullOrWhiteSpace(text) ? default : JsonSerializer.Deserialize<T>(text, JsonOptions);
+            }
+            catch { return default; }
         }
 
         private static async Task<string?> ReadErrorCodeAsync(HttpResponseMessage response) =>

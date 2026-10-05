@@ -156,15 +156,29 @@ Two consequences worth knowing before debugging:
 
 HorusAPI v1, base URL from `appsettings.json`. Auth is a **custom session scheme**, not JWT: `POST /auth/login` or `/auth/verify` returns a session token, replayed by `HttpAuthHandler` in the `X-Session-Key` header.
 
-- Registration does **not** sign you in — `POST /auth/register` mails a 6-digit code (202), and `POST /auth/verify` exchanges it for the session.
-- `expiresAt` on a login response is the **session** expiry. The **subscription** expiry comes from `GET /whoami`, which also returns the egress IP. These are stored separately in `StorageService`.
-- `GET /servers/best` is the catalogue; `GET /servers/connect` takes no id.
+- Registration does **not** sign you in — `POST /auth/register` mails a 6-digit code (202, with a `pendingToken`), and `POST /auth/verify` exchanges it for the session.
+- **An unconfirmed account is not a dead end.** `/auth/login` answers `403 code=email_unverified` *plus* a pending ticket, the masked address and the code/resend countdowns (`PendingVerification`). The app goes to the confirm screen with the ticket, and `/auth/verify` / `/auth/resend-code` send `pending_token` — someone who signed in by **username** was never told which address to quote. `attemptsLeft` comes back on a wrong code only on the ticket path.
+- A session has **no expiry of its own**. `expiresAt` on a login response is the **subscription** end (null for none) — never sign out on it: a lapsed subscriber must still be able to sign in and renew. `GET /whoami` returns the same date plus the egress IP and `lastConnectedAt`.
+- `GET /servers` lists ping candidates (`max_reservations` is the hard cap, `max_clients` only a soft one); `POST /servers/select` binds; `GET /servers/connect` takes no id and returns `{server, outbounds[]}` for the bound node.
+- **The API's `message` is English and written for developers; the app never shows it.** `ReadErrorAsync` maps the `code` to Russian through `ErrorText.Explain` (pure, pinned by `ErrorTextTests`) and logs the English one. A refusal without a code falls back to the caller's own Russian text — which is why sign-up checks `AccountRules` (copied from the API's username/password rules) before sending.
+- `Horus.Tests/ApiContractTests.cs` runs the app's real `ApiService` against a live HorusAPI; skipped unless `HORUS_API_URL` is set (see the class comment for the other variables).
 
 Endpoints the old API had and v1 does not: `/geo/*`, `/routing-rules`, `/logs/error`. `GeoDataService`, `RoutingService` and `ErrorReportingService` are local-only as a result — error reports fall back to a mailto with a zip archive.
 
+### Subscriptions are bought on the site
+
+There is no payment UI in the app. Every "Оформить / Продлить подписку" goes through
+`Presentation/Navigation/SubscriptionPage`, which opens `{ApiBaseUrl}/pay` in the external
+browser (`OfferAsync` asks first when the user did not ask for it — tapped connect without a
+subscription, or the API answered `subscription_expired`). The site already has the whole flow:
+tariffs, the auto-payment consent, promo and partner codes, the bank and waiting for it. The
+browser does not share the app's session, so the first visit signs in on the site. Back in the
+app nothing needs doing: `AccountSync` refreshes on foreground and polls every 20 s while the
+subscription is inactive.
+
 ## Implementation Status
 
-Auth, servers, connect and the xray pipeline are wired to the real backend. Still placeholder: payments (`PaymentViewModel` — no billing endpoints exist yet), per-server ping (`ServerInfo.PingMs` is always null for real servers), and the kill-switch/auto-connect toggles in Settings. See `docs/PLAN-remaining-functions.md`.
+Auth, servers, connect and the xray pipeline are wired to the real backend; buying a subscription is the site's (see above). Still placeholder: per-server ping (`ServerInfo.PingMs` is always null for real servers), and the kill-switch/auto-connect toggles in Settings. See `docs/PLAN-remaining-functions.md`.
 
 ## UI / Styling
 

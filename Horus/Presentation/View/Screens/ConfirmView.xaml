@@ -11,7 +11,7 @@
             <Button Grid.Row="0" Text="‹ Назад" HorizontalOptions="Start" Padding="0"
                     BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
                     FontSize="14" FontFamily="{StaticResource FontBody}"
-                    Command="{Binding GoRegisterCommand}" />
+                    Command="{Binding BackFromConfirmCommand}" />
 
             <Border Grid.Row="1" Style="{StaticResource HzAuthCard}" VerticalOptions="Center"
                     HorizontalOptions="Center" MaximumWidthRequest="392">
@@ -33,6 +33,12 @@
                     <Entry Style="{StaticResource HzEntry}" HeightRequest="58" Placeholder="••••••"
                            Keyboard="Numeric" HorizontalTextAlignment="Center" FontSize="22"
                            CharacterSpacing="8" Text="{Binding Code}" ReturnCommand="{Binding DoConfirmCommand}" />
+                </Border>
+
+                <Border IsVisible="{Binding HasError}" Margin="0,12,0,0" Padding="12,8"
+                        BackgroundColor="#22F2A6A0" Stroke="#55F2A6A0">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                    <Label Text="{Binding ErrorMessage}" TextColor="{StaticResource HzRed}" FontSize="13" />
                 </Border>
 
                 <Button Text="Подтвердить" Style="{StaticResource HzPrimaryButton}" Margin="0,14,0,0"

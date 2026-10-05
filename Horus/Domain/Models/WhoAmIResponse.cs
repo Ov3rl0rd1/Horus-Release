@@ -4,8 +4,7 @@ namespace Horus.Domain.Models
 {
     /// <summary>
     /// <c>GET /whoami</c> — the caller's egress IP as the API sees it, plus account
-    /// state. This is the authoritative source for the <b>subscription</b> expiry;
-    /// the <c>expiresAt</c> on a login response is the <b>session</b> expiry.
+    /// state. This is the authoritative source for the <b>subscription</b> expiry.
     /// </summary>
     public class WhoAmIResponse
     {
@@ -32,5 +31,13 @@ namespace Horus.Domain.Models
 
         [JsonPropertyName("observedAt")]
         public DateTime ObservedAt { get; set; }
+
+        /// <summary>
+        /// When the account last came online on a node, from node telemetry. Null until the
+        /// first connection anywhere. Read by the API past its session cache, so it moves
+        /// within seconds of connecting.
+        /// </summary>
+        [JsonPropertyName("lastConnectedAt")]
+        public DateTime? LastConnectedAt { get; set; }
     }
 }

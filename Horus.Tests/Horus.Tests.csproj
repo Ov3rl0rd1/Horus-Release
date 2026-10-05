@@ -36,6 +36,26 @@
          linked without it. -->
     <Compile Include="..\Horus\Domain\Models\ServerInfo.cs" Link="Linked\ServerInfo.cs" />
     <Compile Include="..\Horus\Domain\Models\ApiConsts.cs" Link="Linked\ApiConsts.cs" />
+
+    <!--
+      The API client itself, so its contract with HorusAPI is tested against a real server
+      (ApiContractTests, skipped unless HORUS_API_URL is set) rather than against fixtures
+      that could drift. Its only MAUI dependency is the Diag logger, stubbed in TestSupport.
+    -->
+    <Compile Include="..\Horus\AppConfiguration.cs" Link="Linked\AppConfiguration.cs" />
+    <Compile Include="..\Horus\Application\ApiService.cs" Link="Linked\ApiService.cs" />
+    <Compile Include="..\Horus\Application\HttpAuthHandler.cs" Link="Linked\HttpAuthHandler.cs" />
+    <Compile Include="..\Horus\Domain\Interfaces\IApiService.cs" Link="Linked\IApiService.cs" />
+    <Compile Include="..\Horus\Domain\Interfaces\IStorageService.cs" Link="Linked\IStorageService.cs" />
+    <Compile Include="..\Horus\Domain\Models\ApiError.cs" Link="Linked\ApiError.cs" />
+    <Compile Include="..\Horus\Domain\Models\AuthResult.cs" Link="Linked\AuthResult.cs" />
+    <Compile Include="..\Horus\Domain\Models\RegisterResult.cs" Link="Linked\RegisterResult.cs" />
+    <Compile Include="..\Horus\Domain\Models\LoginResponse.cs" Link="Linked\LoginResponse.cs" />
+    <Compile Include="..\Horus\Domain\Models\RegisterResponse.cs" Link="Linked\RegisterResponse.cs" />
+    <Compile Include="..\Horus\Domain\Models\WhoAmIResponse.cs" Link="Linked\WhoAmIResponse.cs" />
+    <Compile Include="..\Horus\Domain\Models\SubscriptionExpiredException.cs" Link="Linked\SubscriptionExpiredException.cs" />
+    <Compile Include="..\Horus\Domain\Models\ErrorText.cs" Link="Linked\ErrorText.cs" />
+    <Compile Include="..\Horus\Domain\Models\AccountRules.cs" Link="Linked\AccountRules.cs" />
     <Compile Include="..\Horus\Protocols\ShareLinkParser.cs" Link="Linked\ShareLinkParser.cs" />
     <Compile Include="..\Horus\Protocols\HevTunnelConfig.cs" Link="Linked\HevTunnelConfig.cs" />
     <Compile Include="..\Horus\Protocols\SocksPortAllocator.cs" Link="Linked\SocksPortAllocator.cs" />

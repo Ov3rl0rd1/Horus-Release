@@ -23,10 +23,13 @@ namespace Horus.Domain.Interfaces
         /// </summary>
         Task<RegisterResult> RegisterAsync(string username, string email, string password);
 
-        /// <summary>Confirms the mailed code, which issues the session and signs the user in.</summary>
-        Task<AuthResult> VerifyEmailAsync(string email, string code);
+        /// <summary>
+        /// Confirms the mailed code, which issues the session and signs the user in. The
+        /// ticket, when there is one, identifies the account instead of the address.
+        /// </summary>
+        Task<AuthResult> VerifyEmailAsync(string email, string code, string? pendingToken = null);
 
-        Task<RegisterResult> ResendCodeAsync(string email);
+        Task<RegisterResult> ResendCodeAsync(string email, string? pendingToken = null);
         Task<RegisterResult> RequestPasswordResetAsync(string email);
 
         Task LogoutAsync();

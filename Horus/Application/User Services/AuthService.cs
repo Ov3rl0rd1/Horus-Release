@@ -55,9 +55,9 @@ namespace Horus.Application
         public Task<RegisterResult> RegisterAsync(string username, string email, string password) =>
             _api.RegisterAsync(username, email, password);
 
-        public async Task<AuthResult> VerifyEmailAsync(string email, string code)
+        public async Task<AuthResult> VerifyEmailAsync(string email, string code, string? pendingToken = null)
         {
-            var result = await _api.VerifyEmailAsync(email, code);
+            var result = await _api.VerifyEmailAsync(email, code, pendingToken);
             if (!result.Success || result.Response is null)
                 return result;
 
@@ -68,7 +68,8 @@ namespace Horus.Application
             return result;
         }
 
-        public Task<RegisterResult> ResendCodeAsync(string email) => _api.ResendCodeAsync(email);
+        public Task<RegisterResult> ResendCodeAsync(string email, string? pendingToken = null) =>
+            _api.ResendCodeAsync(email, pendingToken);
 
         public Task<RegisterResult> RequestPasswordResetAsync(string email) =>
             _api.RequestPasswordResetAsync(email);

@@ -14,7 +14,7 @@ namespace Horus.Domain.Models
     /// things and are easy to confuse. Reserved is how many accounts are <i>bound</i> to
     /// the node, and it is what capacity is checked against; current load is how many are
     /// <i>online right now</i>, reported by the node's own telemetry. A node can be full
-    /// (<c>ReservedCount == MaxClients</c>) with almost nobody connected.</para>
+    /// (<c>ReservedCount == MaxReservations</c>) with almost nobody connected.</para>
     /// </summary>
     public class ServerInfo
     {
@@ -38,8 +38,16 @@ namespace Horus.Domain.Models
         [JsonPropertyName("reserved_count")]
         public int ReservedCount { get; set; }
 
+        /// <summary>
+        /// The <b>soft</b> "recommended" threshold — for showing how busy a node is, nothing
+        /// more. Binding keeps succeeding past it up to <see cref="MaxReservations"/>.
+        /// </summary>
         [JsonPropertyName("max_clients")]
         public int MaxClients { get; set; }
+
+        /// <summary>The hard cap: <c>reserved_count</c> reaching it is what makes select answer 409.</summary>
+        [JsonPropertyName("max_reservations")]
+        public int MaxReservations { get; set; }
 
         /// <summary>
         /// Round-trip time measured by the client, in ms; null until probed, and null again
@@ -61,9 +69,12 @@ namespace Horus.Domain.Models
 
         public string Location => string.IsNullOrWhiteSpace(City) ? Country : $"{City}, {Country}";
 
-        /// <summary>Free slots. Zero means the node cannot be selected — <c>409 no_capacity</c>.</summary>
+        /// <summary>
+        /// Free slots against the hard cap. Zero means the node cannot be selected —
+        /// <c>409 no_capacity</c>. Older APIs sent no hard cap; the soft one stands in.
+        /// </summary>
         [JsonIgnore]
-        public int FreeSlots => Math.Max(0, MaxClients - ReservedCount);
+        public int FreeSlots => Math.Max(0, (MaxReservations > 0 ? MaxReservations : MaxClients) - ReservedCount);
 
         [JsonIgnore]
         public bool HasCapacity => FreeSlots > 0;

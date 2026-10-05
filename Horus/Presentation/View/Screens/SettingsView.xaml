@@ -157,7 +157,7 @@
                             <Label Grid.Column="0" Text="Подписка" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
                             <Label Grid.Column="1" Text="{Binding SubscriptionValue}" Style="{StaticResource HzDim}"
                                    FontSize="13" VerticalOptions="Center" />
-                            <controls:IconView Grid.Column="2" Kind="ChevronRight" IconSize="15" StrokeWidth="2"
+                            <controls:IconView Grid.Column="2" Kind="External" IconSize="15" StrokeWidth="2"
                                 Color="{StaticResource HzTextMuted}" VerticalOptions="Center" />
                         </Grid>
                         <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />

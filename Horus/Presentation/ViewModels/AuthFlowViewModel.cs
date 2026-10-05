@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Horus.Domain.Interfaces;
+using Horus.Domain.Models;
 using Horus.Presentation.Navigation;
 
 namespace Horus.Presentation.ViewModels
@@ -38,13 +39,27 @@ namespace Horus.Presentation.ViewModels
         /// <summary>Seconds until the mailed code expires; drives the resend hint.</summary>
         [ObservableProperty] private int _codeExpiresInSeconds;
 
+        /// <summary>
+        /// Confirmation ticket — <b>not</b> a session. Handed out by register and by login's
+        /// <c>403 email_unverified</c>; it identifies the account to verify and resend-code,
+        /// which is the only way to confirm after signing in by username. Lives 30 minutes.
+        /// </summary>
+        private string? _pendingToken;
+
+        /// <summary>The address as the API showed it (masked when the user signed in by username).</summary>
+        private string _emailMasked = string.Empty;
+
+        /// <summary>Confirm was reached from Login rather than Register — that is where "back" goes.</summary>
+        private bool _confirmFromLogin;
+
         // Validity flags drive button enable/opacity (recomputed on field change).
         [ObservableProperty] private bool _canLogin;
         [ObservableProperty] private bool _canRegister;
         [ObservableProperty] private bool _canConfirm;
         [ObservableProperty] private bool _canReset;
 
-        public string EmailShown => EmailValid(Email) ? Email : "ваш email";
+        public string EmailShown =>
+            EmailValid(Email) ? Email : !string.IsNullOrEmpty(_emailMasked) ? _emailMasked : "ваш email";
 
         partial void OnEmailChanged(string value) { Recompute(); OnPropertyChanged(nameof(EmailShown)); }
         partial void OnPasswordChanged(string value) => Recompute();
@@ -59,8 +74,8 @@ namespace Horus.Presentation.ViewModels
 
         private void Recompute()
         {
-            // Login takes the *username*, per LoginRequest — the field is labelled
-            // "email" in the design but the API matches on username.
+            // The login field is labelled "email" in the design; the API matches the value
+            // against both the username and the address, so either works.
             CanLogin = Email.Trim().Length > 0 && Password.Length > 0;
             CanRegister = EmailValid(Email) && Username.Trim().Length >= 3 && Password.Length >= 8;
             CanConfirm = Regex.IsMatch(Code, "^\\d{6}$");
@@ -74,6 +89,7 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void GoLogin() { ClearError(); _nav.Go(AppScreen.Login); }
         [RelayCommand] private void GoRegister() { ClearError(); _nav.Go(AppScreen.Register); }
         [RelayCommand] private void GoReset() { ClearError(); ResetSent = false; _nav.Go(AppScreen.Reset); }
+        [RelayCommand] private void BackFromConfirm() { if (_confirmFromLogin) GoLogin(); else GoRegister(); }
 
         // ── Login ──
         [RelayCommand]
@@ -93,6 +109,26 @@ namespace Horus.Presentation.ViewModels
             try
             {
                 var result = await _auth.LoginAsync(Email.Trim(), Password);
+
+                // The account exists but the address was never confirmed: continue on the
+                // code screen with the ticket the API handed back. Signing in by username
+                // means the full address was never typed here — the masked one is shown.
+                if (result.ErrorCode == ErrorCodes.EmailUnverified && result.Pending is { } pending)
+                {
+                    _pendingToken = pending.PendingToken;
+                    _emailMasked = pending.EmailMasked;
+                    _confirmFromLogin = true;
+                    CodeExpiresInSeconds = pending.CodeExpiresInSeconds;
+                    Code = string.Empty;
+                    OnPropertyChanged(nameof(EmailShown));
+                    _nav.Go(AppScreen.Confirm);
+                    // Login mails nothing by itself. Zero means the last code is gone too, so
+                    // the only way forward is a new one — say so rather than wait for a guess.
+                    if (pending.CodeExpiresInSeconds <= 0)
+                        ShowError("Код из прошлого письма уже не действует. Нажмите «Отправить код ещё раз».");
+                    return;
+                }
+
                 if (!result.Success)
                 {
                     ShowError(result.Message);
@@ -123,6 +159,12 @@ namespace Horus.Presentation.ViewModels
                 return;
             }
 #endif
+            if (AccountRules.RegistrationProblem(Username.Trim(), Password) is { } problem)
+            {
+                ShowError(problem);
+                return;
+            }
+
             IsBusy = true;
             try
             {
@@ -134,6 +176,9 @@ namespace Horus.Presentation.ViewModels
                 }
 
                 CodeExpiresInSeconds = result.CodeExpiresInSeconds;
+                _pendingToken = result.PendingToken;
+                _emailMasked = string.Empty;
+                _confirmFromLogin = false;
                 Code = string.Empty;
                 _nav.Go(AppScreen.Confirm);
             }
@@ -160,13 +205,24 @@ namespace Horus.Presentation.ViewModels
             IsBusy = true;
             try
             {
-                var result = await _auth.VerifyEmailAsync(Email.Trim(), Code);
+                var result = await _auth.VerifyEmailAsync(Email.Trim(), Code, _pendingToken);
                 if (!result.Success)
                 {
+                    // The ticket outlived its 30 minutes: only a fresh sign-in issues another.
+                    if (result.ErrorCode == ErrorCodes.InvalidTicket)
+                    {
+                        _pendingToken = null;
+                        GoLogin();
+                    }
+                    // Already confirmed elsewhere — the password is all that is needed now.
+                    else if (result.ErrorCode == ErrorCodes.AlreadyVerified)
+                        GoLogin();
+
                     ShowError(result.Message);
                     Code = string.Empty;
                     return;
                 }
+                _pendingToken = null;
                 Password = string.Empty;
                 _nav.Reset(AppScreen.Home);
             }
@@ -186,9 +242,14 @@ namespace Horus.Presentation.ViewModels
             IsBusy = true;
             try
             {
-                var result = await _auth.ResendCodeAsync(Email.Trim());
+                var result = await _auth.ResendCodeAsync(Email.Trim(), _pendingToken);
                 if (!result.Success)
                 {
+                    if (result.ErrorCode == ErrorCodes.InvalidTicket)
+                    {
+                        _pendingToken = null;
+                        GoLogin();
+                    }
                     ShowError(result.Message ?? "Не удалось отправить код.");
                     return;
                 }
@@ -235,6 +296,9 @@ namespace Horus.Presentation.ViewModels
         public void Reset()
         {
             Email = Username = Password = Code = string.Empty;
+            _pendingToken = null;
+            _emailMasked = string.Empty;
+            _confirmFromLogin = false;
             ResetSent = false;
             CodeExpiresInSeconds = 0;
             ClearError();
