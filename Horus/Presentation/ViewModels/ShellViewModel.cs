@@ -25,7 +25,6 @@ namespace Horus.Presentation.ViewModels
         public ServersViewModel Servers { get; }
         public SettingsViewModel Settings { get; }
         public AuthFlowViewModel Auth { get; }
-        public PaymentViewModel Payment { get; }
 
         public ShellViewModel(
             Navigator nav,
@@ -35,8 +34,7 @@ namespace Horus.Presentation.ViewModels
             MainViewModel main,
             ServersViewModel servers,
             SettingsViewModel settings,
-            AuthFlowViewModel auth2,
-            PaymentViewModel payment)
+            AuthFlowViewModel auth2)
         {
             _nav = nav;
             _auth = auth;
@@ -46,7 +44,6 @@ namespace Horus.Presentation.ViewModels
             Servers = servers;
             Settings = settings;
             Auth = auth2;
-            Payment = payment;
 
             _nav.PropertyChanged += OnNavChanged;
             _auth.AuthStateChanged += OnAuthChanged;
@@ -136,7 +133,8 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void NavHome() => _nav.Go(AppScreen.Home);
         [RelayCommand] private void NavServers() => _nav.Go(AppScreen.Servers);
         [RelayCommand] private void NavSettings() => _nav.Go(AppScreen.Settings);
-        [RelayCommand] private void OpenPay() => Payment.Open();
+        /// <summary>Subscriptions are bought on the website — see <see cref="SubscriptionPage"/>.</summary>
+        [RelayCommand] private Task OpenPayAsync() => SubscriptionPage.OpenAsync();
 
         private Task? _startTask;
         private readonly object _startGate = new();
@@ -212,7 +210,6 @@ namespace Horus.Presentation.ViewModels
         /// <summary>Hardware/back-arrow handler. Returns true when it consumed the back.</summary>
         public bool Back()
         {
-            if (Payment.IsVisible) { Payment.CloseCommand.Execute(null); return true; }
             return _nav.GoBack();
         }
 

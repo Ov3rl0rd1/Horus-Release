@@ -175,8 +175,7 @@ namespace Horus
                 .AddSingleton<MainViewModel>()
                 .AddSingleton<ServersViewModel>()
                 .AddSingleton<SettingsViewModel>()
-                .AddSingleton<AuthFlowViewModel>()
-                .AddSingleton<PaymentViewModel>();
+                .AddSingleton<AuthFlowViewModel>();
 
             // ── Root page ────────────────────────────────────────────────────
             services.AddSingleton<RootPage>();

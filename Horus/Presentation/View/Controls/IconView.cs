@@ -5,7 +5,7 @@ namespace Horus.Presentation.View.Controls;
 
 public enum IconKind
 {
-    Home, Servers, Settings, Search, Auto, Check, Close, ChevronRight, ChevronLeft, Refresh
+    Home, Servers, Settings, Search, Auto, Check, Close, ChevronRight, ChevronLeft, Refresh, External
 }
 
 /// <summary>
@@ -30,6 +30,8 @@ public class IconView : ContentView
         [IconKind.ChevronRight] = "M9 5 L16 12 L9 19",
         [IconKind.ChevronLeft] = "M15 5 L8 12 L15 19",
         [IconKind.Refresh] = "M21 12 a9 9 0 1 1 -2.64 -6.36 M21 3 L21 9 L15 9",
+        // Opens outside the app (the site's tariff page) — not drawn from the handoff.
+        [IconKind.External] = "M14 4 L20 4 L20 10 M20 4 L11 13 M18 14 L18 19 L5 19 L5 6 L10 6",
     };
 
     private static readonly PathGeometryConverter Converter = new();

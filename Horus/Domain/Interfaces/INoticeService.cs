@@ -20,7 +20,7 @@ namespace Horus.Domain.Interfaces
         /// <summary>Recomputes from current state. Called on resume and on every input change.</summary>
         void Refresh();
 
-        /// <summary>Runs the action for a notice — opening a settings screen, or the payment sheet.</summary>
+        /// <summary>Runs the action for a notice — opening a settings screen, or the site's tariff page.</summary>
         Task ActAsync(NoticeKind kind);
 
         /// <summary>Hides a notice for a while. Ignored for kinds that are not dismissible.</summary>

@@ -23,10 +23,16 @@ namespace Horus.Domain.Interfaces
         /// <summary>Creates the account and mails a 6-digit code. Does <b>not</b> issue a session.</summary>
         Task<RegisterResult> RegisterAsync(string username, string email, string password, CancellationToken ct = default);
 
-        /// <summary>Confirms the mailed code and issues the session.</summary>
-        Task<AuthResult> VerifyEmailAsync(string email, string code, CancellationToken ct = default);
+        /// <summary>
+        /// Confirms the mailed code and issues the session. With <paramref name="pendingToken"/>
+        /// (from register, or from login's <c>403 email_unverified</c>) the API identifies the
+        /// account by the ticket and ignores <paramref name="email"/> — the only way for someone
+        /// who signed in by username, and was shown only a masked address, to confirm.
+        /// </summary>
+        Task<AuthResult> VerifyEmailAsync(string email, string code, string? pendingToken = null, CancellationToken ct = default);
 
-        Task<RegisterResult> ResendCodeAsync(string email, CancellationToken ct = default);
+        /// <summary>Mails a fresh code, by ticket when there is one, otherwise by address.</summary>
+        Task<RegisterResult> ResendCodeAsync(string email, string? pendingToken = null, CancellationToken ct = default);
 
         // ── Password reset ────────────────────────────────────────────────────
         Task<RegisterResult> RequestPasswordResetAsync(string email, CancellationToken ct = default);

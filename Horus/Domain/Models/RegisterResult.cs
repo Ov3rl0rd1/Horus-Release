@@ -18,6 +18,12 @@ namespace Horus.Domain.Models
         /// <summary>Lifetime of the mailed code, for the resend countdown.</summary>
         public int CodeExpiresInSeconds { get; set; }
 
+        /// <summary>Seconds before another code may be requested.</summary>
+        public int ResendAvailableInSeconds { get; set; }
+
+        /// <summary>Confirmation ticket from <c>/auth/register</c> (null from resend-code).</summary>
+        public string? PendingToken { get; set; }
+
         public static RegisterResult Fail(string message, string? code = null, int status = 0) =>
             new() { Success = false, Message = message, ErrorCode = code, StatusCode = status };
     }
