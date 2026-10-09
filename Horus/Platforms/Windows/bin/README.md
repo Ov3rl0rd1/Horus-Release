@@ -23,6 +23,11 @@ go build -buildmode=c-shared -trimpath -buildvcs=false \
   -o xray.dll ./libxray
 ```
 
+The shipped `xray.dll` is fork commit **8f3e3309** (the core logs it at start: `Xray 26.9.9 … 8f3e3309`):
+embedded-TUN lifecycle, live controls, outbound binding by route metric, and the gVisor NIC
+attached only after its handlers. When replacing it, keep this line current — the version string
+is the only way to tell from a user's log which core they ran.
+
 **`wintun.dll` must sit beside `Horus.exe`, not in a subfolder.** The core loads it with
 `LOAD_LIBRARY_SEARCH_APPLICATION_DIR`, which is the directory of the process's executable — not
 of `xray.dll`. Put anywhere else, the adapter is never created.
