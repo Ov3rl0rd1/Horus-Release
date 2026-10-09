@@ -81,3 +81,18 @@ jobs:
             if (-not (Test-Path (Join-Path $dir $f))) { throw "$f missing next to Horus.exe" }
           }
           Write-Host "payload OK in $dir"
+
+  # The tunnel itself, on real Windows: wintun adapter, traffic through the proxy,
+  # per-process routing, DNS through the TUN, live reload and swap, stop/start under load.
+  # Hosted runners run as administrator, which creating the adapter needs. See
+  # tools/WinTunnelTest/Program.cs; exit code is the number of failed checks.
+  windows-tunnel:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Tunnel end to end
+        run: dotnet run --project tools/WinTunnelTest -c Release
