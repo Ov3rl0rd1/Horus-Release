@@ -1,81 +1,70 @@
 # Windows native components
 
-Everything here is copied next to `Horus.exe` at build time. Missing required files fail
-the **build** (`GuardWindowsNativeCore` in `Horus.csproj`) rather than producing a package
-that starts and then cannot connect, and are checked again at **startup**
-(`NativeDependencies`) in case a file went missing after install.
-
-## Required
+Both files are copied next to `Horus.exe` at build time. A missing one fails the **build**
+(`GuardWindowsNativeCore` in `Horus.csproj`) rather than producing a package that starts and
+then cannot connect, and both are checked again at **startup** (`NativeDependencies`).
 
 | File | Put in | Copied to | Provides |
 |---|---|---|---|
-| `xray.dll` | `Platforms/Windows/bin/` | next to `Horus.exe` | The VPN core. Serves SOCKS5 on `127.0.0.1:1080`. |
-| `hev-socks5-tunnel.exe` | `Platforms/Windows/bin/Native/` | `Resources/Native/` | The TUN bridge — carries the system's traffic into that SOCKS5 inbound. |
-| `msys-2.0.dll` | `Platforms/Windows/bin/Native/` | `Resources/Native/` | Runtime the bridge is built against. |
-| `wintun.dll` | `Platforms/Windows/bin/Native/` | `Resources/Native/` | TUN adapter driver (signed by WireGuard). |
+| `xray.dll` | `Platforms/Windows/bin/` | next to `Horus.exe` | The VPN core, **including the TUN**. |
+| `wintun.dll` | `Platforms/Windows/bin/Native/` | next to `Horus.exe` | TUN adapter driver (signed by WireGuard). |
 
-`xray.dll` comes from `libxray.zip` at the solution root → `windows/x64/xray.dll`. It must be
-the **x64** build: the app runs as x64 and a 32-bit DLL will exist but fail to load.
+`xray.dll` must be the **x64** build of the fork (`Xray-core-RTC`, `libxray/`), from a commit
+that has the embedded-TUN changes (`fork/patches/0007-tun-embedded-lifecycle.patch`) — an older
+core still runs, but without live rule reloads, outbound swaps or the connection list, and the
+app logs that it is falling back to restarts. Build it with the fork's
+`.github/workflows/build-lib.yml`, or locally with the same flags:
 
-**The three bridge files must stay in one directory.** hev loads wintun with
-`LOAD_LIBRARY_SEARCH_APPLICATION_DIR`, which means the directory of *hev's own exe* — not the
-app's. Splitting them produces "адаптер не появился" with no further explanation.
+```bash
+GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc \
+CGO_CFLAGS="-O2 -fstack-protector-strong" \
+go build -buildmode=c-shared -trimpath -buildvcs=false \
+  -ldflags "-X github.com/xtls/xray-core/core.build=$(git describe --always --dirty) -s -w -buildid= -extldflags=-Wl,--nxcompat,--dynamicbase,--high-entropy-va" \
+  -o xray.dll ./libxray
+```
 
-## Optional
+The shipped `xray.dll` is fork commit **8f3e3309** (the core logs it at start: `Xray 26.9.9 … 8f3e3309`):
+embedded-TUN lifecycle, live controls, outbound binding by route metric, and the gVisor NIC
+attached only after its handlers. When replacing it, keep this line current — the version string
+is the only way to tell from a user's log which core they ran.
 
-| File | Put in | Provides |
-|---|---|---|
-| `WinDivert.dll` | `Platforms/Windows/bin/Native/` | Per-process split tunneling |
-| `WinDivert64.sys` | `Platforms/Windows/bin/Native/` | WinDivert kernel driver (pairs with the DLL) |
+**`wintun.dll` must sit beside `Horus.exe`, not in a subfolder.** The core loads it with
+`LOAD_LIBRARY_SEARCH_APPLICATION_DIR`, which is the directory of the process's executable — not
+of `xray.dll`. Put anywhere else, the adapter is never created.
 
-Dropping both in flips `WindowsSplitTunnelingService.IsSupported` to true and reveals the
-Split tunneling row in Settings. Without them the row stays hidden, because `ApplyAsync`
-silently does nothing and a screen of switches that change nothing is worse than no screen.
+## How the tunnel works
 
-`.h` and `.lib` files in `Native/` are for rebuilding and are deliberately **not** copied to
-the output — the csproj globs only `*.exe`, `*.dll` and `*.sys`.
+The core owns the TUN in-process: its `tun` inbound creates the wintun adapter, assigns
+`198.18.0.1/30` (and `fdfe:dcba:9876::1/126`), installs `0.0.0.0/1` + `128.0.0.0/1` (and the
+IPv6 halves) on it, and points the adapter's DNS at `198.18.0.2`. The routes live on the
+adapter, so they vanish with it — a crash cannot strand them. The core pins every socket it
+opens to the physical interface (`autoOutboundsInterface`), so its own connection to the node
+never enters the tunnel; when no physical interface exists it refuses the socket instead of
+letting it loop. See `Platforms/Windows/Tunnel/WindowsTunnelConfig.cs`.
 
-## How the Windows tunnel differs from Android
-
-Same binary lineage, two different hosting models:
+What the app still does itself: wait for the adapter, add an NRPT rule so Windows does not
+also ask the router's resolver in parallel, read the adapter's counters for the speed graph.
 
 | | Android | Windows |
 |---|---|---|
-| hev runs | in-process, via `[DllImport]` | as a **child process** |
-| TUN device | fd handed over from `VpnService` | hev creates a wintun adapter itself (`tun_fd = -1`) |
-| Loop prevention | app's own UID excluded from the TUN | `/32` host route to the node via the physical gateway |
-| Traffic counters | `hev_socks5_tunnel_stats` | adapter counters (`GetIPStatistics`) |
+| TUN bridge | hev-socks5-tunnel, in-process, fd from `VpnService` | none — the core's `tun` inbound |
+| Loop prevention | the app's UID excluded from the TUN | the core binds its sockets to the physical interface |
+| Split tunneling | per-UID in `VpnService` | the core's `process` routing rule |
+| Traffic counters | `hev_socks5_tunnel_stats` | adapter counters (`GetIfEntry2`) |
 | Privileges | user grants VPN consent | process must be **elevated** |
 
-The child-process split is forced. hev's Windows port is guarded by `#if defined(__MSYS__)`
-— a Cygwin build linked against `msys-2.0.dll`. It loads fine inside a .NET process and then
-dies with an access violation on the first real call, because the Cygwin runtime is not
-initialised for a CLR-created thread. Out of process it behaves perfectly.
+## What used to be here
 
-## Rebuilding the bridge
-
-Upstream: <https://github.com/heiher/hev-socks5-tunnel> (built from `2.17.0`, `f6ab377`).
-
-```
-winget install MSYS2.MSYS2
-C:\msys64\usr\bin\bash -lc "pacman -S --needed gcc make git"
-# then, inside the MSYS (not MINGW64) shell:
-export MSYS=winsymlinks:native
-git clone --recursive https://github.com/heiher/hev-socks5-tunnel && cd hev-socks5-tunnel
-make -j$(nproc)          # → bin/hev-socks5-tunnel.exe
-```
-
-`MSYS=winsymlinks:native` is not optional: the repo keeps its public headers as symlinks, and
-a checkout without it leaves them as one-line text files, which fails the build with
-`unknown type name 'HevRBTree'`.
-
-`wintun.dll` is vendored in the clone at `third-part/wintun/bin/`. `msys-2.0.dll` comes from
-<https://github.com/heiher/msys2/releases>, matching what upstream ships in its own release.
+`hev-socks5-tunnel.exe` + `msys-2.0.dll` (the bridge, run as a child process because the
+Cygwin runtime could not live inside a CLR process) and `WinDivert.dll` + `WinDivert64.sys`
+(an attempt at per-process routing). Both are gone: the bridge's job is the core's now, and the
+WinDivert approach never steered a single connection — its P/Invoke named an export the DLL
+does not have. Leaving a WinDivert driver on gamers' machines also invited trouble with
+anti-cheat software.
 
 ## Testing on a machine with a system-wide proxy client
 
 A redirector such as **Proxifier** hooks outbound TCP at the WFP layer, *before* the route
 table is consulted. With one running, TCP never reaches the Horus adapter no matter how the
-routes look — the tunnel appears up and carries only UDP and ICMP. Exclude `Horus.exe` and
-the destinations under test, or stop the redirector, before concluding anything about the
-tunnel.
+routes look. Exclude `Horus.exe` and the destinations under test, or stop the redirector,
+before concluding anything about the tunnel.

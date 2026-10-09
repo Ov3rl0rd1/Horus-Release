@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Type-checks the Windows head's C# on any OS, in about a minute.
+
+    The real Windows build needs the MAUI Windows workload and a Windows machine (ten minutes
+    on a hosted runner). This compiles the same sources with WINDOWS defined against MAUI's
+    plain net10.0 reference assemblies, with stand-ins for the few WinUI/WinRT types (Stubs.cs)
+    and for what the XAML compiler generates (XamlStubs.cs). It catches what reading cannot:
+    a nested type hiding an inherited member, a namespace shadowing a type, a property that does
+    not exist. It does not render anything and cannot replace the Windows build — the CI job
+    still runs that — it only makes the first round trip cheap.
+
+    Excluded: XAML code-behind (except the two pages listed below, with their generated fields
+    stubbed), the Windows update installers and ExeIcons (WinRT), MauiProgram.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Library</OutputType>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <NoWarn>CA1416;CS1591;IL2026</NoWarn>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>Horus</RootNamespace>
+    <App>$(MSBuildThisFileDirectory)../../Horus/</App>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Maui.Controls.Core" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Maui.Core" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Maui.Essentials" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Maui.Graphics" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.0" />
+    <PackageReference Include="MaxMind.Db" Version="3.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="$(App)**/*.cs"
+             Exclude="$(App)obj/**;$(App)bin/**;$(App)Platforms/Android/**;$(App)Platforms/iOS/**;$(App)Platforms/MacCatalyst/**;$(App)**/*.xaml.cs;$(App)Platforms/Windows/ExeIcons.cs;$(App)MauiProgram.cs;$(App)Platforms/Windows/Update/**" />
+    <Compile Include="$(App)Presentation/View/RootPage.xaml.cs;$(App)Presentation/View/Screens/SettingsView.xaml.cs" />
+    <Compile Include="*.cs" />
+  </ItemGroup>
+</Project>

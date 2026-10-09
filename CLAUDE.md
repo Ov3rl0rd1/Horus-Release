@@ -8,10 +8,12 @@ Horus is a cross-platform VPN client built with .NET MAUI targeting Android, iOS
 
 ## Where the rest of the knowledge lives
 
-Three skills carry the operational detail so it does not have to be re-derived:
+Four skills carry the operational detail so it does not have to be re-derived:
 `workflow` (report conventions, the library repos, git and distribution rules), `verify`
-(build targets, warning baselines, what each test contract guards) and `device-test` (installing
-alongside the production app, adb recipes, Doze testing, the restore checklist).
+(build targets, warning baselines, branch CI, what each test contract guards), `device-test`
+(installing alongside the production app, adb recipes, Doze testing, the restore checklist) and
+`windows-tunnel` (how the Windows tunnel works and how to test it without a Windows machine:
+the core bench, the hosted-runner end-to-end test, the UI type-check).
 
 Longer-form analysis is in **`docs/`** — gitignored (`/docs`) but readable, and worth reading
 before re-investigating anything: `VPN-STABILITY-RESEARCH.md` (teardown of NekoBox and
@@ -42,8 +44,10 @@ dotnet publish Horus/Horus.csproj -f net10.0-android -c Release \
   -p:HorusDistribution=true -p:ApplicationVersion=<N> -p:ApplicationDisplayVersion=0.9.<N>
 ```
 
-No CI exists — all builds go through the standard .NET CLI. The solution file is `Horus.slnx`.
-Expected baselines and what each test contract guards: see the `verify` skill.
+Releases go through the standard .NET CLI (`release.yml` is manual). Working branches
+(`claude/**`, `dev`) get `branch-ci.yml`: tests, a Windows type-check on Linux, the Android and
+Windows builds, and an end-to-end tunnel test on a hosted Windows runner. The solution file is
+`Horus.slnx`. Expected baselines and what each test contract guards: see the `verify` skill.
 
 Distribution is **direct APK**, never `.aab`. The app id `com.horus.vpn` is *not* structurally
 fixed: `packaging/android/build-hev.ps1` deletes `src/hev-jni.c` before building, which removes
@@ -52,10 +56,11 @@ the class was missing). Device testing therefore installs alongside the producti
 `com.horus.vpn.test` — see the `device-test` skill.
 
 The native libraries are not built by `dotnet build`; both are committed binaries.
-`libhev_socks.so` comes from `packaging/android/build-hev.ps1`, which clones a pinned upstream
-commit, applies every patch in `packaging/android/hev-patches/` in filename order and asserts
-the resulting symbols. xray-core lives in a separate repo (`C:\X-ray-custom\Xray-core-RTC`)
-built by its own GitHub Actions workflow.
+`libhev_socks.so` (Android only) comes from `packaging/android/build-hev.ps1`, which clones a
+pinned upstream commit, applies every patch in `packaging/android/hev-patches/` in filename
+order and asserts the resulting symbols. xray-core lives in a separate repo
+(`C:\X-ray-custom\Xray-core-RTC`) built by its own GitHub Actions workflow; the commit the
+shipped `xray.dll` came from is recorded in `Horus/Platforms/Windows/bin/README.md`.
 
 ## Architecture
 
@@ -65,15 +70,15 @@ Clean Architecture with MVVM, enforced by folder boundaries:
 - **`Application/`** — Service implementations (singletons). `VpnManager.cs` is the central orchestrator that coordinates protocol, platform, auth, and subscription services.
 - **`Presentation/`** — MVVM UI. `View/` holds XAML pages; `ViewModels/` uses CommunityToolkit.Mvvm (`[ObservableProperty]`, `[RelayCommand]`).
 - **`Protocols/`** — The VPN core. xray-core is linked as a **C shared library** (`libxray.so` / `xray.dll`) and runs **in-process**: `XrayInterop` is the P/Invoke surface (`XrayStart`/`XrayStop`/`XrayTest`/`XrayVersion`), and `XrayProtocol` is the single `IVpnProtocol` on top of it. `ShareLinkParser` turns the `vless://` / `hysteria2://` links the API returns into `ShareLink`s, and `XrayConfigBuilder` renders those into an xray config. `ProtocolType` names an *outbound*, not a separate binary.
-- **`Platforms/`** — Platform-specific code. Android and Windows both carry a real tunnel, using the *same* hev-socks5-tunnel in two hosting models: Android runs it in-process (`HevSocksTunnel` P/Invokes it and hands over the `VpnService` TUN fd), Windows runs it as a **child process** that creates its own wintun adapter (`WindowsVpnService`). Its YAML comes from one shared generator, `Protocols/HevTunnelConfig.cs`. Binaries live under `Platforms/Android/lib/<abi>/` and `Platforms/Windows/bin/` — see the READMEs there.
+- **`Platforms/`** — Platform-specific code, and on Windows most of the client. **Android** runs hev-socks5-tunnel in-process (`HevSocksTunnel` P/Invokes it and hands over the `VpnService` TUN fd; YAML from `Protocols/HevTunnelConfig.cs`) in front of the core's SOCKS5 inbound. **Windows** has no bridge: the core's own `tun` inbound creates the wintun adapter in-process (`Platforms/Windows/Tunnel/WindowsTunnelConfig.cs`), and Windows has its own controller (`WindowsVpnController`), its own screens (`Platforms/Windows/Views/`) and its own settings (`WindowsPreferences`). Binaries live under `Platforms/Android/lib/<abi>/` and `Platforms/Windows/bin/` — see the READMEs there.
 
 ### Dependency Injection
 
-All services are registered in `MauiProgram.cs` as singletons. Platform services (`IVpnPlatformService`, `IProcessRunner`) are registered conditionally per-platform using `#if ANDROID` / `#if WINDOWS` guards. ViewModels are registered as transient.
+All services are registered in `MauiProgram.cs` as singletons. Platform services (`IVpnPlatformService`, `ISplitTunnelingService`, `INetworkMonitor`, …) are registered conditionally per-platform using `#if ANDROID` / `#if WINDOWS` guards. Who runs the VPN is `IVpnController`: `WindowsVpnController` on Windows, `VpnManager` everywhere else (Android code also resolves `VpnManager` directly). `IPlatformScreens` is registered only on Windows; without it `RootPage` shows the shared screens, which is how Android is unaffected by the Windows UI (`PlatformSeparationTests`).
 
 ### Key flow
 
-`MainViewModel` → `VpnManager.ConnectAsync()` → `ConnectionCache` or, on a miss, `IApiService.GetServerConnectionAsync()` (`GET /servers/connect` — the **API** picks and binds the server, and returns one share link per protocol) → `XrayProtocol.ConnectAsync()` (`XrayTest` then `XrayStart`) → **preflight** (egress IP fetched directly and through the SOCKS5 proxy) → `IVpnPlatformService` (create TUN) → `ITrafficMonitorService` (1 Hz counter poll).
+`MainViewModel` → `IVpnController.ConnectAsync()` (`VpnManager` on Android) → `ConnectionCache` or, on a miss, `IApiService.GetServerConnectionAsync()` (`GET /servers/connect` — the **API** picks and binds the server, and returns one share link per protocol) → `XrayProtocol.ConnectAsync()` (`XrayTest` then `XrayStart`) → **preflight** (egress IP fetched directly and through the SOCKS5 proxy) → `IVpnPlatformService` (create TUN) → `ITrafficMonitorService` (1 Hz counter poll).
 
 Connect falls back **Hysteria2 → VLESS → olcRTC**, skipping protocols the node didn't publish. A fallback re-renders the config with a different `proxy` outbound; `XrayStop` must run before each retry because `XrayStart` fails while an instance exists.
 
@@ -81,14 +86,35 @@ Endpoints are cached on the device (`ConnectionCache`, 24 h cap) and tried befor
 
 ### Two invariants that silently kill the tunnel
 
-1. **Anything the config routes `direct` must have a real way out, or it re-enters the tunnel.** xray runs in-process and has no socket-protect hook, so each platform substitutes its own escape hatch: Android excludes the app's UID (`HorusVpnTunnelService.ApplySplitTunneling`), which covers everything at once. Windows has no such notion — its `direct` outbound is simply the OS route table, so once a default route points at the TUN, a "direct" rule is not direct at all. `WindowsVpnService` therefore installs a `/32` host route via the physical gateway for every address in `TunnelOptions.BypassIps`, which must contain:
-   - **the node** (`TunnelOptions.NodeAddress`) — without it the transport carries itself and deadlocks; a failed DNS pre-resolution must abort the connect rather than proceed;
-   - **the resolvers** the config sends down `direct` (`XrayConfigBuilder.ResolverIps`) — without them every DNS query loops, and the tunnel connects but resolves nothing, which presents as "no site opens".
+1. **Anything the config routes `direct` must have a real way out, or it re-enters the tunnel.** xray runs in-process and has no socket-protect hook, so each platform substitutes its own escape hatch. Android excludes the app's UID (`HorusVpnTunnelService.ApplySplitTunneling`), which covers everything at once. On Windows the core binds every socket it opens to the physical interface (`autoOutboundsInterface` → `IP_UNICAST_IF`, fork `proxy/tun/fork_bind.go`), so its connection to the node and every `direct` rule leave by the NIC whatever the route table says; with no physical interface it refuses the socket rather than letting it loop. No host routes are installed.
 
-   Multicast and broadcast are the third case and are handled differently: they go to `blackhole` (`XrayConfigBuilder.DropRanges`), because a host route per group is meaningless and forwarding them costs a SOCKS5 session per packet. Windows chatters on a fresh interface, so leaving them on `direct` amplified into ~1000 sessions in 3 seconds.
+   Multicast and broadcast go to `blackhole` (`XrayConfigBuilder.DropRanges`) — forwarding them costs a session per packet, and Windows chatters on a fresh interface (~1000 sessions in 3 seconds when they were `direct`). On Windows so does everything addressed to the TUN's own `/30` except DNS to the resolver.
 
-   Consequence on Android: the app's API traffic bypasses the VPN, so **`/whoami` reports the real IP while connected and cannot verify the tunnel** — verify from another app or through the SOCKS5 proxy. On Windows only the node and the resolvers are excluded, so `/whoami` is meaningful there.
-2. **The core's SOCKS5 inbound and hev's `socks5.port` must agree** — a mismatch establishes a tunnel that carries nothing. The port is no longer fixed at 1080: `SocksPortAllocator` picks the first free port from there (desktop machines routinely already have something on 1080), and the single chosen value flows through `XrayConfig.SocksPort` → `TunnelOptions.SocksPort` → `HevTunnelConfig.Build`. One generator, shared by both hosts; `Horus.Tests/SocksPortContractTests.cs` asserts the generated pair matches across the allocator's range and that neither host has re-inlined its own copy.
+   Consequence on Android: the app's API traffic bypasses the VPN, so **`/whoami` reports the real IP while connected and cannot verify the tunnel** — verify from another app or through the SOCKS5 proxy. On Windows the app's own sockets are not pinned, so `/whoami` goes through the tunnel and is meaningful there.
+2. **Android: the core's SOCKS5 inbound and hev's `socks5.port` must agree** — a mismatch establishes a tunnel that carries nothing. The port is not fixed at 1080: `SocksPortAllocator` picks the first free port from there, and the single chosen value flows through `XrayConfig.SocksPort` → `TunnelOptions.SocksPort` → `HevTunnelConfig.Build`; `Horus.Tests/SocksPortContractTests.cs` asserts the pair matches across the allocator's range. Windows has no bridge (a test keeps it that way); its SOCKS inbound only serves the preflight that proves a candidate before the TUN starts.
+
+### Keeping a match alive on Windows
+
+Players were dropped from game servers mid-match. Each rule below was measured on the bench
+(Xray-core-RTC `fork/bench/`) or on a hosted Windows runner (`tools/WinTunnelTest`), and each is
+silent when broken — see the `windows-tunnel` skill for how to re-check them.
+
+1. **A network event resets nothing unless the path the core is bound to is gone.** A session
+   reset on Hysteria2 drops every TCP session it carries (bench: 16 of 16 long sessions), and the
+   old monitor reset on any adapter appearing. `NetworkPathSelector.Classify`: a better path
+   appearing is left alone; only `Replaced`/`Restored` act.
+2. **Recovery never restarts the core while something cheaper works**: reset sessions → probe →
+   swap the proxy outbound in place (`XrayReplaceOutbound`) → hold. A restart removes the adapter
+   and every connection on the machine. The tunnel is torn down only after repeated failed
+   recoveries, and not at all with the kill switch on.
+3. **Health is judged from the core's per-connection bytes through the proxy**
+   (`ProxyStallDetector`), never from adapter counters or a TCP probe through the TUN: the TUN's
+   gVisor stack completes handshakes and ACKs locally, so both look healthy while the proxy is dead.
+   For the same reason latency is measured from sockets pinned to the physical interface
+   (`PhysicalProbe`) — unpinned, every server "answers" in 1 ms.
+4. **Rule changes apply live** (`XrayReloadRouting`), so changing split tunnelling or site rules
+   never interrupts anything; open connections keep their route until the user restarts that
+   app's connections from the «Приложения» screen.
 
 **Testing the Windows tunnel behind a system-wide proxy client** (Proxifier and friends): those hook outbound TCP at the WFP layer *before* routing, so TCP never reaches the Horus adapter and the tunnel appears to carry only UDP and ICMP. Exclude `Horus.exe` or stop the redirector before drawing conclusions.
 
@@ -144,7 +170,7 @@ Two consequences worth knowing before debugging:
 
 ### Protocol config
 
-`XrayConfigBuilder` renders one SOCKS5 inbound on `127.0.0.1:1080` (dialled by hev-socks5-tunnel), the selected proxy outbound, plus `freedom`/`blackhole`. Routing keeps private/loopback ranges direct and avoids `geoip:`/`geosite:` predicates so no `.dat` assets are needed (otherwise `XraySetAssetPath` would be required before `XrayStart`). Because the core is a library with no usable stdout, its log is routed to a file via `log.error` — see `DiagnosticPaths`.
+`XrayConfigBuilder` renders one SOCKS5 inbound on `127.0.0.1:1080` (dialled by hev-socks5-tunnel on Android), the selected proxy outbound, plus `freedom`/`blackhole`. On Windows `WindowsTunnelConfig.Build` reshapes that shared config: the `tun` inbound first, DNS answered by the core and forwarded through the proxy, lead routing rules, and the split-tunnel `process` rules. Routing keeps private/loopback ranges direct and avoids `geoip:`/`geosite:` predicates so no `.dat` assets are needed (otherwise `XraySetAssetPath` would be required before `XrayStart`). Because the core is a library with no usable stdout, its log is routed to a file via `log.error` — see `DiagnosticPaths`.
 
 **The fork's protocol names are not the usual ones.** Hysteria2 is registered as `hysteria` (both `"protocol"` and `streamSettings.network`) — `hysteria2` is not a valid transport and yields `Config: unknown transport protocol: hysteria2`. Its auth password lives on the *transport* (`hysteriaSettings.auth`), not the outbound, and `settings` is flat `{version:2, address, port}` rather than a `servers[]` array. Salamander obfuscation and UDP port hopping are **finalmask** features (`streamSettings.finalmask.udp[]` and `.quicParams.udpHop`), not hysteria ones. ALPN must include `h3`. Source of truth: `infra/conf/hysteria.go`, `infra/conf/transport_method.go` and `test-configs/server.json` in the core fork.
 
@@ -178,10 +204,10 @@ subscription is inactive.
 
 ## Implementation Status
 
-Auth, servers, connect and the xray pipeline are wired to the real backend; buying a subscription is the site's (see above). Still placeholder: per-server ping (`ServerInfo.PingMs` is always null for real servers), and the kill-switch/auto-connect toggles in Settings. See `docs/PLAN-remaining-functions.md`.
+Auth, servers, connect and the xray pipeline are wired to the real backend; buying a subscription is the site's (see above). Server ping is a TCP handshake per node (`LatencyProbe`; pinned to the physical interface on Windows). The shared Settings kill-switch toggle is still a placeholder; on Windows it is replaced by a working one (`WindowsSettingsSection`). See `docs/PLAN-remaining-functions.md`.
 
 ## UI / Styling
 
 All colors, typography, and spacing are defined as `StaticResource` in `Presentation/View/App.xaml`. The palette uses deep purples (`DeepVoid`, `NightPurple`) with neon accents (`NeonCyan #00E5FF`, `NeonViolet #BF5FFF`, `NeonGreen #39FF9F`). Status-specific colors follow the pattern `Connected*`, `Disconnected*`, `Connecting*`. Always use these resources rather than inline hex values.
 
-Navigation is shell-based (`AppShell.xaml`) with two tabs: Home (`MainPage`) and Settings (`SettingsPage`). `AuthPage` is pushed modally when the user is not authenticated.
+Navigation is a custom root page (`RootPage`, screens switched by `Navigator`): sidebar on desktop, bottom tabs on phones. Windows adds its own Home, an «Приложения» screen and a Settings section through `IPlatformScreens`; they are built in C# under `Platforms/Windows/Views/` and take every colour and style from `App.xaml` through `Ui`.

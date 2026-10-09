@@ -81,6 +81,7 @@ namespace Horus.Presentation.ViewModels
         public bool IsServers => Screen == AppScreen.Servers;
         public bool IsSettings => Screen == AppScreen.Settings;
         public bool IsSplit => Screen == AppScreen.Split;
+        public bool IsApps => Screen == AppScreen.Apps;
 
         /// <summary>Startup counts as "outside the app" so no chrome or account card shows.</summary>
         public bool IsAuthFlow => Screen is AppScreen.Startup or AppScreen.Onboarding or AppScreen.Login
@@ -88,7 +89,7 @@ namespace Horus.Presentation.ViewModels
         public bool InApp => !IsAuthFlow;
         /// <summary>Chrome (tab bar / sidebar) is shown on the three main tabs only.</summary>
         public bool ShowChrome => Screen is AppScreen.Home or AppScreen.Servers
-            or AppScreen.Settings or AppScreen.Split;
+            or AppScreen.Settings or AppScreen.Split or AppScreen.Apps;
 
         // Platform chrome selection (sidebar on desktop, bottom tabs on phone)
         public bool IsDesktop => DeviceInfo.Idiom == DeviceIdiom.Desktop || DeviceInfo.Idiom == DeviceIdiom.Tablet;
@@ -100,6 +101,15 @@ namespace Horus.Presentation.ViewModels
         public bool TabHomeActive => IsHome;
         public bool TabServersActive => IsServers;
         public bool TabSettingsActive => IsSettings || IsSplit;
+        public bool TabAppsActive => IsApps;
+
+        /// <summary>The platform supplied an application screen (Windows); the sidebar shows its entry.</summary>
+        public bool HasAppsScreen
+        {
+            get => _hasAppsScreen;
+            set => SetProperty(ref _hasAppsScreen, value);
+        }
+        private bool _hasAppsScreen;
 
         // ── Account / subscription card ──
         public string AccountEmail => _auth.CurrentUser?.username ?? "—";
@@ -133,6 +143,12 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void NavHome() => _nav.Go(AppScreen.Home);
         [RelayCommand] private void NavServers() => _nav.Go(AppScreen.Servers);
         [RelayCommand] private void NavSettings() => _nav.Go(AppScreen.Settings);
+        [RelayCommand] private void NavApps() => _nav.Go(AppScreen.Apps);
+
+        /// <summary>Set by the root page when a platform supplies its own screens.</summary>
+        public IPlatformScreens? PlatformScreens { get; set; }
+
+        private AppScreen _previousScreen;
         /// <summary>Subscriptions are bought on the website — see <see cref="SubscriptionPage"/>.</summary>
         [RelayCommand] private Task OpenPayAsync() => SubscriptionPage.OpenAsync();
 
@@ -218,6 +234,14 @@ namespace Horus.Presentation.ViewModels
             if (e.PropertyName != nameof(Navigator.CurrentScreen)) return;
             RaiseScreenFlags(); // refresh only the screen/chrome bindings (not the whole VM)
 
+            // Platform screens refresh only while on screen.
+            if (PlatformScreens is { } platform && _previousScreen != Screen)
+            {
+                platform.VisibilityChanged(_previousScreen, false);
+                platform.VisibilityChanged(Screen, true);
+            }
+            _previousScreen = Screen;
+
             // Load data lazily — only when it isn't already loaded (avoids re-fetching
             // on every tab switch, which is part of what made switching feel slow).
             if (IsHome)
@@ -247,6 +271,7 @@ namespace Horus.Presentation.ViewModels
             OnPropertyChanged(nameof(IsServers));
             OnPropertyChanged(nameof(IsSettings));
             OnPropertyChanged(nameof(IsSplit));
+            OnPropertyChanged(nameof(IsApps));
             OnPropertyChanged(nameof(IsAuthFlow));
             OnPropertyChanged(nameof(InApp));
             OnPropertyChanged(nameof(ShowChrome));
@@ -255,6 +280,7 @@ namespace Horus.Presentation.ViewModels
             OnPropertyChanged(nameof(TabHomeActive));
             OnPropertyChanged(nameof(TabServersActive));
             OnPropertyChanged(nameof(TabSettingsActive));
+            OnPropertyChanged(nameof(TabAppsActive));
         }
 
         private void OnAuthChanged(object? sender, AuthStateChangedEventArgs e) =>

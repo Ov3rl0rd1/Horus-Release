@@ -121,15 +121,13 @@
 	    <Link>xray.dll</Link>
 	  </None>
 
-	  <!-- The TUN bridge (hev-socks5-tunnel.exe + msys-2.0.dll + wintun.dll) and the
-	       optional WinDivert driver. Runtime files only — the .h/.lib in that folder are
-	       there for rebuilding, not for shipping.
-	       These land in ONE directory on purpose: hev resolves wintun.dll with
-	       LOAD_LIBRARY_SEARCH_APPLICATION_DIR, which is the directory of hev's own exe. -->
-	  <None Include="Platforms\Windows\bin\Native\**\*.exe;Platforms\Windows\bin\Native\**\*.dll;Platforms\Windows\bin\Native\**\*.sys"
-	        Condition="Exists('Platforms\Windows\bin\Native')">
+	  <!-- wintun.dll next to Horus.exe, not in a subfolder: the core owns the TUN in-process
+	       and loads wintun with LOAD_LIBRARY_SEARCH_APPLICATION_DIR, which is the directory
+	       of the process's executable. The old hev bridge, its MSYS runtime and the WinDivert
+	       driver are no longer shipped — see Platforms\Windows\bin\README.md. -->
+	  <None Include="Platforms\Windows\bin\Native\wintun.dll">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	    <Link>Resources\Native\%(RecursiveDir)%(Filename)%(Extension)</Link>
+	    <Link>wintun.dll</Link>
 	  </None>
 
 	  <!-- Ships next to the exe: the "Установить" button runs it, and it also works on its
@@ -149,14 +147,10 @@
 	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\xray.dll')"
 	         Text="Platforms\Windows\bin\xray.dll is missing. Extract the Windows x64 core from libxray.zip (windows/x64/xray.dll) — the app cannot connect without it. See Platforms\Windows\bin\README.md." />
 
-	  <!-- Without these the app starts and then cannot build a tunnel at all. Catching it
-	       here beats catching it on a user's machine at connect time. -->
-	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\Native\hev-socks5-tunnel.exe')"
-	         Text="Platforms\Windows\bin\Native\hev-socks5-tunnel.exe is missing — the Windows TUN bridge. See Platforms\Windows\bin\README.md." />
-	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\Native\msys-2.0.dll')"
-	         Text="Platforms\Windows\bin\Native\msys-2.0.dll is missing — hev-socks5-tunnel is an MSYS build and will not start without it. See Platforms\Windows\bin\README.md." />
+	  <!-- Without it the app starts and then cannot create a tunnel at all. Catching it here
+	       beats catching it on a user's machine at connect time. -->
 	  <Error Condition="!Exists('$(MSBuildThisFileDirectory)Platforms\Windows\bin\Native\wintun.dll')"
-	         Text="Platforms\Windows\bin\Native\wintun.dll is missing — no TUN adapter can be created. See Platforms\Windows\bin\README.md." />
+	         Text="Platforms\Windows\bin\Native\wintun.dll is missing — the core cannot create its TUN adapter. See Platforms\Windows\bin\README.md." />
 	</Target>
 
 	<ItemGroup>

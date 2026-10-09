@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Windows tunnel, end to end, against the real core: run elevated on Windows.
+    `dotnet run -c Release` from this folder; CI runs it on windows-latest (branch-ci.yml).
+
+    It links the app's own config code rather than reimplementing it, so what is tested is
+    exactly what Horus hands its core. See Program.cs for the checks and the windows-tunnel
+    skill for when to run it.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <NoWarn>CA1416</NoWarn>
+    <RootNamespace>Horus.WinTunnelTest</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Horus\Protocols\XrayInterop.cs" Link="Linked\XrayInterop.cs" />
+    <Compile Include="..\..\Horus\Protocols\XrayConfigBuilder.cs" Link="Linked\XrayConfigBuilder.cs" />
+    <Compile Include="..\..\Horus\Protocols\LocalNetworks.cs" Link="Linked\LocalNetworks.cs" />
+    <Compile Include="..\..\Horus\Protocols\SocksProbe.cs" Link="Linked\SocksProbe.cs" />
+    <Compile Include="..\..\Horus\Domain\Models\XrayConfig.cs" Link="Linked\XrayConfig.cs" />
+    <Compile Include="..\..\Horus\Domain\Models\ProtocolConfig.cs" Link="Linked\ProtocolConfig.cs" />
+    <Compile Include="..\..\Horus\Domain\Models\GeoRouting.cs" Link="Linked\GeoRouting.cs" />
+    <Compile Include="..\..\Horus\Domain\Models\RuleAction.cs" Link="Linked\RuleAction.cs" />
+    <Compile Include="..\..\Horus\Domain\Models\SplitTunneling.cs" Link="Linked\SplitTunneling.cs" />
+    <Compile Include="..\..\Horus\Domain\Models\Diag.cs" Link="Linked\Diag.cs" />
+    <Compile Include="..\..\Horus\Application\Routing\SiteRules.cs" Link="Linked\SiteRules.cs" />
+    <Compile Include="..\..\Horus\Platforms\Windows\Tunnel\*.cs" Link="Linked\Tunnel\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- The same two native files the app ships, beside the exe for the same reason. -->
+  <ItemGroup>
+    <None Include="..\..\Horus\Platforms\Windows\bin\xray.dll" Link="xray.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\Horus\Platforms\Windows\bin\Native\wintun.dll" Link="wintun.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

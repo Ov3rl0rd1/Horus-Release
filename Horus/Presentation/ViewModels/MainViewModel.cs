@@ -17,7 +17,7 @@ namespace Horus.Presentation.ViewModels
     /// </summary>
     public partial class MainViewModel : ObservableObject
     {
-        private readonly VpnManager _vpnManager;
+        private readonly IVpnController _vpnManager;
         private readonly ITrafficMonitorService _traffic;
         private readonly ISubscriptionService _subscription;
         private readonly IAuthService _auth;
@@ -83,7 +83,7 @@ namespace Horus.Presentation.ViewModels
         }
 
         public MainViewModel(
-            VpnManager vpnManager,
+            IVpnController vpnManager,
             ITrafficMonitorService traffic,
             ISubscriptionService subscription,
             IAuthService auth,

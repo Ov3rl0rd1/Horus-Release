@@ -6,7 +6,7 @@ using Horus.Protocols;
 
 namespace Horus.Application
 {
-    public class VpnManager
+    public class VpnManager : IVpnController
     {
         public event EventHandler<VpnStateChangedEventArgs>? StateChanged;
         public event EventHandler<ConnectionErrorEventArgs>? ConnectionError;
