@@ -83,16 +83,31 @@ jobs:
         run: >
           dotnet build Horus/Horus.csproj -f net10.0-windows10.0.19041.0 -c Debug
           -p:TargetFrameworks=net10.0-windows10.0.19041.0
+      # A rehearsal of release.yml's Windows job, minus signing: the same publish, the same
+      # payload script, the same MSI build. A release from this branch then fails only for
+      # reasons a branch cannot see (secrets, the version chosen) — not, as once happened,
+      # because the published layout is not the one the release expects.
+      - name: Publish (as the release does)
+        run: >
+          dotnet publish Horus/Horus.csproj
+          -f net10.0-windows10.0.19041.0 -c Release -r win-x64
+          -p:TargetFrameworks=net10.0-windows10.0.19041.0
+          -p:SelfContained=true -p:UseMonoRuntime=false
+          -p:ApplicationDisplayVersion=0.9.0 -p:ApplicationVersion=1
+          -o publish/win-x64
       - name: Payload
         shell: pwsh
+        run: ./packaging/windows/check-payload.ps1 publish/win-x64
+      - name: MSI
+        shell: pwsh
         run: |
-          $out = Get-ChildItem -Recurse -Filter Horus.exe Horus/bin | Select-Object -First 1
-          if (-not $out) { throw "Horus.exe not built" }
-          $dir = $out.DirectoryName
-          foreach ($f in 'xray.dll', 'wintun.dll') {
-            if (-not (Test-Path (Join-Path $dir $f))) { throw "$f missing next to Horus.exe" }
-          }
-          Write-Host "payload OK in $dir"
+          dotnet tool install --global wix --version 5.*
+          wix build -arch x64 `
+            -d Version=0.9.0 `
+            -d PublishDir="$(Resolve-Path publish/win-x64)" `
+            packaging/windows/Horus.wxs `
+            -o dist/Horus-rehearsal-win-x64.msi
+          Write-Host "MSI $((Get-Item dist/Horus-rehearsal-win-x64.msi).Length) bytes"
 
   # The tunnel itself, on real Windows: wintun adapter, traffic through the proxy,
   # per-process routing, DNS through the TUN, live reload and swap, stop/start under load.
