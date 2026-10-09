@@ -148,8 +148,12 @@ Check("direct traffic flows (outbound binding holds)", curlRow is { Down: > 10_0
 // ── DNS through the TUN's resolver ───────────────────────────────────────────
 var a1 = Shell("powershell", $"-NoProfile -Command \"(Resolve-DnsName example.com -Type A -Server {WindowsTunnelConfig.DnsAddress} -DnsOnly -ErrorAction Stop).IPAddress\"");
 Check("DNS A via the TUN resolver", IPAddress.TryParse(a1.Trim().Split('\n')[0].Trim(), out _), a1.Trim());
-var srv = Shell("powershell", $"-NoProfile -Command \"(Resolve-DnsName _xmpp-server._tcp.gmail.com -Type SRV -Server {WindowsTunnelConfig.DnsAddress} -DnsOnly -ErrorAction Stop | Where-Object Type -eq 'SRV' | Select-Object -First 1).NameTarget\"");
-Check("DNS SRV via the TUN resolver is forwarded, not blanked", srv.Contains("google", StringComparison.OrdinalIgnoreCase), srv.Trim());
+// Records that are known to exist; a blanked answer is an empty NOERROR, a forwarded one
+// carries the target. Two, so one provider retiring a record does not fail the check.
+var srv = Shell("powershell", $"-NoProfile -Command \"foreach ($n in '_imaps._tcp.gmail.com','_xmpp-client._tcp.jabber.org') {{ try {{ (Resolve-DnsName $n -Type SRV -Server {WindowsTunnelConfig.DnsAddress} -DnsOnly -ErrorAction Stop | Where-Object Type -eq 'SRV' | Select-Object -First 1).NameTarget }} catch {{ $_.Exception.Message }} }}\"");
+Check("DNS SRV via the TUN resolver is forwarded, not blanked",
+    srv.Contains("gmail.com", StringComparison.OrdinalIgnoreCase) || srv.Contains("jabber.org", StringComparison.OrdinalIgnoreCase),
+    srv.Trim().Replace("\r\n", " | "));
 
 // ── Live reload: whitelist us, so curl falls to the catch-all (direct) and we stay on the proxy ──
 var whitelistUs = Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, [mine]));
@@ -213,13 +217,20 @@ return failures;
 void Finish()
 {
     XrayInterop.Stop();
-    try { if (!server.HasExited) server.Kill(); } catch { }
+    try { if (!server.HasExited) { server.Kill(); server.WaitForExit(5000); } } catch { }
     foreach (var f in new[] { "client.log", "server.log" })
     {
         var p = Path.Combine(logs, f);
         if (!File.Exists(p)) continue;
         Console.WriteLine($"--- tail {f}");
-        foreach (var line in File.ReadLines(p).TakeLast(25)) Console.WriteLine("   " + line);
+        try
+        {
+            using var stream = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+            var lines = reader.ReadToEnd().Split('\n');
+            foreach (var line in lines.TakeLast(25)) Console.WriteLine("   " + line.TrimEnd());
+        }
+        catch (Exception ex) { Console.WriteLine("   (unreadable: " + ex.Message + ")"); }
     }
     Console.WriteLine(failures == 0 ? "ALL PASSED" : $"{failures} FAILED");
 }

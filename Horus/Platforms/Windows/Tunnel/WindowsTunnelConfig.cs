@@ -253,7 +253,8 @@ namespace Horus.Platforms.Windows.Tunnel
         /// <list type="number">
         /// <item>The core's own DNS goes through the proxy — first, so no split rule can send
         /// lookups out in clear.</item>
-        /// <item>Port 53 from the TUN goes to the DNS outbound.</item>
+        /// <item>Port 53 from the TUN goes to the DNS outbound; anything else to the TUN's own
+        /// subnet is dropped.</item>
         /// <item>The SOCKS inbound — the probe channel — always goes to the proxy.</item>
         /// <item>The shared rules: multicast dropped, private ranges direct, the user's site
         /// rules, the geo rules.</item>
@@ -280,6 +281,15 @@ namespace Horus.Platforms.Windows.Tunnel
                     ["port"] = "53",
                     ["network"] = "tcp,udp",
                     ["outboundTag"] = DnsOutTag
+                },
+                // The TUN's own subnet has nothing behind it but the resolver above. Windows
+                // still talks to it — NetBIOS broadcasts to the /30's broadcast address, seen
+                // on a real run — and the shared rules would send that out "direct".
+                new JsonObject
+                {
+                    ["type"] = "field",
+                    ["ip"] = new JsonArray(Address[..^1] + "0/30", Address6[..^1] + "0/126"),
+                    ["outboundTag"] = "block"
                 },
                 // The SOCKS inbound is the probe channel: health checks dial through it to
                 // learn whether the proxy works. Under a whitelist the catch-all is direct,

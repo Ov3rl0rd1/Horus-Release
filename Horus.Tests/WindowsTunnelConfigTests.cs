@@ -46,8 +46,8 @@ public class WindowsTunnelConfigTests
 
     private static string? Tag(JsonNode? rule) => rule?["outboundTag"]?.GetValue<string>();
 
-    /// <summary>Rules the Windows config puts ahead of the shared ones: DNS module, port 53, SOCKS probe.</summary>
-    private const int Lead = 3;
+    /// <summary>Rules the Windows config puts ahead of the shared ones: DNS module, port 53, TUN subnet, SOCKS probe.</summary>
+    private const int Lead = 4;
 
     [Fact]
     public void The_tun_is_the_first_inbound_and_binds_the_cores_own_sockets()
@@ -98,9 +98,13 @@ public class WindowsTunnelConfigTests
         Assert.Equal("proxy", Tag(rules[0]));
         Assert.Equal(WindowsTunnelConfig.DnsModuleTag, root["dns"]!["tag"]!.GetValue<string>());
 
-        // Second: port 53 from the TUN is answered by the DNS outbound.
+        // Second: port 53 from the TUN is answered by the DNS outbound...
         Assert.Equal("53", rules[1]!["port"]!.GetValue<string>());
         Assert.Equal(WindowsTunnelConfig.DnsOutTag, Tag(rules[1]));
+
+        // ...and nothing else addressed to the TUN's own subnet goes anywhere.
+        Assert.Equal(["198.18.0.0/30", "fdfe:dcba:9876::0/126"], rules[2]!["ip"]!.AsArray().Select(n => n!.GetValue<string>()));
+        Assert.Equal("block", Tag(rules[2]));
 
         var dnsOut = root["outbounds"]!.AsArray().Single(o => o!["tag"]!.GetValue<string>() == WindowsTunnelConfig.DnsOutTag)!;
         Assert.Equal("proxy", dnsOut["streamSettings"]!["sockopt"]!["dialerProxy"]!.GetValue<string>());
