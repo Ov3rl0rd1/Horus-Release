@@ -1,0 +1,83 @@
+name: Branch CI
+
+# Builds both heads and runs the tests on working branches, so a change to shared code is
+# known to compile for the platform its author could not build locally. Nothing is
+# published; releases stay in release.yml, manual and from main.
+on:
+  push:
+    branches: ['claude/**', 'dev']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - run: dotnet test Horus.Tests/Horus.Tests.csproj -c Release
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install MAUI Android workload
+        run: dotnet workload install maui-android
+      - name: Android SDK packages the project targets
+        run: >
+          dotnet build Horus/Horus.csproj -t:InstallAndroidDependencies -f net10.0-android
+          -p:TargetFrameworks=net10.0-android -p:AndroidSdkDirectory=$ANDROID_SDK_ROOT
+          -p:AcceptAndroidSDKLicenses=true
+      # TargetFrameworks pinned for the same reason as in release.yml: restore otherwise
+      # evaluates frameworks this runner has no workload for.
+      - name: Build
+        run: >
+          dotnet build Horus/Horus.csproj -f net10.0-android -c Debug
+          -p:TargetFrameworks=net10.0-android
+          -p:AndroidSdkDirectory=$ANDROID_SDK_ROOT
+      - name: Warning codes
+        if: always()
+        run: >
+          dotnet build Horus/Horus.csproj -f net10.0-android -c Debug
+          -p:TargetFrameworks=net10.0-android -p:AndroidSdkDirectory=$ANDROID_SDK_ROOT --no-restore -v m 2>&1
+          | grep -oE "warning [A-Z]+[0-9]+" | sort | uniq -c || true
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Install MAUI Windows workload
+        run: dotnet workload install maui-windows
+      - name: Build
+        run: >
+          dotnet build Horus/Horus.csproj -f net10.0-windows10.0.19041.0 -c Debug
+          -p:TargetFrameworks=net10.0-windows10.0.19041.0
+      - name: Payload
+        shell: pwsh
+        run: |
+          $out = Get-ChildItem -Recurse -Filter Horus.exe Horus/bin | Select-Object -First 1
+          if (-not $out) { throw "Horus.exe not built" }
+          $dir = $out.DirectoryName
+          foreach ($f in 'xray.dll', 'wintun.dll') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "$f missing next to Horus.exe" }
+          }
+          Write-Host "payload OK in $dir"

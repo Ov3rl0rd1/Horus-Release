@@ -163,7 +163,6 @@ public class SocksPortContractTests
 
     [Theory]
     [InlineData("Platforms", "Android", "HevSocksTunnel.cs")]
-    [InlineData("Platforms", "Windows", "WindowsVpnService.cs")]
     public void Tunnel_hosts_use_the_shared_config_rather_than_their_own_copy(params string[] path)
     {
         var source = Source(path);
@@ -171,5 +170,23 @@ public class SocksPortContractTests
         Assert.Contains(nameof(HevTunnelConfig), source);
         Assert.DoesNotContain("socks5:", source);
         Assert.DoesNotContain("198.18.0.1", source);
+    }
+
+    /// <summary>
+    /// Windows has no bridge any more — the core owns the TUN — so the contract this file
+    /// guards does not exist there, and must not quietly come back: a hev YAML written on
+    /// Windows would mean a second tunnel competing with the core's.
+    /// </summary>
+    [Theory]
+    [InlineData("Platforms", "Windows", "WindowsVpnService.cs")]
+    [InlineData("Platforms", "Windows", "WindowsVpnController.cs")]
+    public void The_windows_host_runs_no_bridge(params string[] path)
+    {
+        var source = Source(path);
+
+        Assert.DoesNotContain(nameof(HevTunnelConfig) + ".Build", source);
+        Assert.DoesNotContain("hev-socks5-tunnel.exe", source);
+        // hev's YAML key, not the socks5:// URL the probes use.
+        Assert.DoesNotMatch(@"socks5:(?!//)", source);
     }
 }

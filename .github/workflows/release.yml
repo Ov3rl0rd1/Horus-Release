@@ -52,7 +52,7 @@ jobs:
   #
   # x64 only, deliberately. The app is x64, a 32-bit build cannot load the x64 core, and
   # Windows on ARM runs x64 under emulation — an arm64 target would need arm64 builds of
-  # xray, wintun and the MSYS-based bridge, which upstream does not publish.
+  # xray and wintun.
   windows:
     needs: test
     if: inputs.platforms == 'both' || inputs.platforms == 'windows'
@@ -101,9 +101,7 @@ jobs:
           $required = @(
             'publish/win-x64/Horus.exe',
             'publish/win-x64/xray.dll',
-            'publish/win-x64/Resources/Native/hev-socks5-tunnel.exe',
-            'publish/win-x64/Resources/Native/msys-2.0.dll',
-            'publish/win-x64/Resources/Native/wintun.dll'
+            'publish/win-x64/wintun.dll'
           )
           $missing = $required | Where-Object { -not (Test-Path $_) }
           if ($missing) { throw "Missing from the publish output:`n$($missing -join "`n")" }

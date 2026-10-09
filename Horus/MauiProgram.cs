@@ -77,7 +77,6 @@ namespace Horus
 
             // ── Core Application Services ────────────────────────────────────
             services
-                .AddSingleton<VpnManager>()
                 .AddSingleton<ProtocolFactory>()
                 .AddSingleton<XrayProtocol>()
                 .AddSingleton<IStorageService, StorageService>()
@@ -88,8 +87,21 @@ namespace Horus
                 .AddSingleton<ITrafficMonitorService, TrafficMonitorService>()
                 .AddSingleton<IRoutingService, RoutingService>()
                 .AddSingleton<IGeoDataService, GeoDataService>()
-                .AddSingleton<IErrorReportingService, ErrorReportingService>()
+                .AddSingleton<IErrorReportingService, ErrorReportingService>();
+
+            // Who runs the VPN. Windows has its own controller (core-owned TUN, desktop
+            // recovery rules); everything else keeps the shared manager, which Android's
+            // platform code also resolves directly by its concrete type.
+#if WINDOWS
+            services
+                .AddSingleton<Platforms.Windows.Tunnel.WindowsConnectionMonitor>()
+                .AddSingleton<IVpnController, WindowsVpnController>();
+#else
+            services
+                .AddSingleton<VpnManager>()
+                .AddSingleton<IVpnController>(sp => sp.GetRequiredService<VpnManager>())
                 .AddSingleton<TunnelHealthMonitor>();
+#endif
 
             // ── Updates ──────────────────────────────────────────────────────
             // Both sources are registered; UpdateService tries GitHub first and falls back
@@ -124,12 +136,9 @@ namespace Horus
                 .AddSingleton<IUpdateInstaller, Platforms.Android.Update.AndroidUpdateInstaller>();
 #elif WINDOWS
             services
+                // No IDirectPathProvider any more: the core pins every outbound socket to the
+                // physical interface itself, so the direct outbound needs no interface name.
                 .AddSingleton<IVpnPlatformService, WindowsVpnService>()
-                // The same instance under a second contract: it already knows how to ask
-                // the OS which interface currently reaches the internet, and geo routing
-                // needs that answer to pin the direct outbound off the tunnel.
-                .AddSingleton<IDirectPathProvider>(sp =>
-                    (WindowsVpnService)sp.GetRequiredService<IVpnPlatformService>())
                 .AddSingleton<ISplitTunnelingService, WindowsSplitTunnelingService>()
                 .AddSingleton<INetworkMonitor, WindowsNetworkMonitor>()
                 .AddSingleton<ISystemPermissions, Application.PlatformStubs.StubSystemPermissions>()

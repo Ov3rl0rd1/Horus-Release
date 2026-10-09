@@ -8,7 +8,7 @@
 
   PublishDir is passed in by the workflow and points at a `dotnet publish` output. The
   <Files> element harvests it wholesale, which matters because the payload is ~110 files —
-  the WinUI and Windows App SDK runtime, the core, and the TUN bridge in Resources\Native.
+  the WinUI and Windows App SDK runtime, the core and wintun.dll beside Horus.exe.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Horus VPN"

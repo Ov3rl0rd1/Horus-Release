@@ -1,85 +1,59 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
-using Horus.Platforms.Windows.Wfp;
-using Horus.Protocols;
-using System.Diagnostics;
-using System.Net;
-using System.Runtime.InteropServices;
-using System.Runtime.Versioning;
-using System.Text;
+using Horus.Platforms.Windows.Tunnel;
 
 namespace Horus.Platforms.Windows
 {
+    /// <summary>An application the user has chosen, remembered whether or not it is running.</summary>
+    public sealed record SavedApp(string Exe, string? Path, string? Name);
+
     /// <summary>
-    /// Per-process split tunneling on Windows.
+    /// Per-application split tunneling on Windows, done by the core's routing.
     ///
-    /// <para><b>Why it takes three mechanisms.</b> Windows has no per-application routing.
-    /// WFP can decide whether a process may use an interface but cannot move it to another
-    /// one — redirects live at <c>ALE_*_REDIRECT</c>, layers only a kernel callout may attach
-    /// to. So the work is split: the <b>route table</b> sets the default for everyone,
-    /// <b>WinDivert</b> reports which process is opening which connection, and a host route
-    /// per destination moves that traffic off the default. WFP is the guard rail.</para>
+    /// <para><b>Why it never worked before.</b> The previous version watched new connections
+    /// with WinDivert and added a host route for each destination of a chosen app. It could
+    /// not have worked: its P/Invoke named <c>WinDivertHelperNtohIpv4Address</c>, which
+    /// WinDivert.dll does not export, so every event threw
+    /// <c>EntryPointNotFoundException</c> into a silent catch and no route was ever added.
+    /// And had it worked, a route added after the connection opened leaves that connection
+    /// broken, and a host route applies to every application talking to that address.</para>
     ///
-    /// <para><b>Both modes reduce to the same operation.</b> The tunnel holds the default
-    /// route, so everything is tunnelled unless a host route says otherwise. Blacklist steers
-    /// the <i>selected</i> apps' destinations onto the physical path; Whitelist steers the
-    /// <i>unselected</i> ones. One mechanism, one inversion.</para>
+    /// <para><b>How it works now.</b> The core owns the TUN, so each connection carries the
+    /// source of the application's socket and the core's <c>process</c> rule matches the
+    /// executable. The choice is a routing rule, applied by reloading the core's rules — no
+    /// restart, no adapter churn, nothing installed in Windows. Open connections keep the
+    /// route they started with; "restart connections" on the connections screen moves them.
+    /// No WinDivert driver either, which anti-cheat software is known to object to.</para>
     ///
-    /// <para><b>The limitation, stated plainly.</b> A host route is per destination, not per
-    /// process. If a steered app and a tunnelled app talk to the same address, both follow
-    /// the route. For "the bank goes direct, everything else through the VPN" that is
-    /// harmless. For Whitelist it would be a leak, which is why the selected apps are also
-    /// blocked on the physical interface: if one ever rides a route installed for another
-    /// process, the connection fails instead of leaving unprotected.</para>
-    ///
-    /// <para>Requires WinDivert (<c>WinDivert.dll</c> + <c>WinDivert64.sys</c>) next to the
-    /// app; without it <see cref="IsSupported"/> is false and Settings hides the screen
-    /// rather than offering switches that do nothing.</para>
+    /// <para><b>Persistence.</b> The mode and the chosen apps survive restarts, and an app the
+    /// user chose stays in the list when it is not running — the previous list showed only
+    /// what happened to be running, so a choice vanished with the window.</para>
     /// </summary>
     [SupportedOSPlatform("windows")]
-    public class WindowsSplitTunnelingService : ISplitTunnelingService
+    public sealed class WindowsSplitTunnelingService : ISplitTunnelingService
     {
-        /// <summary>Must match the adapter alias <see cref="WindowsVpnService"/> creates.</summary>
-        private const string TunAlias = "Horus";
-
-        /// <summary>
-        /// A ceiling on host routes. The input is "every destination every watched process
-        /// talks to", and a browser alone produces hundreds. Past this the steering stops
-        /// rather than filling the route table; the tunnel keeps working and the unsteered
-        /// traffic is over-protected, never leaked.
-        /// </summary>
-        private const int MaxSteeredRoutes = 256;
-
-        private readonly string _nativeDir;
-        private readonly string _routeJournal;
-        private readonly List<string> _selected = [];
-        private SplitTunnelingMode _mode = SplitTunnelingMode.Disabled;
-
-        private WfpEngine? _wfp;
-        private ProcessFlowWatcher? _watcher;
-
-        /// <summary>Destinations already given a host route, so a busy process is not re-run.</summary>
-        private readonly HashSet<string> _steered = new(StringComparer.Ordinal);
-
-        /// <summary>Executables already carrying a leak guard, keyed by full path.</summary>
-        private readonly HashSet<string> _guarded = new(StringComparer.OrdinalIgnoreCase);
-
-        /// <summary>pid → image path. Cleared with the rest; pid reuse is bounded by a session.</summary>
-        private readonly Dictionary<uint, string?> _pidPaths = [];
+        private const string ModeKey = "win.split.mode";
+        private const string AppsKey = "win.split.apps";
 
         private readonly object _gate = new();
+        private SplitTunnelingMode _mode;
+        private List<SavedApp> _saved;
 
-        private string? _gateway;
-        private int _ifIndex;
+        public WindowsSplitTunnelingService()
+        {
+            _mode = (SplitTunnelingMode)Read(ModeKey, (int)SplitTunnelingMode.Disabled);
+            _saved = LoadSaved();
+        }
 
-        /// <summary>
-        /// Only when the WinDivert driver is actually present. <c>ApplyAsync</c> returns
-        /// silently without it, so claiming support would give the user a screen of
-        /// switches that quietly do nothing.
-        /// </summary>
-        public bool IsSupported => File.Exists(Path.Combine(_nativeDir, "WinDivert.dll"));
+        /// <summary>Always: the rules are the core's, and they work with any build of it that has a TUN.</summary>
+        public bool IsSupported => true;
 
-        /// <summary>The list here is running processes, so the distinction is real.</summary>
+        /// <summary>The list is processes, so a running window is a meaningful distinction.</summary>
         public bool DistinguishesWindows => true;
 
         public SplitTunnelingMode Mode
@@ -87,429 +61,233 @@ namespace Horus.Platforms.Windows
             get => _mode;
             set
             {
+                if (_mode == value) return;
                 _mode = value;
+                Write(ModeKey, (int)value);
+                Diag.User("split", $"mode {value}");
                 SelectionChanged?.Invoke(this, EventArgs.Empty);
+                RulesChanged?.Invoke(this, EventArgs.Empty);
             }
         }
 
-        public IReadOnlyList<string> SelectedEntries => _selected.AsReadOnly();
+        public IReadOnlyList<string> SelectedEntries
+        {
+            get { lock (_gate) return _saved.Select(a => a.Exe).ToList(); }
+        }
 
-        /// <summary>Config-forced bypass is an Android concept (package names); nothing to do here.</summary>
+        public IReadOnlyList<SavedApp> SavedApps
+        {
+            get { lock (_gate) return [.. _saved]; }
+        }
+
+        /// <summary>Package names forced direct are an Android notion; nothing here.</summary>
         public IReadOnlyList<string> AlwaysDirectEntries => [];
 
         public event EventHandler? SelectionChanged;
 
-        /// <summary>Windows process entries carry no icons.</summary>
-        public Task LoadIconsAsync(
-            IReadOnlyList<AppOrProcessEntry> entries,
-            Action<AppOrProcessEntry> onReady,
-            CancellationToken ct = default) => Task.CompletedTask;
+        /// <summary>The routing rules this service implies have changed and should be applied.</summary>
+        public event EventHandler? RulesChanged;
 
-        public WindowsSplitTunnelingService()
+        /// <summary>What the core should do, as of now.</summary>
+        public WindowsSplitRules CurrentRules
         {
-            _nativeDir = Path.Combine(AppContext.BaseDirectory, "Resources", "Native");
-            _routeJournal = Path.Combine(FileSystem.AppDataDirectory, "split-routes.txt");
+            get
+            {
+                lock (_gate)
+                    return new WindowsSplitRules(_mode, [.. _saved.Select(a => a.Exe)]);
+            }
         }
 
-        public async Task<IReadOnlyList<AppOrProcessEntry>> GetAvailableEntriesAsync()
-        {
-            return await Task.Run(() =>
+        public Task<IReadOnlyList<AppOrProcessEntry>> GetAvailableEntriesAsync() =>
+            Task.Run<IReadOnlyList<AppOrProcessEntry>>(() =>
             {
-                // Keyed by image name because that is what a rule matches: several chrome.exe
-                // are one entry, and the one with a window is what names it. Scanning them all
-                // and merging beats stopping at the first, which used to pick whichever
-                // instance the enumeration happened to return and left the visible one out.
-                var byImage = new Dictionary<string, AppOrProcessEntry>(StringComparer.OrdinalIgnoreCase);
+                // Keyed by executable name, because that is what a rule matches: several
+                // chrome.exe are one entry, named by the instance that has a window.
+                var byExe = new Dictionary<string, AppOrProcessEntry>(StringComparer.OrdinalIgnoreCase);
 
-                try
+                foreach (var proc in Process.GetProcesses())
                 {
-                    foreach (var proc in Process.GetProcesses())
+                    try
                     {
-                        try
+                        var path = proc.MainModule?.FileName;
+                        if (string.IsNullOrEmpty(path)) continue;
+                        var exe = System.IO.Path.GetFileName(path);
+                        if (string.IsNullOrEmpty(exe) || IsOwnProcess(path)) continue;
+
+                        var title = proc.MainWindowTitle;
+                        var windowed = title is { Length: > 0 };
+
+                        if (!byExe.TryGetValue(exe, out var entry))
                         {
-                            var path = proc.MainModule?.FileName;
-                            if (string.IsNullOrEmpty(path)) continue;
-
-                            var exe = Path.GetFileName(path);
-                            if (string.IsNullOrEmpty(exe)) continue;
-
-                            var title = proc.MainWindowTitle;
-                            var windowed = title is { Length: > 0 };
-
-                            if (!byImage.TryGetValue(exe, out var entry))
+                            byExe[exe] = new AppOrProcessEntry
                             {
-                                byImage[exe] = new AppOrProcessEntry
-                                {
-                                    Id = exe,
-                                    DisplayName = windowed ? title! : Path.GetFileNameWithoutExtension(exe),
-                                    Path = path,
-                                    HasWindow = windowed,
-                                    // Deliberately null: IconPath feeds an Image source, and
-                                    // an .exe path there renders as a broken image. Extracting
-                                    // the real icon would need a Win32 shell call.
-                                    IconPath = null,
-                                    IsSystem = IsSystemProcess(path)
-                                };
-                                continue;
-                            }
-
-                            // A later instance with a window upgrades the entry: the user is
-                            // looking for "the window called X", and a background instance
-                            // that started first must not hide it.
-                            if (windowed && !entry.HasWindow)
-                            {
-                                entry.HasWindow = true;
-                                entry.DisplayName = title!;
-                            }
+                                Id = exe,
+                                DisplayName = FriendlyName(path) ?? (windowed ? title! : System.IO.Path.GetFileNameWithoutExtension(exe)),
+                                Path = path,
+                                HasWindow = windowed,
+                                IconPath = CachedIcon(path),
+                                IsSystem = IsSystemPath(path)
+                            };
                         }
-                        catch { /* Access denied to some system processes */ }
-                        finally { proc.Dispose(); }
+                        else if (windowed && !entry.HasWindow)
+                        {
+                            entry.HasWindow = true;
+                        }
                     }
+                    catch { /* access denied is ordinary for protected processes */ }
+                    finally { proc.Dispose(); }
                 }
-                catch { }
 
-                // Windowed first, then non-system, then by name — the order someone hunting
-                // for a running application reads in.
-                return byImage.Values
-                    .OrderByDescending(e => e.HasWindow)
+                // Chosen apps stay listed when they are not running — otherwise a choice
+                // disappears with the window, and nobody can tell whether it still applies.
+                foreach (var app in SavedApps)
+                {
+                    if (byExe.ContainsKey(app.Exe)) continue;
+                    byExe[app.Exe] = new AppOrProcessEntry
+                    {
+                        Id = app.Exe,
+                        DisplayName = app.Name ?? System.IO.Path.GetFileNameWithoutExtension(app.Exe),
+                        Path = app.Path is null ? "не запущено" : $"{app.Path} · не запущено",
+                        HasWindow = false,
+                        IconPath = app.Path is null ? null : CachedIcon(app.Path),
+                        IsSystem = false
+                    };
+                }
+
+                var chosen = SelectedEntries.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return byExe.Values
+                    .OrderByDescending(e => chosen.Contains(e.Id))
+                    .ThenByDescending(e => e.HasWindow)
                     .ThenBy(e => e.IsSystem)
                     .ThenBy(e => e.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                     .ToList();
             });
-        }
 
         public Task SetSelectedEntriesAsync(IEnumerable<string> entries)
         {
-            _selected.Clear();
-            _selected.AddRange(entries);
+            var wanted = entries.Where(e => !string.IsNullOrWhiteSpace(e))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            lock (_gate)
+            {
+                var known = _saved.ToDictionary(a => a.Exe, StringComparer.OrdinalIgnoreCase);
+                _saved = wanted.Select(exe => known.TryGetValue(exe, out var a) ? a : Describe(exe)).ToList();
+            }
+
+            Persist();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
             return Task.CompletedTask;
         }
 
-        // ── Apply / stop ─────────────────────────────────────────────────────
-
-        public async Task ApplyAsync()
+        /// <summary>Asks for the current rules to be applied; the controller reloads the core's routing.</summary>
+        public Task ApplyAsync()
         {
-            await StopAsync();
+            RulesChanged?.Invoke(this, EventArgs.Empty);
+            return Task.CompletedTask;
+        }
 
-            // Routes from a session that died without unwinding. They live on the physical
-            // interface and survive everything, so a stale one keeps sending that destination
-            // out of the tunnel forever, invisibly.
-            await SweepJournalAsync();
-
-            if (!IsSupported) return;
-            if (_mode == SplitTunnelingMode.Disabled || _selected.Count == 0) return;
-
-            // The physical next hop has to be read while the answer is still the physical
-            // one. Asked after the tunnel took the default route, "how do I reach the
-            // internet" answers "through the tunnel", and every host route built from it
-            // would point back into what it is meant to escape.
-            if (!ResolvePhysicalPath())
+        /// <summary>
+        /// Icons from Windows' own thumbnail of the executable, cached as PNG. The list is
+        /// on screen before they arrive.
+        /// </summary>
+        public async Task LoadIconsAsync(
+            IReadOnlyList<AppOrProcessEntry> entries, Action<AppOrProcessEntry> onReady, CancellationToken ct = default)
+        {
+            foreach (var entry in entries)
             {
-                Debug.WriteLine("[Horus] split: no physical gateway; steering disabled");
-                return;
-            }
+                if (ct.IsCancellationRequested) return;
+                if (entry.IconPath is not null) continue;
 
-            try
-            {
-                if (_mode == SplitTunnelingMode.Whitelist)
+                var path = entry.Path?.Split(" · ")[0];
+                if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
+
+                try
                 {
-                    _wfp = new WfpEngine();
-                    _wfp.Open();
-                    GuardRunningSelection();
+                    var icon = await ExeIcons.ExtractAsync(path, IconFile(path), ct);
+                    if (icon is null) continue;
+                    entry.IconPath = icon;
+                    onReady(entry);
                 }
-
-                _watcher = new ProcessFlowWatcher(OnFlow);
-                _watcher.Start();
-            }
-            catch (Exception ex)
-            {
-                // Half-configured is worse than off: a watcher with no guard, or a guard with
-                // no watcher, both send traffic somewhere nobody intended.
-                Debug.WriteLine($"[Horus] split: {ex.Message}");
-                await StopAsync();
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex) { Debug.WriteLine($"[Horus] icon {path}: {ex.Message}"); }
             }
         }
 
-        public async Task StopAsync()
+        // ── Helpers ──────────────────────────────────────────────────────────
+
+        private static SavedApp Describe(string exe)
         {
-            _watcher?.Dispose();
-            _watcher = null;
-
-            _wfp?.Dispose();
-            _wfp = null;
-
-            lock (_gate)
-            {
-                _guarded.Clear();
-                _pidPaths.Clear();
-            }
-
-            await RemoveSteeredRoutesAsync();
-        }
-
-        // ── Steering ─────────────────────────────────────────────────────────
-
-        private void OnFlow(FlowEvent flow)
-        {
-            // A host route for a LAN or loopback address would override the on-link route the
-            // machine already has, breaking the printer and the NAS in a way that outlives
-            // the VPN being switched off.
-            if (LocalNetworks.IsDirectRange(flow.Remote)) return;
-
-            var path = ResolveProcessPath(flow.ProcessId);
-            if (path is null) return;
-
-            var selected = _selected.Any(e =>
-                e.Equals(Path.GetFileName(path), StringComparison.OrdinalIgnoreCase));
-
-            // A selected app in Whitelist needs no route — it uses the default, which is the
-            // tunnel — but it does need the guard, and it may have started after Apply ran.
-            if (_mode == SplitTunnelingMode.Whitelist && selected)
-            {
-                Guard(path);
-                return;
-            }
-
-            // Blacklist steers what was picked; Whitelist steers everything that was not.
-            var wantsDirect = _mode == SplitTunnelingMode.Blacklist ? selected : !selected;
-            if (!wantsDirect) return;
-
-            _ = SteerAsync(flow.Remote);
-        }
-
-        private async Task SteerAsync(IPAddress destination)
-        {
-            var key = destination.ToString();
-
-            lock (_gate)
-            {
-                if (_steered.Count >= MaxSteeredRoutes) return;
-                if (!_steered.Add(key)) return;
-            }
-
-            try
-            {
-                await AppendJournalAsync(key);
-                await RunRouteAsync($"add {key} mask 255.255.255.255 {_gateway} metric 1 if {_ifIndex}");
-            }
-            catch (Exception ex)
-            {
-                lock (_gate) _steered.Remove(key);
-                Debug.WriteLine($"[Horus] split: route add {key}: {ex.Message}");
-            }
-        }
-
-        private async Task RemoveSteeredRoutesAsync()
-        {
-            string[] pending;
-            lock (_gate)
-            {
-                pending = [.. _steered];
-                _steered.Clear();
-            }
-
-            foreach (var key in pending)
-            {
-                try { await RunRouteAsync($"delete {key}"); }
-                catch (Exception ex) { Debug.WriteLine($"[Horus] split: route delete {key}: {ex.Message}"); }
-            }
-
-            TryDeleteJournal();
-        }
-
-        // ── Crash recovery ───────────────────────────────────────────────────
-
-        /// <summary>
-        /// Every steered destination is written down before its route is added, so a process
-        /// that dies mid-session leaves a list of what to undo. WFP needs nothing like this —
-        /// a dynamic session cleans itself up — but routes are ordinary system state and
-        /// nothing removes them on our behalf.
-        /// </summary>
-        private async Task AppendJournalAsync(string destination)
-        {
-            try { await File.AppendAllTextAsync(_routeJournal, destination + Environment.NewLine); }
-            catch (Exception ex) { Debug.WriteLine($"[Horus] split: journal: {ex.Message}"); }
-        }
-
-        private async Task SweepJournalAsync()
-        {
-            if (!File.Exists(_routeJournal)) return;
-
-            string[] lines;
-            try { lines = await File.ReadAllLinesAsync(_routeJournal); }
-            catch { return; }
-
-            foreach (var line in lines)
-            {
-                if (!IPAddress.TryParse(line.Trim(), out var ip)) continue;
-                try { await RunRouteAsync($"delete {ip}"); } catch { }
-            }
-
-            TryDeleteJournal();
-        }
-
-        private void TryDeleteJournal()
-        {
-            try { if (File.Exists(_routeJournal)) File.Delete(_routeJournal); }
-            catch { }
-        }
-
-        // ── Leak guard ───────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Blocks the selected applications on the <b>physical</b> interface, so a whitelisted
-        /// app cannot ride a host route installed for some other process. Without it the
-        /// per-destination nature of the routes would be a leak rather than an inconvenience.
-        /// </summary>
-        private void GuardRunningSelection()
-        {
+            // Called for a newly chosen entry: find the running process for its path, so the
+            // app can still be shown with an icon and a name once it has exited.
             foreach (var proc in Process.GetProcesses())
             {
                 try
                 {
                     var path = proc.MainModule?.FileName;
-                    if (path is null) continue;
-
-                    if (_selected.Any(e => e.Equals(Path.GetFileName(path), StringComparison.OrdinalIgnoreCase)))
-                        Guard(path);
+                    if (path is not null && System.IO.Path.GetFileName(path).Equals(exe, StringComparison.OrdinalIgnoreCase))
+                        return new SavedApp(System.IO.Path.GetFileName(path), path, FriendlyName(path));
                 }
-                catch { /* access denied is ordinary for system processes */ }
+                catch { }
                 finally { proc.Dispose(); }
             }
+            return new SavedApp(exe, null, null);
         }
 
-        private void Guard(string exePath)
+        /// <summary>The product's own name from the file's version resource ("Discord", not "Update").</summary>
+        private static string? FriendlyName(string path)
         {
-            if (_wfp is null) return;
-
-            lock (_gate)
+            try
             {
-                if (!_guarded.Add(exePath)) return;
+                var info = FileVersionInfo.GetVersionInfo(path);
+                var name = !string.IsNullOrWhiteSpace(info.FileDescription) ? info.FileDescription : info.ProductName;
+                return string.IsNullOrWhiteSpace(name) ? null : name.Trim();
             }
-
-            var alias = PhysicalAlias();
-            if (alias.Length == 0) return;
-
-            var luid = WfpEngine.LookupInterfaceLuid(alias);
-            if (luid is null) return;
-
-            try { _wfp.BlockApp(exePath, luid.Value); }
-            catch (Exception ex) { Debug.WriteLine($"[Horus] split: guard {exePath}: {ex.Message}"); }
+            catch { return null; }
         }
 
-        // ── Platform lookups ─────────────────────────────────────────────────
+        private static bool IsOwnProcess(string path) =>
+            string.Equals(path, Environment.ProcessPath, StringComparison.OrdinalIgnoreCase);
 
-        /// <summary>The next hop and interface currently carrying this machine to the internet.</summary>
-        private bool ResolvePhysicalPath()
+        private static bool IsSystemPath(string path) =>
+            path.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase);
+
+        private static string IconFile(string exePath)
         {
-            var route = new MibIpForwardRow();
-            var probe = BitConverter.ToUInt32(IPAddress.Parse("1.1.1.1").GetAddressBytes(), 0);
-
-            if (GetBestRoute(probe, 0, ref route) != 0) return false;
-
-            _gateway = new IPAddress(BitConverter.GetBytes(route.ForwardNextHop)).ToString();
-            _ifIndex = (int)route.ForwardIfIndex;
-            return _ifIndex != 0;
+            var hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(exePath.ToLowerInvariant())))[..16];
+            return System.IO.Path.Combine(FileSystem.CacheDirectory, "app-icons", hash + ".png");
         }
 
-        private string PhysicalAlias()
+        private static string? CachedIcon(string exePath)
         {
-            foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            var file = IconFile(exePath);
+            return File.Exists(file) ? file : null;
+        }
+
+        private void Persist()
+        {
+            string json;
+            lock (_gate) json = JsonSerializer.Serialize(_saved);
+            Write(AppsKey, json);
+        }
+
+        private static List<SavedApp> LoadSaved()
+        {
+            try
             {
-                if (nic.Name.Equals(TunAlias, StringComparison.OrdinalIgnoreCase)) continue;
-                try
-                {
-                    if (nic.GetIPProperties().GetIPv4Properties()?.Index == _ifIndex) return nic.Name;
-                }
-                catch { /* an adapter without IPv4 properties is simply not the one */ }
+                var json = Read(AppsKey, string.Empty);
+                return json.Length == 0 ? [] : JsonSerializer.Deserialize<List<SavedApp>>(json) ?? [];
             }
-
-            return string.Empty;
+            catch { return []; }
         }
 
-        /// <summary>
-        /// Image path for a pid, cached. The cache matters: the watcher fires on every
-        /// connection the machine makes, and opening a process handle per event would cost
-        /// more than the steering it feeds.
-        /// </summary>
-        private string? ResolveProcessPath(uint pid)
+        private static T Read<T>(string key, T fallback)
         {
-            lock (_gate)
-            {
-                if (_pidPaths.TryGetValue(pid, out var cached)) return cached;
-            }
-
-            string? path = null;
-            var handle = OpenProcess(ProcessQueryLimitedInformation, false, pid);
-
-            if (handle != IntPtr.Zero)
-            {
-                try
-                {
-                    var buffer = new StringBuilder(1024);
-                    var size = buffer.Capacity;
-                    if (QueryFullProcessImageName(handle, 0, buffer, ref size))
-                        path = buffer.ToString();
-                }
-                finally { CloseHandle(handle); }
-            }
-
-            lock (_gate)
-            {
-                // Failures are cached too: a process we cannot open will not become openable,
-                // and retrying on every connection it makes is pure cost.
-                _pidPaths[pid] = path;
-            }
-
-            return path;
+            try { return Preferences.Default.Get(key, fallback); } catch { return fallback; }
         }
 
-        private static bool IsSystemProcess(string? path)
+        private static void Write<T>(string key, T value)
         {
-            if (string.IsNullOrEmpty(path)) return true;
-            var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-            return path.StartsWith(winDir, StringComparison.OrdinalIgnoreCase);
+            try { Preferences.Default.Set(key, value); } catch (Exception ex) { Diag.Warn("split", $"not saved: {ex.Message}"); }
         }
-
-        private static async Task RunRouteAsync(string arguments)
-        {
-            using var proc = Process.Start(new ProcessStartInfo("route", arguments)
-            {
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            }) ?? throw new InvalidOperationException("route did not start");
-
-            await proc.WaitForExitAsync();
-        }
-
-        // ── Interop ──────────────────────────────────────────────────────────
-
-        private const uint ProcessQueryLimitedInformation = 0x1000;
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MibIpForwardRow
-        {
-            public uint ForwardDest, ForwardMask, ForwardPolicy, ForwardNextHop, ForwardIfIndex;
-            public uint ForwardType, ForwardProto, ForwardAge, ForwardNextHopAS;
-            public uint ForwardMetric1, ForwardMetric2, ForwardMetric3, ForwardMetric4, ForwardMetric5;
-        }
-
-        [DllImport("iphlpapi.dll")]
-        private static extern int GetBestRoute(uint dwDestAddr, uint dwSourceAddr, ref MibIpForwardRow pBestRoute);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr OpenProcess(uint access, [MarshalAs(UnmanagedType.Bool)] bool inherit, uint pid);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool CloseHandle(IntPtr handle);
-
-        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool QueryFullProcessImageName(
-            IntPtr process, uint flags, StringBuilder exeName, ref int size);
     }
 }
