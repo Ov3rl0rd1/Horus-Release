@@ -119,5 +119,9 @@ let `windows-tunnel` run against it. Fork changes go through `bash fork/bin/fork
 - `wintun.dll` must sit beside `Horus.exe`; the core loads it from the application directory.
 - WinRT `FileOpenPicker` fails in an elevated process — Horus is always elevated; use
   `GetOpenFileNameW` (`ExePicker`).
+- **No fixed sleeps in WinTunnelTest.** The first DNS lookups after the core starts take seconds
+  (the core's DoH client is created on first use and handshakes through the proxy); a check that
+  waited 3 s for curl failed once on a slow runner. Poll for the condition with a deadline, and
+  when it is not met, print why (exit code, stderr), not just "not seen".
 - A Windows UDP socket that receives ICMP port unreachable reports `WSAECONNRESET` on the next
   receive; anything that makes the TUN answer "unreachable" can look like a game disconnect.
