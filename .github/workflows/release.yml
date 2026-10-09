@@ -1,7 +1,15 @@
 name: Release
 
-# Manual only, always from main. Nothing here runs on push: releases are a deliberate act,
-# and the version and Android versionCode have to be chosen by a human anyway.
+# Manual only. Nothing here runs on push: releases are a deliberate act, and the version and
+# Android versionCode have to be chosen by a human anyway.
+#
+# Builds exactly the commit it was dispatched on (github.sha) — every job checks that commit
+# out, and the release tag points at it. GitHub always takes this file from the branch picked
+# in "Use workflow from", so checking out anything else lets the workflow and the code come
+# from two revisions: a run from dev once built main's code and then failed dev's payload
+# check ("Missing from the publish output: publish/win-x64/wintun.dll"). Run it from main for
+# a release; from any other branch the result is marked as a pre-release. The in-app updater
+# installs pre-releases too — the draft input is what keeps a build from users.
 on:
   workflow_dispatch:
     inputs:
@@ -42,7 +50,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
@@ -66,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -95,17 +103,10 @@ jobs:
           -p:ApplicationVersion=${{ inputs.version_code }}
           -o publish/win-x64
 
+      # The same script branch CI runs, so a branch that passed it publishes the same payload.
       - name: Sanity-check the payload
         shell: pwsh
-        run: |
-          $required = @(
-            'publish/win-x64/Horus.exe',
-            'publish/win-x64/xray.dll',
-            'publish/win-x64/wintun.dll'
-          )
-          $missing = $required | Where-Object { -not (Test-Path $_) }
-          if ($missing) { throw "Missing from the publish output:`n$($missing -join "`n")" }
-          Write-Host "payload OK - $((Get-ChildItem publish/win-x64 -Recurse -File).Count) files"
+        run: ./packaging/windows/check-payload.ps1 publish/win-x64
 
       # Before packaging, so the exe inside both the zip and the MSI is the signed one.
       # Skipped when the secrets are absent, which produces working but unsigned artifacts
@@ -154,7 +155,9 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.*
-          wix build -arch x64 `
+          # -pdbtype none: otherwise WiX writes a .wixpdb debug database beside the MSI, and
+          # `dist/*` shipped it as a release download (every release up to v0.10.0 has one).
+          wix build -arch x64 -pdbtype none `
             -d Version=${{ inputs.version }} `
             -d PublishDir="$(Resolve-Path publish/win-x64)" `
             packaging/windows/Horus.wxs `
@@ -209,7 +212,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -293,7 +296,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.sha }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -318,8 +321,8 @@ jobs:
           # whether the signing step ran, and the thumbprint file landing in staging is the
           # only evidence of that this job has.
           {
+            echo "Built from \`$GITHUB_REF_NAME\` at \`${GITHUB_SHA::8}\` by the Release workflow."
             cat <<'EOF'
-          Built from `main` by the Release workflow.
 
           **Windows (x64)** — install with the `.msi`, or unpack the portable `.zip`.
           Horus needs administrator rights to create its tunnel adapter and will ask for
@@ -350,8 +353,12 @@ jobs:
           } > notes.md
           cat notes.md
 
+          # A new tag is created at the commit that was built, not at a branch head that may
+          # have moved or be a different branch (an existing v<version> tag is reused as is —
+          # GitHub ignores --target then). Anything not built from main is a pre-release.
           gh release create "v${{ inputs.version }}" staging/* \
             --title "Horus ${{ inputs.version }}" \
             --notes-file notes.md \
-            --target main \
+            --target "$GITHUB_SHA" \
+            ${{ github.ref != 'refs/heads/main' && '--prerelease' || '' }} \
             ${{ inputs.draft && '--draft' || '' }}

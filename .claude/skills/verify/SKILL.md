@@ -23,12 +23,18 @@ the Windows head has its own controller and screens behind `IVpnController` and
 ## Branch CI
 
 `.github/workflows/branch-ci.yml` runs on every push to `claude/**` and `dev`: `tests`,
-`windows-typecheck`, `android` (build + warning codes), `windows` (MAUI build + payload check)
-and `windows-tunnel` (`tools/WinTunnelTest` on a real Windows runner — see the `windows-tunnel`
+`windows-typecheck`, `android` (build + warning codes), `windows` (MAUI Debug build, then a
+rehearsal of the release's Windows job: the same Release self-contained publish, the same
+`packaging/windows/check-payload.ps1`, the same MSI build) and `windows-tunnel` (`tools/WinTunnelTest` on a real Windows runner — see the `windows-tunnel`
 skill). A session without a Windows machine or the Android workload pushes and reads the jobs
 with the GitHub MCP tools (`actions_list` → `list_workflow_jobs` → `get_job_logs`). The
 `windows` job spends about eight of its ten minutes installing the workload; the type-check job
 answers "does it compile" first.
+
+`release.yml` builds **the commit it is dispatched from** and tags that commit; run it from
+`main` for a release, from anything else it publishes a pre-release. It used to check out `main`
+whatever the branch, so a run from `dev` checked dev's expectations against main's code and
+failed with "Missing from the publish output: publish/win-x64/wintun.dll".
 
 ## Baselines (09.10.2026, from CI)
 

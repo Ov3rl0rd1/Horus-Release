@@ -44,9 +44,11 @@ dotnet publish Horus/Horus.csproj -f net10.0-android -c Release \
   -p:HorusDistribution=true -p:ApplicationVersion=<N> -p:ApplicationDisplayVersion=0.9.<N>
 ```
 
-Releases go through the standard .NET CLI (`release.yml` is manual). Working branches
-(`claude/**`, `dev`) get `branch-ci.yml`: tests, a Windows type-check on Linux, the Android and
-Windows builds, and an end-to-end tunnel test on a hosted Windows runner. The solution file is
+Releases are `release.yml`, run by hand; it builds and tags exactly the commit it is
+dispatched from — `main` for a release, any other branch yields a pre-release. Working branches
+(`claude/**`, `dev`) get `branch-ci.yml`: tests, a Windows type-check on Linux, the Android build,
+the Windows build plus a rehearsal of the release's Windows job (publish, payload check, MSI), and
+an end-to-end tunnel test on a hosted Windows runner. The solution file is
 `Horus.slnx`. Expected baselines and what each test contract guards: see the `verify` skill.
 
 Distribution is **direct APK**, never `.aab`. The app id `com.horus.vpn` is *not* structurally
