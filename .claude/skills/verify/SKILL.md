@@ -5,29 +5,39 @@ description: Build and static-test Horus after a change — correct target frame
 
 # Verifying a change to Horus
 
-No CI exists. This is the whole safety net, so run it before calling anything finished.
+Run it before calling anything finished.
 
-## The four commands
+## The commands
 
 ```bash
-dotnet build Horus/Horus.csproj -f net10.0-android -c Debug
-dotnet build Horus/Horus.csproj -f net10.0-android -c Release
-dotnet build Horus/Horus.csproj -f net10.0-windows10.0.19041.0 -c Debug
 dotnet test Horus.Tests/Horus.Tests.csproj
+dotnet build tools/WinUiTypeCheck/WinUiTypeCheck.csproj      # Windows C#, on any OS, ~1 min
+dotnet build Horus/Horus.csproj -f net10.0-android -c Debug
+dotnet build Horus/Horus.csproj -f net10.0-windows10.0.19041.0 -c Debug   # Windows only
 ```
 
-Android alone is not enough: `Protocols/` and `Application/` are shared, and the Windows host
-is the one that breaks silently — it uses the same `HevTunnelConfig` generator through a
-different hosting model.
+Android alone is not enough: `Application/`, `Presentation/` and `Protocols/` are shared, and
+the Windows head has its own controller and screens behind `IVpnController` and
+`IPlatformScreens`. A change on one side must compile on the other.
 
-## Baselines (23.08.2026)
+## Branch CI
+
+`.github/workflows/branch-ci.yml` runs on every push to `claude/**` and `dev`: `tests`,
+`windows-typecheck`, `android` (build + warning codes), `windows` (MAUI build + payload check)
+and `windows-tunnel` (`tools/WinTunnelTest` on a real Windows runner — see the `windows-tunnel`
+skill). A session without a Windows machine or the Android workload pushes and reads the jobs
+with the GitHub MCP tools (`actions_list` → `list_workflow_jobs` → `get_job_logs`). The
+`windows` job spends about eight of its ten minutes installing the workload; the type-check job
+answers "does it compile" first.
+
+## Baselines (09.10.2026, from CI)
 
 | target | expected |
 |---|---|
-| Android Debug | 34 warnings, 0 errors |
-| Android Release | 35 warnings, 0 errors |
+| Android Debug | 39 warnings, 0 errors |
 | Windows Debug | 129 warnings, 0 errors |
-| tests | **143 passed**, 0 failed |
+| WinUiTypeCheck | builds, warnings are the shared MVVM-toolkit ones |
+| tests | **351 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed |
 
 The counts are noisy by design (obsolete MAUI `Frame`, `CA1416` platform-availability,
 `CS0067` unused events on the stub services). What matters is that no **new kind** appears —
@@ -52,7 +62,17 @@ not one — it is the wrong TFM. `Horus.csproj:14-16` is the source of truth.
 
 - `SocksPortContractTests` — the SOCKS port chosen by `SocksPortAllocator` must match what
   `HevTunnelConfig.Build` writes into the bridge YAML, across the allocator's whole range, and
-  neither host may re-inline its own copy. A mismatch produces a tunnel that carries nothing.
+  Android may not re-inline its own copy. A mismatch produces a tunnel that carries nothing.
+  Windows has no bridge at all, and a test keeps it that way.
+- `WindowsTunnelConfigTests` — the config the Windows core runs: TUN inbound, DNS hijack,
+  lead routing rules, process matchers for split tunnelling.
+- `NetworkPathTests`, `ProxyStallDetectorTests` — which network events and which traffic
+  patterns the Windows controller may act on. Acting on the wrong one resets sessions.
+- `AppTrafficTests`, `WindowsTelemetryTests` — the applications screen's per-app routes and
+  "needs restart" rule; the home graph's axis and window; the node ping (a closed port's
+  silence is not loss); the server-ping hook.
+- `PlatformSeparationTests` — Windows-only hooks (`IPlatformScreens`, `LatencyProbe.Connector`)
+  are filled only under `#if WINDOWS`, so Android keeps the shared UI and default behaviour.
 - `HevLogCapContractTests` — the `log-max-size` key the patched bridge expects.
 - `ConnectResponseTests` — the shape of `GET /servers/connect`.
 
@@ -68,14 +88,16 @@ confusing "type not found" in code you did not touch.
 Neither library is built by `dotnet build`; both are committed binaries under
 `Horus/Platforms/Android/lib/<abi>/` and `Horus/Platforms/Windows/bin/`.
 
-- **hev-socks5-tunnel**: `packaging/android/build-hev.ps1` (needs `ANDROID_NDK_HOME`, currently
+- **hev-socks5-tunnel** (Android only): `packaging/android/build-hev.ps1` (needs `ANDROID_NDK_HOME`, currently
   `E:\NVPACK\android-ndk-r27d`). Clones upstream at a pinned commit, applies everything in
   `packaging/android/hev-patches/` in filename order, drops `src/hev-jni.c`, builds arm64-v8a
   and x86_64 only, and asserts every expected symbol is in the output. If a patch stops
   applying, that is the intended signal to re-read it against the new upstream — do not
   `--whitespace=fix` around it.
 - **xray-core**: separate repo at `C:\X-ray-custom\Xray-core-RTC`, built by its own GitHub
-  Actions workflow `.github/workflows/build-lib.yml` (arm64-v8a, x86_64, windows/x64).
+  Actions workflow `.github/workflows/build-lib.yml` (arm64-v8a, x86_64, windows/x64). The
+  Windows `xray.dll` can also be cross-built on Linux with mingw (`windows-tunnel` skill); the
+  fork commit it came from is recorded in `Horus/Platforms/Windows/bin/README.md`.
 
 A patch that applies cleanly still may not compile. Build it before claiming it works — a
 `git diff`-generated hunk can swallow an adjacent line and produce valid-looking, invalid C.

@@ -26,6 +26,18 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - run: dotnet test Horus.Tests/Horus.Tests.csproj -c Release
 
+  # The Windows head's C# against MAUI's reference assemblies, on Linux, in about a minute —
+  # the first answer to "does it compile" while the real Windows build below installs its
+  # workload. See tools/WinUiTypeCheck/WinUiTypeCheck.csproj for what it does not cover.
+  windows-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - run: dotnet build tools/WinUiTypeCheck/WinUiTypeCheck.csproj -c Release
+
   android:
     runs-on: ubuntu-latest
     steps:

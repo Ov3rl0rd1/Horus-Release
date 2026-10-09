@@ -219,7 +219,7 @@ namespace Horus.Platforms.Windows
         public async Task<string?> IconForAsync(string exePath, CancellationToken ct = default)
         {
             if (CachedIcon(exePath) is { } cached) return cached;
-            if (!File.Exists(exePath)) return null;
+            if (!File.Exists(exePath) || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return null;
             try { return await ExeIcons.ExtractAsync(exePath, IconFile(exePath), ct); }
             catch (OperationCanceledException) { return null; }
             catch (Exception ex) { Debug.WriteLine($"[Horus] icon {exePath}: {ex.Message}"); return null; }
@@ -247,6 +247,8 @@ namespace Horus.Platforms.Windows
                 var path = entry.Path?.Split(" · ")[0];
                 if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
 
+                // The thumbnail API is Windows 10 1809+; older systems simply get no icons.
+                if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) return;
                 try
                 {
                     var icon = await ExeIcons.ExtractAsync(path, IconFile(path), ct);
