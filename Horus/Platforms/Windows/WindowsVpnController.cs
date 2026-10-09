@@ -112,6 +112,11 @@ namespace Horus.Platforms.Windows
 
             StateSnapshot.Register("vpn", 10, Describe);
             _network.Start();
+
+            // Server pings leave by the physical interface: through the TUN they would time
+            // the core's local handshake, about 1 ms for every server.
+            LatencyProbe.Connector = (host, port, ct) => PhysicalProbe.ConnectAsync(
+                host, port, _network.CurrentPath?.InterfaceIndex ?? 0, LatencyProbe.Timeout, refusedIsAnswer: false, ct);
         }
 
         public VpnState State { get; private set; } = VpnState.Disconnected;
@@ -121,6 +126,26 @@ namespace Horus.Platforms.Windows
 
         public event EventHandler<VpnStateChangedEventArgs>? StateChanged;
         public event EventHandler<ConnectionErrorEventArgs>? ConnectionError;
+
+        /// <summary>
+        /// The node the core is connected to, as an address and port — what the latency
+        /// probe dials. Null when disconnected, or for an offer with no node address
+        /// (olcRTC reaches a signalling provider instead).
+        /// </summary>
+        public (string Host, int Port)? NodeEndpoint
+        {
+            get
+            {
+                if (State != VpnState.Connected || _session?.Config is not { NodeAddress: { } host } config) return null;
+                var settings = config.Outbound["settings"];
+                var port = settings?["vnext"]?[0]?["port"] ?? settings?["servers"]?[0]?["port"] ?? settings?["port"];
+                // ToString rather than GetValue: a profile may write the port as a string.
+                return (host, int.TryParse(port?.ToString(), out var p) && p is > 0 and < 65536 ? p : 443);
+            }
+        }
+
+        /// <summary>The path the core's sockets are pinned to.</summary>
+        public NetworkPath? Path => _network.CurrentPath;
 
         private bool WantsConnection => _userWantsConnection && VpnIntent.Active;
 

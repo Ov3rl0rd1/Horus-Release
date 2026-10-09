@@ -179,6 +179,52 @@ namespace Horus.Platforms.Windows
             return Task.CompletedTask;
         }
 
+        /// <summary>
+        /// Chooses or un-chooses one application and applies the rule at once. Unlike
+        /// <see cref="SetSelectedEntriesAsync"/> it needs no process scan: the entry already
+        /// carries the path and name the saved record keeps.
+        /// </summary>
+        public void SetChosen(string exe, string? path, string? name, bool chosen)
+        {
+            lock (_gate)
+            {
+                var existing = _saved.FindIndex(a => a.Exe.Equals(exe, StringComparison.OrdinalIgnoreCase));
+                if (chosen && existing < 0) _saved.Add(new SavedApp(exe, path, name));
+                else if (!chosen && existing >= 0) _saved.RemoveAt(existing);
+                else return;
+            }
+            Persist();
+            Diag.User("split", $"{(chosen ? "chose" : "dropped")} {exe}");
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+            RulesChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>Chooses an application by its executable — for one that is not running, or has never run.</summary>
+        public SavedApp Add(string exePath)
+        {
+            var app = new SavedApp(System.IO.Path.GetFileName(exePath), exePath, FriendlyName(exePath));
+            lock (_gate)
+            {
+                _saved.RemoveAll(a => a.Exe.Equals(app.Exe, StringComparison.OrdinalIgnoreCase));
+                _saved.Add(app);
+            }
+            Persist();
+            Diag.User("split", $"added {app.Exe}");
+            SelectionChanged?.Invoke(this, EventArgs.Empty);
+            RulesChanged?.Invoke(this, EventArgs.Empty);
+            return app;
+        }
+
+        /// <summary>The icon file for an executable, extracting it on first use; null if Windows has none.</summary>
+        public async Task<string?> IconForAsync(string exePath, CancellationToken ct = default)
+        {
+            if (CachedIcon(exePath) is { } cached) return cached;
+            if (!File.Exists(exePath)) return null;
+            try { return await ExeIcons.ExtractAsync(exePath, IconFile(exePath), ct); }
+            catch (OperationCanceledException) { return null; }
+            catch (Exception ex) { Debug.WriteLine($"[Horus] icon {exePath}: {ex.Message}"); return null; }
+        }
+
         /// <summary>Asks for the current rules to be applied; the controller reloads the core's routing.</summary>
         public Task ApplyAsync()
         {

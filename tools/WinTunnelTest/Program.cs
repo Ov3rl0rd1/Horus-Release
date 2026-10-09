@@ -114,6 +114,17 @@ async Task<(bool Ok, string Detail)> GetAsync(string url)
 var viaTun = await GetAsync("https://www.gstatic.com/generate_204");
 Check("HTTPS through the TUN", viaTun.Ok, viaTun.Detail);
 
+// ── Latency probes leave by the physical interface ───────────────────────────
+// 192.0.2.1 (TEST-NET-1) never answers. Through the TUN the core's stack completes the
+// handshake itself before dialling anything, so an unpinned probe "answers" at once — the
+// ~1 ms every server showed in the list while connected. Pinned, it must time out.
+var unpinned = await PhysicalProbe.ConnectAsync("192.0.2.1", 443, 0, TimeSpan.FromSeconds(3), false, default);
+var pinned = await PhysicalProbe.ConnectAsync("192.0.2.1", 443, path?.InterfaceIndex ?? 0, TimeSpan.FromSeconds(3), false, default);
+Check("an unpinned probe is answered by the TUN itself (what the pin is for)", unpinned is not null,
+    unpinned is null ? "no answer" : $"{unpinned} ms");
+Check("a probe pinned to the physical interface is not", path is not null && pinned is null,
+    pinned is null ? "no answer, as it should" : $"answered in {pinned} ms");
+
 var monitor = new WindowsConnectionMonitor();
 var mine = Path.GetFileName(Environment.ProcessPath!);
 

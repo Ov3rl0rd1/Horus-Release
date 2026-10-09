@@ -12,5 +12,9 @@ namespace Horus.Domain.Models
         {
             lock (Lines) Lines.Add($"{category}: {message}");
         }
+
+        public static void Trace(string category, string message, string? detail = null) => Info(category, message);
+
+        public static void Warn(string category, string message, string? detail = null) => Info(category, message);
     }
 }

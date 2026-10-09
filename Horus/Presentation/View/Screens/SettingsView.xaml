@@ -12,8 +12,12 @@
 
             <Label Text="Настройки" Style="{StaticResource HzDisplay}" FontSize="20" />
 
+            <!-- A platform's own connection section (Windows: its tunnel and gaming options),
+                 shown in place of the shared one below. Empty on Android. -->
+            <ContentView x:Name="PlatformSectionHost" />
+
             <!-- СОЕДИНЕНИЕ -->
-            <VerticalStackLayout Spacing="6">
+            <VerticalStackLayout x:Name="SharedConnectionSection" Spacing="6">
                 <Label Text="СОЕДИНЕНИЕ" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
                 <Border Style="{StaticResource HzListCard}">
                     <VerticalStackLayout Spacing="0">

@@ -49,6 +49,17 @@ namespace Horus.Application
         public static readonly TimeSpan BatchTimeout = TimeSpan.FromSeconds(6);
 
         /// <summary>
+        /// A platform's own dial in place of the default one; null everywhere but Windows.
+        ///
+        /// <para>Windows needs it because its tunnel's TUN stack completes a TCP handshake
+        /// locally, so while connected an ordinary probe "answers" in about a millisecond for
+        /// every node. Its connector pins the socket to the physical interface instead.
+        /// Same contract as the default: milliseconds, or null for no answer, within
+        /// <see cref="Timeout"/>.</para>
+        /// </summary>
+        public static Func<string, int, CancellationToken, Task<int?>>? Connector { get; set; }
+
+        /// <summary>
         /// Fills <see cref="ServerInfo.PingMs"/> on every candidate, in place, and returns
         /// them sorted fastest-first with unreachable nodes last.
         ///
@@ -101,7 +112,8 @@ namespace Horus.Application
             {
                 if (ct.IsCancellationRequested) return;
 
-                var ms = await ConnectAsync(server.Host, port, ct).ConfigureAwait(false);
+                var ms = await (Connector?.Invoke(server.Host, port, ct) ?? ConnectAsync(server.Host, port, ct))
+                    .ConfigureAwait(false);
                 if (ms is null) continue;
 
                 server.PingMs = ms;

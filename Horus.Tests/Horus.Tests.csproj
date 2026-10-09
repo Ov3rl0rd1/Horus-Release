@@ -92,6 +92,16 @@
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\WindowsTunnelConfig.cs" Link="Linked\Windows\WindowsTunnelConfig.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\NetworkPath.cs" Link="Linked\Windows\NetworkPath.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\ProxyStallDetector.cs" Link="Linked\Windows\ProxyStallDetector.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppTraffic.cs" Link="Linked\Windows\AppTraffic.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppRoutePolicy.cs" Link="Linked\Windows\AppRoutePolicy.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\NodeLatencyMonitor.cs" Link="Linked\Windows\NodeLatencyMonitor.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\PhysicalProbe.cs" Link="Linked\Windows\PhysicalProbe.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Views\TrafficHistory.cs" Link="Linked\Windows\TrafficHistory.cs" />
+  </ItemGroup>
+
+  <!-- The server latency sweep, with the hook through which Windows pins it to the physical interface. -->
+  <ItemGroup>
+    <Compile Include="..\Horus\Application\LatencyProbe.cs" Link="Linked\LatencyProbe.cs" />
   </ItemGroup>
 
 </Project>

@@ -96,6 +96,14 @@ namespace Horus
             services
                 .AddSingleton<Platforms.Windows.Tunnel.WindowsConnectionMonitor>()
                 .AddSingleton<IVpnController, WindowsVpnController>();
+
+            // Windows' own screens (home, applications, its settings section). The root page
+            // takes them when registered; nothing is registered elsewhere, so Android keeps
+            // the shared screens unchanged.
+            services
+                .AddSingleton<Platforms.Windows.Views.HomeTelemetry>()
+                .AddSingleton<Platforms.Windows.Views.AppsViewModel>()
+                .AddSingleton<IPlatformScreens, Platforms.Windows.Views.WindowsScreens>();
 #else
             services
                 .AddSingleton<VpnManager>()

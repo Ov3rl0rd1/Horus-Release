@@ -25,6 +25,9 @@ namespace Horus.Presentation.Navigation
         Home,
         Servers,
         Settings,
-        Split
+        Split,
+
+        /// <summary>Per-application routing and live connections. Windows only.</summary>
+        Apps
     }
 }

@@ -10,12 +10,14 @@ namespace Horus.Platforms.Windows.Tunnel
     /// <param name="Other">DNS, blocked, or not yet routed.</param>
     /// <param name="ConnectionIds">What to close to make the application reconnect under the current rules.</param>
     /// <param name="Targets">A few destinations, for the user to recognise the traffic by.</param>
+    /// <param name="OldestStartedMs">When the oldest open connection started (Unix ms); 0 if unknown.</param>
     public sealed record AppTraffic(
         string Name, string? Path, IReadOnlyList<int> Pids,
         int ViaVpn, int Direct, int Other,
         long Up, long Down,
         IReadOnlyList<ulong> ConnectionIds,
-        IReadOnlyList<string> Targets)
+        IReadOnlyList<string> Targets,
+        long OldestStartedMs = 0)
     {
         public int Total => ViaVpn + Direct + Other;
 
@@ -64,6 +66,7 @@ namespace Horus.Platforms.Windows.Tunnel
                 acc.Up += c.Up;
                 acc.Down += c.Down;
                 acc.Ids.Add(c.Id);
+                if (c.StartedMs > 0 && (acc.Oldest == 0 || c.StartedMs < acc.Oldest)) acc.Oldest = c.StartedMs;
 
                 var target = HostOf(c.Target ?? c.Destination);
                 if (acc.Targets.Count < MaxTargets && target.Length > 0 && !acc.Targets.Contains(target))
@@ -72,7 +75,7 @@ namespace Horus.Platforms.Windows.Tunnel
 
             return groups.Values
                 .Select(a => new AppTraffic(a.Name, a.Path, [.. a.Pids.Order()], a.Vpn, a.Direct, a.Other,
-                    a.Up, a.Down, a.Ids, a.Targets))
+                    a.Up, a.Down, a.Ids, a.Targets, a.Oldest))
                 // The busiest first: that is what someone checking "is my game on the VPN" is
                 // looking at. Unknown owners last, they cannot be acted on.
                 .OrderBy(a => a.Name == Unknown)
@@ -101,7 +104,7 @@ namespace Horus.Platforms.Windows.Tunnel
             public List<ulong> Ids { get; } = [];
             public List<string> Targets { get; } = [];
             public int Vpn, Direct, Other;
-            public long Up, Down;
+            public long Up, Down, Oldest;
         }
     }
 }
