@@ -137,24 +137,40 @@ var keep = Task.Run(async () =>
 await Task.Delay(2500);
 
 // ── The process rule: curl goes direct, we go through the proxy ──────────────
+// -S keeps curl's own error text: a curl that fails (DNS, connect) must say why, not just
+// be absent from the listing.
 var curl = Process.Start(new ProcessStartInfo("curl.exe",
-    "-s -o NUL --limit-rate 40k https://speed.cloudflare.com/__down?bytes=2000000")
-{ UseShellExecute = false, CreateNoWindow = true })!;
-await Task.Delay(3000);
+    "-sS -o NUL --limit-rate 40k https://speed.cloudflare.com/__down?bytes=2000000")
+{ UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true })!;
+var curlErr = curl.StandardError.ReadToEndAsync();
 
-var apps = monitor.Snapshot();
+// Wait for curl's connection to show rather than for a fixed time: its first DNS lookup goes
+// through the freshly started tunnel, and one run on a slow runner took longer than 3 s.
+var curlClock = Stopwatch.StartNew();
+IReadOnlyList<AppTraffic> apps;
+AppTraffic? curlRow;
+while (true)
+{
+    apps = monitor.Snapshot();
+    curlRow = apps.FirstOrDefault(a => a.Name.Equals("curl.exe", StringComparison.OrdinalIgnoreCase));
+    if (curlRow is { Down: > 10_000 } || curl.HasExited || curlClock.Elapsed > TimeSpan.FromSeconds(15)) break;
+    await Task.Delay(500);
+}
 foreach (var a in apps.Take(8))
     Console.WriteLine($"   {a.Name,-22} vpn {a.ViaVpn,3}  direct {a.Direct,3}  other {a.Other,3}  up {a.Up,10}  down {a.Down,10}  {string.Join(", ", a.Targets)}");
 
-var curlRow = apps.FirstOrDefault(a => a.Name.Equals("curl.exe", StringComparison.OrdinalIgnoreCase));
+var curlState = curl.HasExited
+    ? $"curl exited {curl.ExitCode}: {(await curlErr).Trim()}"
+    : $"after {curlClock.ElapsedMilliseconds} ms";
 var ourRow = apps.FirstOrDefault(a => a.Name.Equals(mine, StringComparison.OrdinalIgnoreCase));
 Check("connections are attributed to processes", ourRow is not null && curlRow is not null,
     $"{apps.Count} app(s): {string.Join(", ", apps.Select(a => a.Name))}");
 Check("curl.exe routed direct by the process rule", curlRow is { Direct: > 0, ViaVpn: 0 },
-    curlRow is null ? "not seen" : $"vpn {curlRow.ViaVpn}, direct {curlRow.Direct}");
+    curlRow is null ? $"not seen; {curlState}" : $"vpn {curlRow.ViaVpn}, direct {curlRow.Direct}, {curlState}");
 Check("our own traffic routed through the proxy", ourRow is { ViaVpn: > 0, Direct: 0 },
     ourRow is null ? "not seen" : $"vpn {ourRow.ViaVpn}, direct {ourRow.Direct}");
-Check("direct traffic flows (outbound binding holds)", curlRow is { Down: > 10_000 }, curlRow is null ? "" : $"{curlRow.Down} bytes back");
+Check("direct traffic flows (outbound binding holds)", curlRow is { Down: > 10_000 },
+    curlRow is null ? curlState : $"{curlRow.Down} bytes back");
 
 // ── DNS through the TUN's resolver ───────────────────────────────────────────
 var a1 = Shell("powershell", $"-NoProfile -Command \"(Resolve-DnsName example.com -Type A -Server {WindowsTunnelConfig.DnsAddress} -DnsOnly -ErrorAction Stop).IPAddress\"");
