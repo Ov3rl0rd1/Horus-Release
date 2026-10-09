@@ -8,7 +8,8 @@ name: Release
 # in "Use workflow from", so checking out anything else lets the workflow and the code come
 # from two revisions: a run from dev once built main's code and then failed dev's payload
 # check ("Missing from the publish output: publish/win-x64/wintun.dll"). Run it from main for
-# a release; from any other branch the result is marked as a pre-release.
+# a release; from any other branch the result is marked as a pre-release. The in-app updater
+# installs pre-releases too — the draft input is what keeps a build from users.
 on:
   workflow_dispatch:
     inputs:
@@ -154,7 +155,9 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.*
-          wix build -arch x64 `
+          # -pdbtype none: otherwise WiX writes a .wixpdb debug database beside the MSI, and
+          # `dist/*` shipped it as a release download (every release up to v0.10.0 has one).
+          wix build -arch x64 -pdbtype none `
             -d Version=${{ inputs.version }} `
             -d PublishDir="$(Resolve-Path publish/win-x64)" `
             packaging/windows/Horus.wxs `
@@ -350,9 +353,9 @@ jobs:
           } > notes.md
           cat notes.md
 
-          # Tagged at the commit that was built, not at a branch head that may have moved —
-          # or be a different branch altogether. Anything not built from main is a
-          # pre-release, so it never shows as the latest version.
+          # A new tag is created at the commit that was built, not at a branch head that may
+          # have moved or be a different branch (an existing v<version> tag is reused as is —
+          # GitHub ignores --target then). Anything not built from main is a pre-release.
           gh release create "v${{ inputs.version }}" staging/* \
             --title "Horus ${{ inputs.version }}" \
             --notes-file notes.md \

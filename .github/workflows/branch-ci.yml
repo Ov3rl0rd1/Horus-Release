@@ -2,7 +2,7 @@ name: Branch CI
 
 # Builds both heads and runs the tests on working branches, so a change to shared code is
 # known to compile for the platform its author could not build locally. Nothing is
-# published; releases stay in release.yml, manual and from main.
+# published; releases are release.yml, run by hand (from main for a release).
 on:
   push:
     branches: ['claude/**', 'dev']
@@ -102,12 +102,15 @@ jobs:
         shell: pwsh
         run: |
           dotnet tool install --global wix --version 5.*
-          wix build -arch x64 `
+          wix build -arch x64 -pdbtype none `
             -d Version=0.9.0 `
             -d PublishDir="$(Resolve-Path publish/win-x64)" `
             packaging/windows/Horus.wxs `
             -o dist/Horus-rehearsal-win-x64.msi
           Write-Host "MSI $((Get-Item dist/Horus-rehearsal-win-x64.msi).Length) bytes"
+          # The release uploads dist/* as downloads; only the installer belongs there.
+          $extra = Get-ChildItem dist | Where-Object Name -ne 'Horus-rehearsal-win-x64.msi'
+          if ($extra) { throw "unexpected files beside the MSI: $($extra.Name -join ', ')" }
 
   # The tunnel itself, on real Windows: wintun adapter, traffic through the proxy,
   # per-process routing, DNS through the TUN, live reload and swap, stop/start under load.
