@@ -6,7 +6,9 @@
 // outbound binding, because with the default route in the TUN a direct socket that was not
 // pinned to the physical interface would loop; DNS through the TUN's resolver answers both
 // A and SRV; rules reload and outbounds swap without a restart; and the core survives being
-// stopped and started under load (the wintun session teardown patched in the fork).
+// stopped and started under load (the wintun session teardown patched in the fork); a dead
+// proxy fails the client's probe; and the adapter comes up when its usual identity is
+// still held by another device (the fork's fork_open_windows.go).
 //
 // Run elevated: `dotnet run -c Release` from tools/WinTunnelTest. Exit code = failures.
 // The "node" is a second copy of this program (`server` mode) hosting the core as a VLESS
@@ -15,7 +17,9 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json.Nodes;
 using Horus.Domain.Models;
 using Horus.Platforms.Windows.Tunnel;
@@ -87,6 +91,9 @@ try { XrayInterop.Start(runJson); Check("core started with the TUN", true, $"{sw
 catch (Exception ex) { Check("core started with the TUN", false, ex.Message); Finish(); return failures; }
 
 Check("adapter up", await WaitAdapterAsync(TimeSpan.FromSeconds(15)), $"{sw.ElapsedMilliseconds} ms after start");
+// md5 of the name, as upstream derives it: an installation keeps the adapter (and the network
+// profile) it had before the fork learnt to pick another identity.
+Check("the adapter has upstream's identity", AdapterGuid() == Identity(0), IdentityName(AdapterGuid()));
 Console.WriteLine(Shell("powershell", "-NoProfile -Command \"Get-NetRoute -InterfaceAlias Horus -ErrorAction SilentlyContinue | Format-Table -AutoSize DestinationPrefix,RouteMetric,ifIndex | Out-String -Width 200\""));
 Console.WriteLine(Shell("powershell", "-NoProfile -Command \"Get-DnsClientServerAddress -InterfaceAlias Horus | Format-Table -AutoSize | Out-String -Width 200\""));
 
@@ -205,6 +212,23 @@ var afterSwap = await GetAsync("https://www.gstatic.com/generate_204");
 Check("traffic flows after the swap", afterSwap.Ok, afterSwap.Detail);
 Check("adapter survived reload and swap", AdapterUp());
 
+// ── A dead proxy is told apart from a live one ───────────────────────────────
+// The client's probe goes through the core's SOCKS inbound, which the Windows config always
+// routes to the proxy. xray answers a SOCKS CONNECT before its outbound has dialled anything,
+// so only a request that comes back means something: the reply alone passed a dead Hysteria2
+// in the field.
+var live = await SocksRoundTrip.AnyCarriesAsync(SocksPort, SocksRoundTrip.DefaultTargets, TimeSpan.FromSeconds(10), default);
+Check("a round trip through the live proxy answers", live);
+var deadProxy = $$"""{ "tag": "proxy", "protocol": "vless", "settings": { "vnext": [ { "address": "127.0.0.1", "port": 1, "users": [ { "id": "{{Uuid}}", "encryption": "none" } ] } ] }, "streamSettings": { "network": "tcp" } }""";
+var toDead = XrayLive.ReplaceOutbound(deadProxy);
+var replyOnly = await SocksProbe.CanDialAsync(SocksPort, "cp.cloudflare.com", 80, TimeSpan.FromSeconds(5), default);
+var deadAnswers = await SocksRoundTrip.AnyCarriesAsync(SocksPort, SocksRoundTrip.DefaultTargets, TimeSpan.FromSeconds(6), default);
+Check("a dead proxy fails the round trip", toDead == XrayLive.Result.Ok && !deadAnswers,
+    $"swap {toDead}; the SOCKS reply alone said {(replyOnly ? "succeeded" : "failed")}");
+var back = XrayLive.ReplaceOutbound(WindowsTunnelConfig.OutboundOf(whitelistUs)!);
+var afterBack = await GetAsync("https://www.gstatic.com/generate_204");
+Check("the live proxy swaps back", back == XrayLive.Result.Ok && afterBack.Ok, afterBack.Detail);
+
 // ── Stop and start under load ────────────────────────────────────────────────
 var load = new CancellationTokenSource();
 var loadTask = Task.Run(async () =>
@@ -219,6 +243,7 @@ var proc = Process.GetCurrentProcess();
 var handlesBefore = proc.HandleCount;
 var worstStop = 0L;
 var cycleFailures = 0;
+var identities = new List<string>();
 for (var i = 1; i <= 12; i++)
 {
     var t = Stopwatch.StartNew();
@@ -226,6 +251,7 @@ for (var i = 1; i <= 12; i++)
     worstStop = Math.Max(worstStop, t.ElapsedMilliseconds);
     try { XrayInterop.Start(runJson); } catch (Exception ex) { cycleFailures++; Console.WriteLine($"   cycle {i}: start failed: {ex.Message}"); continue; }
     if (!await WaitAdapterAsync(TimeSpan.FromSeconds(15))) { cycleFailures++; Console.WriteLine($"   cycle {i}: adapter did not come back"); continue; }
+    identities.Add(IdentityName(AdapterGuid()));
     var probe = await GetAsync("https://www.gstatic.com/generate_204");
     if (!probe.Ok) { cycleFailures++; Console.WriteLine($"   cycle {i}: {probe.Detail}"); }
 }
@@ -235,6 +261,36 @@ proc.Refresh();
 Check("12 stop/start cycles under load", cycleFailures == 0, $"{cycleFailures} failed, slowest stop {worstStop} ms");
 Check("stop never hangs", worstStop < 5000, $"{worstStop} ms");
 Console.WriteLine($"   handles {handlesBefore} -> {proc.HandleCount}, private {proc.PrivateMemorySize64 >> 20} MB");
+// A closed adapter's device is removed by the time the next one is created on a healthy
+// machine, so the fork's fallback must not kick in here: every cycle on identity 0.
+Check("restarts keep the same identity", identities.Count > 0 && identities.All(x => x == "identity 0"),
+    string.Join(", ", identities.GroupBy(x => x).Select(g => $"{g.Key} x{g.Count()}")));
+
+// ── An identity still held by a device is passed over ────────────────────────
+// What a user hit: the previous adapter's device not yet gone, the same GUID asked for again,
+// wintun waiting 15 s and failing with "problem code 0x1F" on every retry. A second adapter
+// holding identity 0 stands in for the device that would not go.
+XrayInterop.Stop();
+var hold = Native.CreateWintun("HorusHold", Identity(0));
+Check("a stand-in device holds identity 0", hold != IntPtr.Zero, hold == IntPtr.Zero ? $"error {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}" : "");
+var heldClock = Stopwatch.StartNew();
+string? heldErr = null;
+try { XrayInterop.Start(runJson); } catch (Exception ex) { heldErr = ex.Message; }
+var heldUp = heldErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+var heldIdentity = AdapterGuid();
+Check("the TUN comes up beside it under another identity",
+    heldUp && heldIdentity is not null && heldIdentity != Identity(0),
+    $"{IdentityName(heldIdentity)} after {heldClock.ElapsedMilliseconds} ms{(heldErr is null ? "" : "; " + heldErr)}");
+Check("without wintun's 15 s wait", heldUp && heldClock.Elapsed < TimeSpan.FromSeconds(10), $"{heldClock.ElapsedMilliseconds} ms");
+var heldTraffic = await GetAsync("https://www.gstatic.com/generate_204");
+Check("traffic flows on the other identity", heldTraffic.Ok, heldTraffic.Detail);
+XrayInterop.Stop();
+if (hold != IntPtr.Zero) Native.CloseWintun(hold);
+string? freeErr = null;
+try { XrayInterop.Start(runJson); } catch (Exception ex) { freeErr = ex.Message; }
+var freeUp = freeErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(15));
+Check("identity 0 is used again once it is free", freeUp && AdapterGuid() == Identity(0),
+    freeErr ?? IdentityName(AdapterGuid()));
 
 Finish();
 return failures;
@@ -265,6 +321,20 @@ void Finish()
 // Live, through IP Helper: the managed adapter list is cached per process and would report
 // the previous cycle's adapter as up.
 static bool AdapterUp() => Native.AdapterUp(WindowsTunnelConfig.AdapterName);
+
+// The fork's adapter identities (proxy/tun/fork_identity.go): md5 of the name, then of
+// "name#i". new Guid(bytes) reads them in the layout windows.GUID has in memory.
+static Guid Identity(int i) =>
+    new(MD5.HashData(Encoding.UTF8.GetBytes(i == 0 ? WindowsTunnelConfig.AdapterName : $"{WindowsTunnelConfig.AdapterName}#{i}")));
+
+static Guid? AdapterGuid() => Native.AdapterGuid(WindowsTunnelConfig.AdapterName);
+
+static string IdentityName(Guid? guid)
+{
+    if (guid is not { } g) return "no adapter";
+    for (var i = 0; i < 4; i++) if (Identity(i) == g) return $"identity {i}";
+    return $"a GUID outside the set ({g})";
+}
 
 static async Task<bool> WaitAdapterAsync(TimeSpan timeout)
 {
@@ -318,6 +388,25 @@ static void RunServer()
 
 static class Native
 {
+    [System.Runtime.InteropServices.DllImport("iphlpapi.dll")]
+    private static extern int ConvertInterfaceLuidToGuid(ref ulong luid, out Guid guid);
+
+    [System.Runtime.InteropServices.DllImport("wintun.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr WintunCreateAdapter(string name, string tunnelType, ref Guid requestedGuid);
+
+    [System.Runtime.InteropServices.DllImport("wintun.dll")]
+    private static extern void WintunCloseAdapter(IntPtr adapter);
+
+    public static IntPtr CreateWintun(string name, Guid guid) => WintunCreateAdapter(name, "Horus test", ref guid);
+
+    public static void CloseWintun(IntPtr adapter) => WintunCloseAdapter(adapter);
+
+    public static Guid? AdapterGuid(string alias)
+    {
+        if (ConvertInterfaceAliasToLuid(alias, out var luid) != 0) return null;
+        return ConvertInterfaceLuidToGuid(ref luid, out var guid) == 0 ? guid : null;
+    }
+
     [System.Runtime.InteropServices.DllImport("iphlpapi.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private static extern int ConvertInterfaceAliasToLuid(string alias, out ulong luid);
 

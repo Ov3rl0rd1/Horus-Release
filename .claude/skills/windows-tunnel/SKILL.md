@@ -111,6 +111,21 @@ let `windows-tunnel` run against it. Fork changes go through `bash fork/bin/fork
   that measures *through* the tunnel measures nothing: a TCP ping says ~1 ms for every server,
   adapter byte counters grow while the proxy is dead. Measure with a socket pinned to the
   physical interface (`PhysicalProbe`), judge health from the core's per-connection counters.
+- **A SOCKS5 "succeeded" from the core proves nothing.** xray replies before its outbound
+  dials (`proxy/socks/protocol.go`, `handshake5`), so `SocksProbe.CanDialAsync` is true for a
+  dead outbound — a dead Hysteria2 was accepted at connect and passed every health check. The
+  Windows client asks for an HTTP answer instead (`SocksRoundTrip`); WinTunnelTest swaps in a
+  dead outbound to prove the difference. (Android still uses `SocksProbe` — not changed.)
+- **Nothing built while the TUN is up may look a name up.** The app's own resolver goes through
+  the tunnel, so with a dead proxy every lookup fails — and the rule reload and the recovery
+  swap used to re-resolve the node. They reuse the address learnt at connect (`Session.Addresses`).
+- **A reconnect can ask for an adapter whose device is still there.** wintun maps the GUID to
+  `SWD\Wintun\{GUID}`; while the previous device is still being removed (or Windows deferred
+  it) the same GUID waits 15 s and fails with `problem code: 0x1F` — and kept failing until a
+  reboot on a user's machine. The fork passes over a held identity (`fork_open_windows.go`); the
+  core then logs `[tun] adapter identity 0 … is still held by a device` in `native-stderr.log`.
+  WinTunnelTest holds identity 0 with a second adapter to exercise it. If a user still sees
+  0x1F, ask for `C:\Windows\INF\setupapi.dev.log` and Device Manager → View → Show hidden devices.
 - **`XrayResetConnections` on Hysteria2 drops every TCP session it carries.** Never call it on a
   network event that did not take away the path the core is bound to.
 - **Recovery must not restart the core** while a swap (`XrayReplaceOutbound`) can do: a restart

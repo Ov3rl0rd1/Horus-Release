@@ -96,6 +96,7 @@
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppRoutePolicy.cs" Link="Linked\Windows\AppRoutePolicy.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\NodeLatencyMonitor.cs" Link="Linked\Windows\NodeLatencyMonitor.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\PhysicalProbe.cs" Link="Linked\Windows\PhysicalProbe.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\SocksRoundTrip.cs" Link="Linked\Windows\SocksRoundTrip.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Views\TrafficHistory.cs" Link="Linked\Windows\TrafficHistory.cs" />
   </ItemGroup>
 
