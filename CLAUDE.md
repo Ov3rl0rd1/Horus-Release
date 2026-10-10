@@ -113,7 +113,9 @@ silent when broken — see the `windows-tunnel` skill for how to re-check them.
    (`ProxyStallDetector`), never from adapter counters or a TCP probe through the TUN: the TUN's
    gVisor stack completes handshakes and ACKs locally, so both look healthy while the proxy is dead.
    For the same reason latency is measured from sockets pinned to the physical interface
-   (`PhysicalProbe`) — unpinned, every server "answers" in 1 ms.
+   (`PhysicalProbe`) — unpinned, every server "answers" in 1 ms. And a probe through the core's
+   SOCKS inbound must get an answer from the far end (`SocksRoundTrip`): the core replies
+   "succeeded" to a CONNECT before its outbound dials, so the reply alone passes a dead proxy.
 4. **Rule changes apply live** (`XrayReloadRouting`), so changing split tunnelling or site rules
    never interrupts anything; open connections keep their route until the user restarts that
    app's connections from the «Приложения» screen.

@@ -53,8 +53,6 @@ namespace Horus.Platforms.Windows
         /// <summary>Failed recoveries before the tunnel is dropped to give the user back a direct connection (unless the kill switch holds it).</summary>
         private const int MaxHeldRecoveries = 4;
 
-        private static readonly (string Host, int Port)[] ProbeTargets = [("cloudflare.com", 443), ("1.1.1.1", 443)];
-
         private readonly IApiService _api;
         private readonly IAuthService _auth;
         private readonly ProtocolFactory _factory;
@@ -158,6 +156,14 @@ namespace Horus.Platforms.Windows
             public required XrayConfig Config { get; set; }
             public required int SocksPort { get; init; }
             public required bool FromCache { get; init; }
+
+            /// <summary>
+            /// Node hostname → the address it had while the tunnel was down. Anything built
+            /// for the running core reuses it: with the TUN up the system resolver answers
+            /// through the proxy, so a lookup fails exactly when the proxy is dead — which is
+            /// when a swap to the next offer is needed.
+            /// </summary>
+            public required IReadOnlyDictionary<string, string> Addresses { get; init; }
         }
 
         // ── Connect / disconnect ─────────────────────────────────────────────
@@ -218,13 +224,19 @@ namespace Horus.Platforms.Windows
             // answer would come back through the tunnel.
             var directIp = await SafeEgressAsync(null, ct);
 
-            var (index, config) = await ProveFirstWorkingAsync(candidates, directIp, fromCache, ct);
+            var addresses = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var (index, config) = await ProveFirstWorkingAsync(candidates, directIp, fromCache, addresses, ct);
+            await LearnAddressesAsync(candidates, addresses, ct);
 
-            // Phase two: the same outbound, now with the TUN.
+            // Phase two: the same outbound, now with the TUN. Off the caller's thread: the
+            // adapter takes about a second to create, and wintun can wait 15 s for a device.
             var run = BuildRunConfig(config);
-            XrayInterop.Stop();
-            XrayInterop.Test(run);
-            XrayInterop.Start(run);
+            await Task.Run(() =>
+            {
+                XrayInterop.Stop();
+                XrayInterop.Test(run);
+                XrayInterop.Start(run);
+            }, CancellationToken.None);
             Diag.Info("connect", $"core up with TUN ({config.OfferId}, mtu {WindowsPreferences.TunSettings.Mtu}, split {_split.CurrentRules.Mode}/{_split.CurrentRules.Processes.Count})");
 
             await _tunnel.StartTunnelAsync(new TunnelOptions
@@ -249,7 +261,8 @@ namespace Horus.Platforms.Windows
                 Current = index,
                 Config = config,
                 SocksPort = config.SocksPort,
-                FromCache = fromCache
+                FromCache = fromCache,
+                Addresses = addresses
             };
 
             ActiveServer = connection.Server?.ToServerInfo() ?? server;
@@ -309,7 +322,7 @@ namespace Horus.Platforms.Windows
             StopHealthLoop();
             try { _traffic.Stop(); } catch { }
             try { await _tunnel.StopTunnelAsync(); } catch (Exception ex) { Diag.Warn("connect", $"tunnel stop: {ex.Message}"); }
-            XrayInterop.Stop();
+            await Task.Run(XrayInterop.Stop);   // removes the adapter: not on the UI thread
             _session = null;
             ActiveServer = null;
             ActiveOfferId = null;
@@ -319,7 +332,8 @@ namespace Horus.Platforms.Windows
         // ── Phase one: prove a candidate on a SOCKS-only core ────────────────
 
         private async Task<(int Index, XrayConfig Config)> ProveFirstWorkingAsync(
-            List<ConnectionCandidate> candidates, string? directIp, bool fromCache, CancellationToken ct)
+            List<ConnectionCandidate> candidates, string? directIp, bool fromCache,
+            Dictionary<string, string> addresses, CancellationToken ct)
         {
             Exception? last = null;
             for (var i = 0; i < candidates.Count; i++)
@@ -329,6 +343,7 @@ namespace Horus.Platforms.Windows
                 try
                 {
                     var config = await CreateConfigAsync(candidate, socksPort: null, ct);
+                    Remember(addresses, candidate, config);
                     Diag.Info("connect", $"[{config.OfferId}] {config.ProtocolName} -> {config.NodeAddress ?? "no address"} (socks {config.SocksPort})");
 
                     var probeJson = config.ToConfig();
@@ -369,6 +384,52 @@ namespace Horus.Platforms.Windows
             return config;
         }
 
+        private static void Remember(Dictionary<string, string> addresses, ConnectionCandidate candidate, XrayConfig config)
+        {
+            if (OutboundAddress.FindHost(candidate.Outbound) is { } host && config.NodeAddress is { } address)
+                addresses[host] = address;
+        }
+
+        /// <summary>
+        /// Resolves, while the tunnel is still down, the hosts of the offers that were not
+        /// tried — normally the same node, so nothing to do. Best effort: an offer whose
+        /// host is unknown here is resolved when it is needed, as before.
+        /// </summary>
+        private async Task LearnAddressesAsync(
+            List<ConnectionCandidate> candidates, Dictionary<string, string> addresses, CancellationToken ct)
+        {
+            foreach (var candidate in candidates)
+            {
+                if (OutboundAddress.FindHost(candidate.Outbound) is not { } host || addresses.ContainsKey(host)) continue;
+                try { Remember(addresses, candidate, await CreateConfigAsync(candidate, socksPort: null, ct)); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex) { Diag.Warn("connect", $"{candidate.Id}: address not learnt ({ex.Message})"); }
+            }
+        }
+
+        /// <summary>
+        /// A config for the running core, built without a DNS lookup when the offer's host
+        /// was resolved before the tunnel came up (see <see cref="Session.Addresses"/>).
+        /// </summary>
+        private Task<XrayConfig> CreateLiveConfigAsync(Session session, ConnectionCandidate candidate, CancellationToken ct)
+        {
+            if (OutboundAddress.FindHost(candidate.Outbound) is { } host
+                && session.Addresses.TryGetValue(host, out var address))
+            {
+                var outbound = candidate.Outbound.DeepClone();
+                OutboundAddress.Rewrite(outbound, host, address);
+                candidate = new ConnectionCandidate
+                {
+                    Id = candidate.Id,
+                    Label = candidate.Label,
+                    ProtocolName = candidate.ProtocolName,
+                    Outbound = outbound,
+                    NodeHost = candidate.NodeHost
+                };
+            }
+            return CreateConfigAsync(candidate, session.SocksPort, ct);
+        }
+
         private string BuildRunConfig(XrayConfig config) =>
             WindowsTunnelConfig.Build(config.ToConfig(), WindowsPreferences.TunSettings, _split.CurrentRules);
 
@@ -383,8 +444,12 @@ namespace Horus.Platforms.Windows
 
             if (proxied is not null) return proxied != directIp;
 
-            // Our API may simply be unreachable; ask the core to dial something neutral.
-            return await SocksProbe.CanDialAsync(socksPort, "cloudflare.com", 443, TimeSpan.FromSeconds(8), ct);
+            // Our API may simply be unreachable; ask for something neutral through the proxy.
+            // A request and its answer, not the SOCKS reply: the core says "succeeded" before
+            // its outbound has dialled anything (SocksRoundTrip).
+            var carried = await SocksRoundTrip.AnyCarriesAsync(socksPort, SocksRoundTrip.DefaultTargets, TimeSpan.FromSeconds(8), ct);
+            Diag.Info("connect", $"[preflight] round trip through the proxy: {(carried ? "answered" : "no answer")}");
+            return carried;
         }
 
         private async Task<string?> SafeEgressAsync(string? proxy, CancellationToken ct)
@@ -462,15 +527,9 @@ namespace Horus.Platforms.Windows
             catch (Exception ex) { Diag.Error("health", $"health loop died: {ex.Message}"); }
         }
 
-        private static async Task<bool> ProbeAsync(int socksPort, CancellationToken ct)
-        {
-            foreach (var (host, port) in ProbeTargets)
-            {
-                if (await SocksProbe.CanDialAsync(socksPort, host, port, ProbeTimeout, ct))
-                    return true;
-            }
-            return false;
-        }
+        /// <summary>A request answered through the proxy — see <see cref="SocksRoundTrip"/> for why not less.</summary>
+        private static Task<bool> ProbeAsync(int socksPort, CancellationToken ct) =>
+            SocksRoundTrip.AnyCarriesAsync(socksPort, SocksRoundTrip.DefaultTargets, ProbeTimeout, ct);
 
         /// <summary>
         /// A connection from the TUN to the node itself means the core's own socket was not
@@ -565,7 +624,7 @@ namespace Horus.Platforms.Windows
                         var candidate = session.Candidates[index];
                         try
                         {
-                            var config = await CreateConfigAsync(candidate, session.SocksPort, ct);
+                            var config = await CreateLiveConfigAsync(session, candidate, ct);
                             var outbound = WindowsTunnelConfig.OutboundOf(config.ToConfig());
                             if (outbound is null) continue;
 
@@ -691,8 +750,10 @@ namespace Horus.Platforms.Windows
             {
                 if (_session is not { } session || State != VpnState.Connected) return;
 
-                // Site rules are read when the config is built; rebuild it rather than patch it.
-                var config = await CreateConfigAsync(session.Candidates[session.Current], session.SocksPort, ct);
+                // Site rules are read when the config is built; rebuild it rather than patch it —
+                // with the address the node had at connect, because a lookup now would go
+                // through the tunnel (and fail with it when the proxy is the problem).
+                var config = await CreateLiveConfigAsync(session, session.Candidates[session.Current], ct);
                 var run = BuildRunConfig(config);
                 XrayInterop.Test(run);
 

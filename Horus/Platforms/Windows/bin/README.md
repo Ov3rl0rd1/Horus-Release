@@ -23,9 +23,11 @@ go build -buildmode=c-shared -trimpath -buildvcs=false \
   -o xray.dll ./libxray
 ```
 
-The shipped `xray.dll` is fork commit **8f3e3309** (the core logs it at start: `Xray 26.9.9 … 8f3e3309`):
-embedded-TUN lifecycle, live controls, outbound binding by route metric, and the gVisor NIC
-attached only after its handlers. When replacing it, keep this line current — the version string
+The shipped `xray.dll` is fork commit **3a7d99ff** (the core logs it at start: `Xray 26.9.9 … 3a7d99ff`):
+embedded-TUN lifecycle, live controls, outbound binding by route metric, the gVisor NIC
+attached only after its handlers, and an adapter GUID that is not still held by the previous
+adapter's device (`proxy/tun/fork_open_windows.go` — a reconnect used to fail with wintun's
+"problem code: 0x1F" until a reboot). When replacing it, keep this line current — the version string
 is the only way to tell from a user's log which core they ran.
 
 **`wintun.dll` must sit beside `Horus.exe`, not in a subfolder.** The core loads it with
