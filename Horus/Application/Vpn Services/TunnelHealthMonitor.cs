@@ -108,26 +108,6 @@ namespace Horus.Application
         private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(6);
 
         /// <summary>
-        /// Neutral targets, tried before anything of ours.
-        ///
-        /// <para>The probe used to go straight to the Horus API through the proxy, which
-        /// made the health of the tunnel depend on the health of our backend — an API that
-        /// is blocked, down or merely slow produced "OutboundDead" and an unnecessary
-        /// rebuild of a perfectly good tunnel. The connect-time preflight already knew
-        /// better and fell back to a bare SOCKS5 dial; this is that same correction applied
-        /// to the periodic check.</para>
-        ///
-        /// <para>The first entry is a hostname on purpose, so a success also proves the core
-        /// can resolve — the half that breaks silently. The second is a literal address, so
-        /// a failure of the first can be attributed to DNS rather than to the tunnel.</para>
-        /// </summary>
-        private static readonly (string Host, int Port)[] NeutralTargets =
-        [
-            ("cloudflare.com", 443),
-            ("1.1.1.1", 443)
-        ];
-
-        /// <summary>
         /// 0 or 1. Stops overlapping probes: several network events in quick succession
         /// used to each start their own six-second request, and whichever finished first
         /// decided the tunnel's fate.
@@ -404,22 +384,18 @@ namespace Horus.Application
         {
             if (!XrayProtocol.IsCoreRunning) return TunnelHealth.CoreDead;
 
-            // Cheapest and most neutral first: a SOCKS5 CONNECT costs one round trip, needs
-            // nothing of ours, and its reply code is the core's own statement about whether
-            // it reached the target.
-            foreach (var (host, port) in NeutralTargets)
+            // Neutral first: a small HTTP request through the proxy, needing nothing of ours.
+            // It has to be answered by the far end — the core replies "succeeded" to a SOCKS5
+            // CONNECT before its outbound dials, so the reply alone reported a dead outbound
+            // as healthy and the tunnel was never rebuilt.
+            if (await SocksRoundTrip.AnyCarriesAsync(
+                    _endpoint.SocksPort, SocksRoundTrip.DefaultTargets, ProbeTimeout, ct).ConfigureAwait(false))
             {
-                ct.ThrowIfCancellationRequested();
-
-                if (await SocksProbe.CanDialAsync(
-                        _endpoint.SocksPort, host, port, ProbeTimeout, ct).ConfigureAwait(false))
-                {
-                    Diag.Trace("health", $"probe ok via {host}:{port}");
-                    return TunnelHealth.Healthy;
-                }
-
-                Diag.Trace("health", $"probe failed via {host}:{port}");
+                Diag.Trace("health", "probe ok: answered through the proxy");
+                return TunnelHealth.Healthy;
             }
+
+            Diag.Trace("health", "probe failed: nothing came back through the proxy");
 
             // Both neutral targets refused. Before condemning the tunnel, try our own API
             // through the proxy: a network that blocks these two specifically is unusual

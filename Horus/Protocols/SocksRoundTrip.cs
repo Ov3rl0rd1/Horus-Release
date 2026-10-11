@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Text;
 
-namespace Horus.Platforms.Windows.Tunnel
+namespace Horus.Protocols
 {
     /// <summary>One thing to ask for through the proxy: plain HTTP, any answer will do.</summary>
     public readonly record struct ProbeTarget(string Host, int Port = 80, string Path = "/");

@@ -47,6 +47,8 @@ namespace Horus.Protocols
             ArgumentNullException.ThrowIfNull(candidate);
 
             var outbound = candidate.Outbound.DeepClone();
+            foreach (var note in OutboundFixups.Apply(outbound))
+                Diag.Info("connect", $"{candidate.Id}: {note}");
 
             // The address the outbound actually dials, which is normally the node but is
             // read from the outbound rather than assumed: a profile is free to point an

@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
-using Horus.Platforms.Windows.Tunnel;
+using Horus.Protocols;
 using Xunit;
 
 namespace Horus.Tests;

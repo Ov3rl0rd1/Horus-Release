@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
 using Horus.Domain.Models;
+using Horus.Platforms.Windows.Tunnel;
 using Horus.Presentation.ViewModels;
 using Microsoft.Maui.Controls.Shapes;
 
@@ -16,7 +17,14 @@ namespace Horus.Platforms.Windows.Views
     /// else moved to where it belongs (servers to their screen, applications to theirs).</para>
     ///
     /// <para>Notices stay — an expired subscription or a waiting update is something the user
-    /// has to act on — but as a compact row above the button rather than cards.</para>
+    /// has to act on — but as compact rows above the graph rather than cards.</para>
+    ///
+    /// <para><b>Fits the window without scrolling.</b> The window has one size
+    /// (<see cref="HomeLayout"/>), and the screen is two columns side by side: connect on the
+    /// left, speed and ping on the right. The ring takes whatever height the left column has
+    /// left (<see cref="HomeLayout.RingDiameter"/>), and the graph whatever the right column
+    /// has, so a notice or a smaller screen shrinks them instead of pushing anything off.
+    /// The graph's width comes from its column, not from the numbers above it.</para>
     /// </summary>
     internal sealed class DesktopHomeView : ContentView
     {
@@ -33,6 +41,14 @@ namespace Horus.Platforms.Windows.Views
         private readonly Label _ping = Ui.Strong(null, 19);
         private readonly Label _pingDetail = Ui.Dim(null, 12.5);
         private readonly Label _graphEmpty = Ui.Dim("Подключитесь — здесь появится скорость и пинг до сервера", 13);
+
+        // The ring's parts, resized together to the height the left column has.
+        private Grid _ringHost = null!;
+        private Ellipse _ringOutline = null!;
+        private Border _face = null!;
+        private Image _logo = null!;
+        private Label _word = null!;
+        private VerticalStackLayout _faceStack = null!;
 
         private CancellationTokenSource? _spin;
         private bool _visible;
@@ -57,16 +73,32 @@ namespace Horus.Platforms.Windows.Views
             _spinRing.SetBinding(OpacityProperty, nameof(MainViewModel.SpinOpacity));
             _publisher = BuildPublisherRow();
 
-            var column = new VerticalStackLayout
+            var connect = BuildConnect();
+            var right = new Grid
             {
-                Spacing = 18,
-                Padding = new Thickness(34, 26, 34, 30),
-                MaximumWidthRequest = 860,
-                HorizontalOptions = LayoutOptions.Fill,
-                Children = { _publisher, _notices, BuildConnect(), BuildGraphCard() }
+                RowDefinitions = { new RowDefinition(GridLength.Auto), new RowDefinition(GridLength.Star) },
+                RowSpacing = 12,
             };
-            Content = new ScrollView { Content = new Grid { Children = { column } } };
-            column.HorizontalOptions = LayoutOptions.Center;
+            right.Add(new VerticalStackLayout { Spacing = 8, Children = { _publisher, _notices } }, 0, 0);
+            right.Add(BuildGraphCard(), 0, 1);
+
+            var columns = new Grid
+            {
+                ColumnDefinitions =
+                {
+                    new ColumnDefinition(new GridLength(1, GridUnitType.Star)),
+                    new ColumnDefinition(new GridLength(1.2, GridUnitType.Star)),
+                },
+                ColumnSpacing = 24,
+                Padding = new Thickness(26, 20, 26, 22),
+            };
+            columns.Add(connect, 0);
+            columns.Add(right, 1);
+            Content = columns;
+
+            // The ring follows the height the window leaves it; nothing here scrolls.
+            columns.SizeChanged += (_, _) =>
+                ApplyRing(HomeLayout.RingDiameter(columns.Height - columns.Padding.VerticalThickness));
 
             _vm.PropertyChanged += OnVmChanged;
             _vm.Notices.CollectionChanged += OnNoticesChanged;
@@ -111,16 +143,16 @@ namespace Horus.Platforms.Windows.Views
             protocol.SetBinding(IsVisibleProperty, nameof(MainViewModel.ShowActiveProtocol));
 
             // The button.
-            var logo = new Image { Source = "logo_gold.png", WidthRequest = 84, HorizontalOptions = LayoutOptions.Center };
+            var logo = _logo = new Image { Source = "logo_gold.png", WidthRequest = 84, HorizontalOptions = LayoutOptions.Center };
             logo.SetBinding(OpacityProperty, nameof(MainViewModel.LogoOpacity));
-            var word = new Label
+            var word = _word = new Label
             {
                 FontSize = 13.5, FontAttributes = FontAttributes.Bold, CharacterSpacing = 2.5,
                 FontFamily = Ui.F("FontBold"), HorizontalOptions = LayoutOptions.Center
             };
             word.SetBinding(Label.TextProperty, nameof(MainViewModel.BtnLabel));
             word.SetBinding(Label.TextColorProperty, nameof(MainViewModel.BtnWordColor));
-            var face = new Border
+            var face = _face = new Border
             {
                 WidthRequest = 206,
                 HeightRequest = 206,
@@ -131,7 +163,7 @@ namespace Horus.Platforms.Windows.Views
                 Background = new LinearGradientBrush(
                     new GradientStopCollection { new GradientStop(Ui.C("HzRingTop"), 0), new GradientStop(Ui.C("HzRingBottom"), 1) },
                     new Point(0, 0), new Point(1, 1)),
-                Content = new VerticalStackLayout
+                Content = _faceStack = new VerticalStackLayout
                 {
                     Spacing = 12,
                     HorizontalOptions = LayoutOptions.Center,
@@ -141,23 +173,19 @@ namespace Horus.Platforms.Windows.Views
             };
             face.SetBinding(Border.StrokeProperty, nameof(MainViewModel.RingBorder), converter: new BrushOf());
             face.GestureRecognizers.Add(new TapGestureRecognizer { Command = _vm.ToggleConnectCommand });
-            var ring = new Grid
+            _ringOutline = new Ellipse
+            {
+                WidthRequest = 250, HeightRequest = 250, StrokeThickness = 1,
+                Stroke = new SolidColorBrush(Ui.C("HzGoldBorder")), StrokeDashArray = new DoubleCollection { 2, 4 },
+                InputTransparent = true
+            };
+            var ring = _ringHost = new Grid
             {
                 WidthRequest = 250,
                 HeightRequest = 250,
                 HorizontalOptions = LayoutOptions.Center,
                 Margin = new Thickness(0, 10, 0, 4),
-                Children =
-                {
-                    new Ellipse
-                    {
-                        WidthRequest = 250, HeightRequest = 250, StrokeThickness = 1,
-                        Stroke = new SolidColorBrush(Ui.C("HzGoldBorder")), StrokeDashArray = new DoubleCollection { 2, 4 },
-                        InputTransparent = true
-                    },
-                    _spinRing,
-                    face
-                }
+                Children = { _ringOutline, _spinRing, face }
             };
 
             var sub = Ui.Dim();
@@ -182,9 +210,31 @@ namespace Horus.Platforms.Windows.Views
             return new VerticalStackLayout
             {
                 Spacing = 6,
-                HorizontalOptions = LayoutOptions.Center,
+                HorizontalOptions = LayoutOptions.Fill,
+                VerticalOptions = LayoutOptions.Center,
                 Children = { pill, protocol, ring, sub, devBadge, timer, BuildServerChip() }
             };
+        }
+
+        /// <summary>Sizes the ring and everything drawn on it to one diameter, in the original proportions.</summary>
+        private void ApplyRing(double diameter)
+        {
+            if (Math.Abs(_ringHost.WidthRequest - diameter) < 0.5) return;
+            _ringHost.WidthRequest = _ringHost.HeightRequest = diameter;
+            _ringOutline.WidthRequest = _ringOutline.HeightRequest = diameter;
+            _spinRing.WidthRequest = _spinRing.HeightRequest = diameter * 236 / 250;
+            var face = diameter * 206 / 250;
+            _face.WidthRequest = _face.HeightRequest = face;
+            _face.StrokeShape = new RoundRectangle { CornerRadius = face / 2 };
+            _logo.WidthRequest = diameter * 84 / 250;
+
+            // "ПОДКЛЮЧИТЬ" must stay inside the face: the word shrinks with it down to a
+            // readable size, and on the smallest faces it is shown without the logo.
+            var scale = diameter / HomeLayout.MaxRing;
+            _word.FontSize = Math.Max(9, 13.5 * scale);
+            _word.CharacterSpacing = 2.5 * scale;
+            _faceStack.Spacing = 12 * scale;
+            _logo.IsVisible = face >= 120;
         }
 
         private View BuildServerChip()
@@ -221,7 +271,8 @@ namespace Horus.Platforms.Windows.Views
 
             var card = Ui.Card(grid, new Thickness(16, 12));
             card.Margin = new Thickness(0, 14, 0, 0);
-            card.WidthRequest = 420;
+            card.MaximumWidthRequest = 420;
+            card.HorizontalOptions = LayoutOptions.Fill;
             card.GestureRecognizers.Add(new TapGestureRecognizer { Command = _vm.GoServersCommand });
             return card;
         }
@@ -248,36 +299,58 @@ namespace Horus.Platforms.Windows.Views
                 }
             };
 
-            var pingBlock = new VerticalStackLayout
-            {
-                Spacing = 2,
-                HorizontalOptions = LayoutOptions.End,
-                Children = { Ui.Eyebrow("Пинг до сервера"), _ping, _pingDetail }
-            };
-            _ping.HorizontalTextAlignment = TextAlignment.End;
-            _pingDetail.HorizontalTextAlignment = TextAlignment.End;
-
+            // Two equal columns: a number growing from "12 КБ/с" to "48.3 МБ/с" moves nothing.
             var header = new Grid
             {
-                ColumnDefinitions = { new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Auto), new ColumnDefinition(GridLength.Star) },
-                ColumnSpacing = 34,
+                ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star) },
+                ColumnSpacing = 16,
             };
             header.Add(Rate("Загрузка", Ui.C("HzGold"), _down), 0);
             header.Add(Rate("Отдача", Ui.C("NeonViolet"), _up), 1);
-            header.Add(pingBlock, 2);
 
+            // The graph takes the card's remaining height; its width is the column's.
+            _graph.HeightRequest = -1;
+            _graph.MinimumHeightRequest = 70;
             _graphEmpty.HorizontalTextAlignment = TextAlignment.Center;
             _graphEmpty.HorizontalOptions = LayoutOptions.Center;
             _graphEmpty.VerticalOptions = LayoutOptions.Center;
             var graphHost = new Grid { Children = { _graph, _graphEmpty } };
 
-            var stripCaption = Ui.Dim("Каждая полоска — замер раз в 2 с; красная метка — ответа не было", 11.5);
-
-            return Ui.Card(new VerticalStackLayout
+            // Ping sits with its own strip: the bars are its history.
+            _ping.HorizontalTextAlignment = TextAlignment.End;
+            _ping.VerticalOptions = LayoutOptions.Center;
+            var pingCaption = new VerticalStackLayout { Spacing = 1, VerticalOptions = LayoutOptions.Center, Children = { Ui.Eyebrow("Пинг до сервера"), _pingDetail } };
+            var pingRow = new Grid
             {
-                Spacing = 14,
-                Children = { header, graphHost, _strip, stripCaption }
-            });
+                ColumnDefinitions = { new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Auto) },
+                ColumnSpacing = 12,
+            };
+            pingRow.Add(pingCaption, 0);
+            pingRow.Add(_ping, 1);
+
+            var stripCaption = Ui.Dim($"Каждая полоска — замер раз в {NodeLatencyMonitor.DefaultInterval.TotalSeconds:0} с; красная метка — ответа не было", 11.5);
+
+            var body = new Grid
+            {
+                RowDefinitions =
+                {
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Star),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                    new RowDefinition(GridLength.Auto),
+                },
+                RowSpacing = 12,
+            };
+            body.Add(header, 0, 0);
+            body.Add(graphHost, 0, 1);
+            body.Add(pingRow, 0, 2);
+            body.Add(_strip, 0, 3);
+            body.Add(stripCaption, 0, 4);
+
+            var card = Ui.Card(body);
+            card.VerticalOptions = LayoutOptions.Fill;
+            return card;
         }
 
         private void RefreshTelemetry()

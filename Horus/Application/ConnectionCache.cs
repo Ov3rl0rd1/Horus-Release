@@ -100,6 +100,16 @@ namespace Horus.Application
             }
         }
 
+        /// <summary>How long ago the stored set was fetched; null when nothing is stored.</summary>
+        public static TimeSpan? Age
+        {
+            get
+            {
+                var stamp = SafeStamp();
+                return stamp == 0 ? null : DateTimeOffset.UtcNow - new DateTimeOffset(stamp, TimeSpan.Zero);
+            }
+        }
+
         /// <summary>Stores a set that has just been fetched and accepted.</summary>
         public static void Write(ServerConnection connection)
         {

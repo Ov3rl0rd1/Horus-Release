@@ -6,6 +6,13 @@ namespace Horus.Protocols
     /// <summary>
     /// Asks the core's own SOCKS5 inbound to dial something, and reports whether it could.
     ///
+    /// <para><b>Do not use this to judge a tunnel.</b> xray's SOCKS server replies
+    /// "succeeded" as soon as it has parsed the request, before the outbound dials anything
+    /// (<c>proxy/socks/protocol.go</c>, <c>handshake5</c>), so the answer below is true for a
+    /// dead outbound too. <see cref="SocksRoundTrip"/> asks for a response from the far end
+    /// instead; this class remains only so WinTunnelTest can show the difference. The
+    /// reasoning that follows is what was believed when it was written.</para>
+    ///
     /// <para>This exists because the previous liveness proof — fetching our egress IP
     /// through the proxy — depends on our own API being reachable, and for these users it
     /// frequently is not. When both the direct and the proxied fetch failed, the connect

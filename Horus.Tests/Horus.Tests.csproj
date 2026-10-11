@@ -63,6 +63,9 @@
     <Compile Include="..\Horus\Protocols\XrayConfigBuilder.cs" Link="Linked\XrayConfigBuilder.cs" />
     <Compile Include="..\Horus\Protocols\LocalNetworks.cs" Link="Linked\LocalNetworks.cs" />
     <Compile Include="..\Horus\Protocols\OutboundAddress.cs" Link="Linked\OutboundAddress.cs" />
+    <Compile Include="..\Horus\Protocols\OutboundFixups.cs" Link="Linked\OutboundFixups.cs" />
+    <Compile Include="..\Horus\Application\CacheRefreshPolicy.cs" Link="Linked\CacheRefreshPolicy.cs" />
+    <Compile Include="..\Horus\Application\SupportChannels.cs" Link="Linked\SupportChannels.cs" />
     <Compile Include="..\Horus\Domain\Models\GeoRouting.cs" Link="Linked\GeoRouting.cs" />
     <Compile Include="..\Horus\Domain\Models\RuleAction.cs" Link="Linked\RuleAction.cs" />
     <Compile Include="..\Horus\Application\Routing\SiteRules.cs" Link="Linked\SiteRules.cs" />
@@ -96,8 +99,9 @@
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppRoutePolicy.cs" Link="Linked\Windows\AppRoutePolicy.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\NodeLatencyMonitor.cs" Link="Linked\Windows\NodeLatencyMonitor.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\PhysicalProbe.cs" Link="Linked\Windows\PhysicalProbe.cs" />
-    <Compile Include="..\Horus\Platforms\Windows\Tunnel\SocksRoundTrip.cs" Link="Linked\Windows\SocksRoundTrip.cs" />
+    <Compile Include="..\Horus\Protocols\SocksRoundTrip.cs" Link="Linked\SocksRoundTrip.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Views\TrafficHistory.cs" Link="Linked\Windows\TrafficHistory.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Views\HomeLayout.cs" Link="Linked\Windows\HomeLayout.cs" />
   </ItemGroup>
 
   <!-- The server latency sweep, with the hook through which Windows pins it to the physical interface. -->

@@ -267,11 +267,47 @@
                             <Label Grid.Column="0" Text="Версия" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
                             <Label Grid.Column="1" Text="{Binding AppVersion}" Style="{StaticResource HzDim}" FontSize="13" VerticalOptions="Center" />
                         </Grid>
-                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" />
-                        <Grid Padding="16,10" ColumnDefinitions="*,Auto" MinimumHeightRequest="56">
-                            <Label Grid.Column="0" Text="Поддержка" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
-                            <Label Grid.Column="1" Text="{Binding SupportHandle}" TextColor="{StaticResource HzGoldLight}"
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <!-- ПОДДЕРЖКА: every channel from appsettings.json, each opens on tap. -->
+            <VerticalStackLayout Spacing="6">
+                <Label Text="ПОДДЕРЖКА" Style="{StaticResource HzEyebrow}" FontSize="10" Margin="4,0" />
+                <Border Style="{StaticResource HzListCard}">
+                    <VerticalStackLayout Spacing="0">
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" MinimumHeightRequest="56"
+                              IsVisible="{Binding HasSupportTelegram}">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding OpenSupportCommand}" CommandParameter="Telegram" />
+                            </Grid.GestureRecognizers>
+                            <Label Grid.Column="0" Text="Telegram" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding SupportTelegram}" TextColor="{StaticResource HzGoldLight}"
                                    FontSize="13" FontAttributes="Bold" VerticalOptions="Center" FontFamily="{StaticResource FontBody}" />
+                            <Label Grid.Column="2" Text="›" Style="{StaticResource HzDim}" FontSize="18" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" IsVisible="{Binding HasSupportVk}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" MinimumHeightRequest="56"
+                              IsVisible="{Binding HasSupportVk}">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding OpenSupportCommand}" CommandParameter="ВКонтакте" />
+                            </Grid.GestureRecognizers>
+                            <Label Grid.Column="0" Text="ВКонтакте" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding SupportVk}" TextColor="{StaticResource HzGoldLight}"
+                                   FontSize="13" FontAttributes="Bold" VerticalOptions="Center" FontFamily="{StaticResource FontBody}" />
+                            <Label Grid.Column="2" Text="›" Style="{StaticResource HzDim}" FontSize="18" VerticalOptions="Center" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Color="{StaticResource HzBorderFaint}" IsVisible="{Binding HasSupportEmail}" />
+                        <Grid Padding="16,10" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10" MinimumHeightRequest="56"
+                              IsVisible="{Binding HasSupportEmail}">
+                            <Grid.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding OpenSupportCommand}" CommandParameter="Почта" />
+                            </Grid.GestureRecognizers>
+                            <Label Grid.Column="0" Text="Почта" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding SupportEmail}" TextColor="{StaticResource HzGoldLight}"
+                                   FontSize="13" FontAttributes="Bold" VerticalOptions="Center" FontFamily="{StaticResource FontBody}"
+                                   LineBreakMode="TailTruncation" MaximumWidthRequest="220" />
+                            <Label Grid.Column="2" Text="›" Style="{StaticResource HzDim}" FontSize="18" VerticalOptions="Center" />
                         </Grid>
                     </VerticalStackLayout>
                 </Border>

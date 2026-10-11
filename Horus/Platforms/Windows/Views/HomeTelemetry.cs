@@ -11,7 +11,7 @@ namespace Horus.Platforms.Windows.Views
     ///
     /// <para>Outlives the view, so leaving the home screen and coming back keeps the last two
     /// minutes. The latency probe runs only while the home screen is visible and the tunnel is
-    /// up — it is a TCP handshake to the node every two seconds, and nobody needs it measured
+    /// up — it is a TCP handshake to the node every ten seconds, and nobody needs it measured
     /// while they are looking at the server list or playing with the window minimised.</para>
     /// </summary>
     public sealed class HomeTelemetry

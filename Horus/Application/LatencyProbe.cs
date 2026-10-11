@@ -49,6 +49,17 @@ namespace Horus.Application
         public static readonly TimeSpan BatchTimeout = TimeSpan.FromSeconds(6);
 
         /// <summary>
+        /// Handshakes per node; the fastest is reported.
+        ///
+        /// <para>One handshake is a poor estimate, above all on a phone. The first one also
+        /// pays for waking the radio, a lost SYN is only retransmitted after a full second, and
+        /// a cold DNS lookup used to sit inside the timer too — which is how a node 40 ms away
+        /// was shown at 1000+ ms. The best of a few is the path's actual round trip; the later
+        /// ones cost a few tens of milliseconds each.</para>
+        /// </summary>
+        public const int Samples = 3;
+
+        /// <summary>
         /// A platform's own dial in place of the default one; null everywhere but Windows.
         ///
         /// <para>Windows needs it because its tunnel's TUN stack completes a TCP handshake
@@ -108,20 +119,60 @@ namespace Horus.Application
 
             if (string.IsNullOrWhiteSpace(server.Host)) return;
 
+            // The default dial is given an address, resolved here and outside its timer. A
+            // platform connector resolves for itself before it starts timing.
+            var target = Connector is null ? await ResolveAsync(server.Host, ct).ConfigureAwait(false) ?? server.Host : server.Host;
+
             foreach (var port in Ports)
             {
                 if (ct.IsCancellationRequested) return;
 
-                var ms = await (Connector?.Invoke(server.Host, port, ct) ?? ConnectAsync(server.Host, port, ct))
-                    .ConfigureAwait(false);
-                if (ms is null) continue;
+                var first = await DialAsync(target, port, ct).ConfigureAwait(false);
+                if (first is null) continue;
 
-                server.PingMs = ms;
-                Diag.Trace("ping", $"{server.Host}:{port} -> {ms} ms");
+                // Published as soon as it is known, then only ever lowered: a sweep cut short
+                // by the batch timeout keeps the best answer so far.
+                var best = first.Value;
+                server.PingMs = best;
+                for (var i = 1; i < Samples && !ct.IsCancellationRequested; i++)
+                {
+                    if (await DialAsync(target, port, ct).ConfigureAwait(false) is { } ms && ms < best)
+                    {
+                        best = ms;
+                        server.PingMs = best;
+                    }
+                }
+
+                Diag.Trace("ping", $"{server.Host}:{port} -> {best} ms (first {first} ms)");
                 return;
             }
 
             Diag.Trace("ping", $"{server.Host} did not answer");
+        }
+
+        private static Task<int?> DialAsync(string host, int port, CancellationToken ct) =>
+            Connector?.Invoke(host, port, ct) ?? ConnectAsync(host, port, ct);
+
+        /// <summary>
+        /// The node's address, IPv4 first (carrier IPv6 is often broken where v4 works, and a
+        /// v6 attempt that hangs would be timed as the node's distance); null when the name
+        /// does not resolve in time, and the dial then gets the name.
+        /// </summary>
+        private static async Task<string?> ResolveAsync(string host, CancellationToken ct)
+        {
+            if (System.Net.IPAddress.TryParse(host, out _)) return host;
+            try
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attempt.CancelAfter(Timeout);
+                var addresses = await System.Net.Dns.GetHostAddressesAsync(host, attempt.Token).ConfigureAwait(false);
+                var pick = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork) ?? addresses.FirstOrDefault();
+                return pick?.ToString();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         /// <summary>Milliseconds to complete the handshake, or null if it did not.</summary>

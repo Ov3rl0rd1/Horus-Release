@@ -20,7 +20,7 @@ inbound creates the wintun adapter, installs `0/1 + 128/1` on it, answers DNS at
 | Health | `Tunnel/ProxyStallDetector.cs` | judge from the core's per-connection bytes, never from adapter counters |
 | Live API | `Tunnel/XrayLive.cs` | `XrayReloadRouting`, `XrayReplaceOutbound`, `XrayConnections`, `XrayCloseConnections` |
 | Apps screen | `Views/AppsView*.cs`, `Tunnel/AppTraffic.cs`, `WindowsConnectionMonitor.cs` | per-app route from the core's own records; restart = close in the core |
-| Home | `Views/DesktopHomeView.cs`, `TrafficHistory.cs`, `Tunnel/NodeLatencyMonitor.cs` | real graph, ping to the node |
+| Home | `Views/DesktopHomeView.cs`, `Views/HomeLayout.cs`, `WindowSizing.cs`, `TrafficHistory.cs`, `Tunnel/NodeLatencyMonitor.cs` | one fixed window, no scroll; real graph; ping to the node every 10 s (best of 3 handshakes) |
 
 Windows screens enter the shared shell through `IPlatformScreens` (registered only under
 `#if WINDOWS`); `PlatformSeparationTests` keeps it that way.
@@ -88,7 +88,7 @@ the archive from Настройки → Диагностика → «Собра�
 cache directory, `DiagnosticPaths`: `xray.log`, `crash.log`, and `native-stderr.log.prev`,
 which is the only place a Go fatal error or a .NET fail-fast of the *previous* session lands), the
 «Состояние» screen text, Event Viewer → Windows Logs → Application (Application Error 1000 /
-.NET Runtime 1026 for `Horus.exe`), and the core version line (`Xray 26.9.9 … <commit>`).
+.NET Runtime 1026 for `Horus.exe`), and the core version line (`Xray 26.10.10 … <commit>`).
 
 ## Rebuilding xray.dll
 
@@ -114,8 +114,9 @@ let `windows-tunnel` run against it. Fork changes go through `bash fork/bin/fork
 - **A SOCKS5 "succeeded" from the core proves nothing.** xray replies before its outbound
   dials (`proxy/socks/protocol.go`, `handshake5`), so `SocksProbe.CanDialAsync` is true for a
   dead outbound — a dead Hysteria2 was accepted at connect and passed every health check. The
-  Windows client asks for an HTTP answer instead (`SocksRoundTrip`); WinTunnelTest swaps in a
-  dead outbound to prove the difference. (Android still uses `SocksProbe` — not changed.)
+  client asks for an HTTP answer instead (`Protocols/SocksRoundTrip.cs`, shared with Android's
+  preflight and `TunnelHealthMonitor`); WinTunnelTest swaps in a dead outbound to prove the
+  difference.
 - **Nothing built while the TUN is up may look a name up.** The app's own resolver goes through
   the tunnel, so with a dead proxy every lookup fails — and the rule reload and the recovery
   swap used to re-resolve the node. They reuse the address learnt at connect (`Session.Addresses`).

@@ -179,7 +179,36 @@ public class LatencyProbeHookTests
         {
             var servers = await LatencyProbe.MeasureAsync([new ServerInfo { Id = 1, Host = "node.example" }]);
             Assert.Equal(42, servers[0].PingMs);
-            Assert.Equal([("node.example", 443), ("node.example", 8443)], asked);
+            // 443 once, then the port that answered for every sample.
+            Assert.Equal([("node.example", 443), .. Enumerable.Repeat(("node.example", 8443), LatencyProbe.Samples)], asked);
+        }
+        finally { LatencyProbe.Connector = null; }
+    }
+
+    [Fact]
+    public async Task The_fastest_of_several_handshakes_is_reported()
+    {
+        // The first handshake on a phone pays for waking the radio or a lost SYN (~1 s):
+        // that is the "1000 ms" a node 40 ms away used to show.
+        var answers = new Queue<int?>([1012, 41, 57]);
+        LatencyProbe.Connector = (_, _, _) => Task.FromResult(answers.Dequeue());
+        try
+        {
+            var servers = await LatencyProbe.MeasureAsync([new ServerInfo { Id = 1, Host = "node.example" }]);
+            Assert.Equal(41, servers[0].PingMs);
+        }
+        finally { LatencyProbe.Connector = null; }
+    }
+
+    [Fact]
+    public async Task A_later_sample_without_an_answer_does_not_erase_the_first()
+    {
+        var answers = new Queue<int?>([63, null, null]);
+        LatencyProbe.Connector = (_, _, _) => Task.FromResult(answers.Dequeue());
+        try
+        {
+            var servers = await LatencyProbe.MeasureAsync([new ServerInfo { Id = 1, Host = "node.example" }]);
+            Assert.Equal(63, servers[0].PingMs);
         }
         finally { LatencyProbe.Connector = null; }
     }

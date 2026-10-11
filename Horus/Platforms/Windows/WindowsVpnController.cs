@@ -216,7 +216,9 @@ namespace Horus.Platforms.Windows
             await BindServerIfNeededAsync(server, ct);
             var (connection, fromCache) = await FetchConnectionAsync(server, ct);
 
-            var candidates = Horus.DevTools.DevOutbound.Restrict(Order(connection.Candidates()));
+            // A protocol that hops ports gets a second try on the node's own port right after
+            // it (OutboundFixups.WithHopFallbacks); a pinned dev outbound stays exactly that.
+            var candidates = Horus.DevTools.DevOutbound.Restrict(OutboundFixups.WithHopFallbacks(Order(connection.Candidates())));
             if (candidates.Count == 0)
                 throw new InvalidOperationException("Сервер не предложил ни одного поддерживаемого способа подключения.");
 
@@ -273,6 +275,25 @@ namespace Horus.Platforms.Windows
 
             SetState(VpnState.Connected, null);
             StartHealthLoop();
+
+            if (CacheRefreshPolicy.AfterConnect(fromCache, index > 0, ConnectionCache.Age))
+                _ = RefreshCachedConnectionAsync();
+        }
+
+        /// <summary>
+        /// Fetches the node's endpoints again for next time — see <see cref="CacheRefreshPolicy"/>.
+        /// Runs through the tunnel just brought up; a failure only means next time uses what is stored.
+        /// </summary>
+        private async Task RefreshCachedConnectionAsync()
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var fresh = await _api.GetServerConnectionAsync(cts.Token);
+                ConnectionCache.Write(fresh);
+                Diag.Info("cache", "endpoints refreshed in the background");
+            }
+            catch (Exception ex) { Diag.Info("cache", $"background refresh skipped: {ex.Message}"); }
         }
 
         public async Task DisconnectAsync()

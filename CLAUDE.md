@@ -82,9 +82,9 @@ All services are registered in `MauiProgram.cs` as singletons. Platform services
 
 `MainViewModel` → `IVpnController.ConnectAsync()` (`VpnManager` on Android) → `ConnectionCache` or, on a miss, `IApiService.GetServerConnectionAsync()` (`GET /servers/connect` — the **API** picks and binds the server, and returns one share link per protocol) → `XrayProtocol.ConnectAsync()` (`XrayTest` then `XrayStart`) → **preflight** (egress IP fetched directly and through the SOCKS5 proxy) → `IVpnPlatformService` (create TUN) → `ITrafficMonitorService` (1 Hz counter poll).
 
-Connect falls back **Hysteria2 → VLESS → olcRTC**, skipping protocols the node didn't publish. A fallback re-renders the config with a different `proxy` outbound; `XrayStop` must run before each retry because `XrayStart` fails while an instance exists.
+Connect falls back **Hysteria2 → VLESS → olcRTC**, skipping protocols the node didn't publish. A candidate with Hysteria2 port hopping (`finalmask` `udpHop`) is followed by the same outbound without it (`OutboundFixups.WithHopFallbacks`): hopping carries nothing unless the node redirects the whole range to its port, and a node restart can lose that NAT rule. `OutboundFixups.Apply` also turns a port written as a string into a number — the core rejects the whole config otherwise. A fallback re-renders the config with a different `proxy` outbound; `XrayStop` must run before each retry because `XrayStart` fails while an instance exists.
 
-Endpoints are cached on the device (`ConnectionCache`, 24 h cap) and tried before the API, so a reconnect costs no round trip. Nothing can tell whether stored keys are still valid except by trying them, so invalidation is **by failure**: the cache is dropped only when every endpoint in it failed to connect — the symptom of the account being re-bound from another device or the node re-provisioning. A user switching servers is caught earlier, because `select` changes the id and a record with the wrong id is discarded on read.
+Endpoints are cached on the device (`ConnectionCache`, 24 h cap) and tried before the API, so a reconnect costs no round trip. After a connect from the cache, the record is refreshed in the background when it is over an hour old or some endpoint in it failed (`CacheRefreshPolicy`), so a profile fixed on the server reaches the device without waiting for every endpoint to fail. Nothing can tell whether stored keys are still valid except by trying them, so invalidation is **by failure**: the cache is dropped only when every endpoint in it failed to connect — the symptom of the account being re-bound from another device or the node re-provisioning. A user switching servers is caught earlier, because `select` changes the id and a record with the wrong id is discarded on read.
 
 ### Two invariants that silently kill the tunnel
 
@@ -208,10 +208,14 @@ subscription is inactive.
 
 ## Implementation Status
 
-Auth, servers, connect and the xray pipeline are wired to the real backend; buying a subscription is the site's (see above). Server ping is a TCP handshake per node (`LatencyProbe`; pinned to the physical interface on Windows). The shared Settings kill-switch toggle is still a placeholder; on Windows it is replaced by a working one (`WindowsSettingsSection`). See `docs/PLAN-remaining-functions.md`.
+Auth, servers, connect and the xray pipeline are wired to the real backend; buying a subscription is the site's (see above). Server ping is the fastest of three TCP handshakes per node, with the name resolved outside the timer (`LatencyProbe`; pinned to the physical interface on Windows) — a single handshake reported DNS, radio wake-up and SYN retransmits (~1000 ms on Android). The Windows home measures the connected node every 10 s. The shared Settings kill-switch toggle is still a placeholder; on Windows it is replaced by a working one (`WindowsSettingsSection`). See `docs/PLAN-remaining-functions.md`.
 
 ## UI / Styling
 
 All colors, typography, and spacing are defined as `StaticResource` in `Presentation/View/App.xaml`. The palette uses deep purples (`DeepVoid`, `NightPurple`) with neon accents (`NeonCyan #00E5FF`, `NeonViolet #BF5FFF`, `NeonGreen #39FF9F`). Status-specific colors follow the pattern `Connected*`, `Disconnected*`, `Connecting*`. Always use these resources rather than inline hex values.
 
 Navigation is a custom root page (`RootPage`, screens switched by `Navigator`): sidebar on desktop, bottom tabs on phones. Windows adds its own Home, an «Приложения» screen and a Settings section through `IPlatformScreens`; they are built in C# under `Platforms/Windows/Views/` and take every colour and style from `App.xaml` through `Ui`.
+
+The Windows window has **one size and cannot be resized** (`HomeLayout`, applied by `WindowSizing` at window creation): 1040×640 effective pixels, shrunk to the work area on a smaller screen (down to 1280×720 at 150 %, where the ring is about 96 and the button shows its word without the logo). The home screen has no scroll bar — the connect ring takes what the column leaves (`HomeLayout.RingDiameter`), so anything added to the connect column must be counted in `ConnectColumnFixed`, and the graph takes its width from its column, never from its text.
+
+Support channels (`SupportChannels`, from `appsettings.json`) open through `SupportPage`: Settings has a section per channel, the sign-in screens a «Нужна помощь?» link, and a failed connect offers them next to collecting logs.
