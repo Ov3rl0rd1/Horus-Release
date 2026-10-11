@@ -25,7 +25,9 @@ namespace Horus.Platforms.Windows.Views
         public const double MinWindowHeight = 480;
 
         public const double MaxRing = 250;
-        public const double MinRing = 130;
+
+        /// <summary>Small enough for the connect column to fit a 432-high window (1280×720 at 150%).</summary>
+        public const double MinRing = 90;
 
         /// <summary>
         /// Everything in the connect column except the ring: the status pill, the protocol

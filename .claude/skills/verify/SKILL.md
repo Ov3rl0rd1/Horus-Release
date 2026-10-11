@@ -43,7 +43,7 @@ failed with "Missing from the publish output: publish/win-x64/wintun.dll".
 | Android Debug | 39 warnings, 0 errors |
 | Windows Debug | 129 warnings, 0 errors |
 | WinUiTypeCheck | builds, warnings are the shared MVVM-toolkit ones |
-| tests | **403 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed |
+| tests | **405 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed |
 
 The counts are noisy by design (obsolete MAUI `Frame`, `CA1416` platform-availability,
 `CS0067` unused events on the stub services). What matters is that no **new kind** appears —

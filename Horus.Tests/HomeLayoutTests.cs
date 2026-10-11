@@ -26,6 +26,7 @@ public class HomeLayoutTests
     [InlineData(1093, 582)]    // 1366×768 at 125%
     [InlineData(1024, 536)]    // 1280×720 at 125%
     [InlineData(1097, 571)]    // 1366×768 at 125% with a 40 px taskbar on top of it
+    [InlineData(853, 432)]     // 1280×720 at 150%
     public void A_small_screen_gets_the_window_inside_its_work_area(double w, double h)
     {
         var (width, height) = HomeLayout.FitWindow(w, h);
@@ -50,11 +51,14 @@ public class HomeLayoutTests
     public void The_ring_takes_the_height_the_column_has_left(double column, double expected) =>
         Assert.Equal(expected, HomeLayout.RingDiameter(column));
 
-    [Fact]
-    public void On_the_smallest_window_the_connect_column_still_fits()
+    [Theory]
+    [InlineData(HomeLayout.MinWindowHeight)]
+    [InlineData(432)]   // 1280×720 at 150%: the whole work area, below the minimum
+    public void On_the_smallest_window_the_connect_column_still_fits(double window)
     {
-        // 480 high outer window: about 450 of client area, 42 of padding.
-        var column = HomeLayout.MinWindowHeight - 32 - 42;
-        Assert.True(HomeLayout.RingDiameter(column) + HomeLayout.ConnectColumnFixed <= column + 1);
+        // The title bar takes about 32, the home screen's padding 42.
+        var column = window - 32 - 42;
+        Assert.True(HomeLayout.RingDiameter(column) + HomeLayout.ConnectColumnFixed <= column + 1,
+            $"ring {HomeLayout.RingDiameter(column)} + {HomeLayout.ConnectColumnFixed} in {column}");
     }
 }

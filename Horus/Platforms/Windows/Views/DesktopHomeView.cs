@@ -47,6 +47,8 @@ namespace Horus.Platforms.Windows.Views
         private Ellipse _ringOutline = null!;
         private Border _face = null!;
         private Image _logo = null!;
+        private Label _word = null!;
+        private VerticalStackLayout _faceStack = null!;
 
         private CancellationTokenSource? _spin;
         private bool _visible;
@@ -143,7 +145,7 @@ namespace Horus.Platforms.Windows.Views
             // The button.
             var logo = _logo = new Image { Source = "logo_gold.png", WidthRequest = 84, HorizontalOptions = LayoutOptions.Center };
             logo.SetBinding(OpacityProperty, nameof(MainViewModel.LogoOpacity));
-            var word = new Label
+            var word = _word = new Label
             {
                 FontSize = 13.5, FontAttributes = FontAttributes.Bold, CharacterSpacing = 2.5,
                 FontFamily = Ui.F("FontBold"), HorizontalOptions = LayoutOptions.Center
@@ -161,7 +163,7 @@ namespace Horus.Platforms.Windows.Views
                 Background = new LinearGradientBrush(
                     new GradientStopCollection { new GradientStop(Ui.C("HzRingTop"), 0), new GradientStop(Ui.C("HzRingBottom"), 1) },
                     new Point(0, 0), new Point(1, 1)),
-                Content = new VerticalStackLayout
+                Content = _faceStack = new VerticalStackLayout
                 {
                     Spacing = 12,
                     HorizontalOptions = LayoutOptions.Center,
@@ -225,6 +227,14 @@ namespace Horus.Platforms.Windows.Views
             _face.WidthRequest = _face.HeightRequest = face;
             _face.StrokeShape = new RoundRectangle { CornerRadius = face / 2 };
             _logo.WidthRequest = diameter * 84 / 250;
+
+            // "ПОДКЛЮЧИТЬ" must stay inside the face: the word shrinks with it down to a
+            // readable size, and on the smallest faces it is shown without the logo.
+            var scale = diameter / HomeLayout.MaxRing;
+            _word.FontSize = Math.Max(9, 13.5 * scale);
+            _word.CharacterSpacing = 2.5 * scale;
+            _faceStack.Spacing = 12 * scale;
+            _logo.IsVisible = face >= 120;
         }
 
         private View BuildServerChip()
