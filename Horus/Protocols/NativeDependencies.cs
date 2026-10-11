@@ -28,28 +28,11 @@ namespace Horus.Protocols
                     "xray.dll", string.Empty, Required: true,
                     "Ядро VPN. Без него подключение невозможно."),
 
-                // The TUN bridge. All three live in one directory because hev resolves
-                // wintun.dll with LOAD_LIBRARY_SEARCH_APPLICATION_DIR — the directory of
-                // the exe, not of this app.
+                // Next to the exe, not in Resources\Native: the core creates the TUN
+                // in-process and loads wintun from the application's directory.
                 new NativeDependency(
-                    "hev-socks5-tunnel.exe", NativeDirectory, Required: true,
-                    "Мост между TUN-адаптером и SOCKS5-входом ядра. Без него туннель не поднимется."),
-
-                new NativeDependency(
-                    "msys-2.0.dll", NativeDirectory, Required: true,
-                    "Рантайм, с которым собран мост туннеля."),
-
-                new NativeDependency(
-                    "wintun.dll", NativeDirectory, Required: true,
-                    "Драйвер TUN-адаптера."),
-
-                new NativeDependency(
-                    "WinDivert.dll", NativeDirectory, Required: false,
-                    "Split tunneling по процессам."),
-
-                new NativeDependency(
-                    "WinDivert64.sys", NativeDirectory, Required: false,
-                    "Драйвер WinDivert. Нужен вместе с WinDivert.dll."),
+                    "wintun.dll", string.Empty, Required: true,
+                    "Драйвер TUN-адаптера. Без него туннель не поднимется."),
             ];
 #else
             // Packaged into the app bundle; nothing to verify at runtime.

@@ -64,6 +64,21 @@
                                         TextColor="{Binding TabHomeActive, Converter={StaticResource ActiveTextColor}}" />
                                 </Grid>
                             </Border>
+                            <!-- Only where the platform supplies the screen (Windows). -->
+                            <Border Padding="0" StrokeThickness="0" IsVisible="{Binding HasAppsScreen}"
+                                    BackgroundColor="{Binding TabAppsActive, Converter={StaticResource ActiveTabBg}}">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding NavAppsCommand}" />
+                                </Border.GestureRecognizers>
+                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="13" Padding="15,0" HeightRequest="52">
+                                    <controls:IconView Grid.Column="0" Kind="Apps" IconSize="22" StrokeWidth="1.7" VerticalOptions="Center"
+                                        Color="{Binding TabAppsActive, Converter={StaticResource ActiveTextColor}}" />
+                                    <Label Grid.Column="1" Text="Приложения" VerticalOptions="Center" FontSize="15.5"
+                                        FontFamily="{StaticResource FontBold}" FontAttributes="Bold"
+                                        TextColor="{Binding TabAppsActive, Converter={StaticResource ActiveTextColor}}" />
+                                </Grid>
+                            </Border>
                             <Border Padding="0" StrokeThickness="0"
                                     BackgroundColor="{Binding TabServersActive, Converter={StaticResource ActiveTabBg}}">
                                 <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
@@ -152,12 +167,15 @@
                     <Grid IsVisible="{Binding IsConfirm}"><screens:ConfirmView BindingContext="{Binding Auth}" /></Grid>
                     <Grid IsVisible="{Binding IsReset}"><screens:ResetView BindingContext="{Binding Auth}" /></Grid>
                     <Grid IsVisible="{Binding IsHome}">
-                        <screens:HomeViewDesktop BindingContext="{Binding Main}" IsVisible="{OnIdiom Desktop=True, Tablet=True, Default=False}" />
+                        <screens:HomeViewDesktop x:Name="SharedDesktopHome" BindingContext="{Binding Main}" IsVisible="{OnIdiom Desktop=True, Tablet=True, Default=False}" />
                         <screens:HomeView BindingContext="{Binding Main}" IsVisible="{OnIdiom Phone=True, Default=False}" />
+                        <!-- A platform's own home, when it has one (RootPage.xaml.cs). -->
+                        <ContentView x:Name="PlatformHomeHost" IsVisible="False" />
                     </Grid>
                     <Grid IsVisible="{Binding IsServers}"><screens:ServersView BindingContext="{Binding Servers}" /></Grid>
-                    <Grid IsVisible="{Binding IsSettings}"><screens:SettingsView BindingContext="{Binding Settings}" /></Grid>
+                    <Grid IsVisible="{Binding IsSettings}"><screens:SettingsView x:Name="SettingsScreen" BindingContext="{Binding Settings}" /></Grid>
                     <Grid IsVisible="{Binding IsSplit}"><screens:SplitTunnelingView BindingContext="{Binding Settings}" /></Grid>
+                    <Grid IsVisible="{Binding IsApps}"><ContentView x:Name="AppsHost" /></Grid>
                 </Grid>
             </Grid>
 

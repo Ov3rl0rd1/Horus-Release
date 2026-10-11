@@ -36,7 +36,20 @@ namespace Horus.Presentation.ViewModels
         /// </summary>
         public string AppVersion => $"{AppInfo.Current.VersionString} ({AppInfo.Current.BuildString})";
 
-        public string SupportHandle => AppConfiguration.SupportHandle;
+        // Support: one row per channel configured in appsettings.json, hidden when absent.
+        private static SupportChannel? Channel(string name) =>
+            SupportChannels.Configured.FirstOrDefault(c => c.Name == name);
+
+        public string? SupportTelegram => Channel(SupportChannels.Telegram)?.Display;
+        public bool HasSupportTelegram => SupportTelegram is not null;
+        public string? SupportVk => Channel(SupportChannels.Vk)?.Display;
+        public bool HasSupportVk => SupportVk is not null;
+        public string? SupportEmail => Channel(SupportChannels.Email)?.Display;
+        public bool HasSupportEmail => SupportEmail is not null;
+
+        [RelayCommand]
+        private Task OpenSupportAsync(string name) =>
+            Channel(name) is { } channel ? SupportPage.OpenAsync(channel) : Task.CompletedTask;
 
         // ── Connection toggles (placeholders — not yet enforced) ──
         /// <summary>
@@ -734,6 +747,12 @@ namespace Horus.Presentation.ViewModels
                     await Dialog.Alert("Архив сохранён",
                         $"Не удалось открыть меню отправки. Файл лежит здесь:\n\n{path}");
                 }
+
+                // The archive only helps once someone at support has it.
+                if (SupportChannels.Configured.Count > 0 && await Dialog.Confirm("Отправить в поддержку?",
+                        $"Приложите файл {Path.GetFileName(path)} к сообщению — так мы быстрее разберёмся.",
+                        "Написать", "Не сейчас"))
+                    await SupportPage.ChooseAsync("Куда отправить логи?");
             }
             catch (Exception ex)
             {

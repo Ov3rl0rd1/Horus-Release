@@ -6,7 +6,7 @@ using Horus.Protocols;
 
 namespace Horus.Application
 {
-    public class VpnManager
+    public class VpnManager : IVpnController
     {
         public event EventHandler<VpnStateChangedEventArgs>? StateChanged;
         public event EventHandler<ConnectionErrorEventArgs>? ConnectionError;
@@ -283,6 +283,10 @@ namespace Horus.Application
                 // link changes.
                 var available = OrderCandidates(connection.Candidates());
 
+                // A protocol that hops ports gets a second try on the node's own port right
+                // after it: hopping needs a NAT rule on the node that is easily lost.
+                available = OutboundFixups.WithHopFallbacks(available);
+
                 // DEV-PANEL ── pre-release test harness; delete this line with Horus/DevTools/.
                 // Returns the list untouched unless a tester has pinned one outbound.
                 available = Horus.DevTools.DevOutbound.Restrict(available);
@@ -297,6 +301,12 @@ namespace Horus.Application
                 ActiveProtocol = protocol;
                 ActiveOfferId = usedConfig.OfferId;
                 ActiveOfferLabel = usedConfig.DisplayName;
+
+                // A stored profile that had to fall back, or is old, is fetched again for next
+                // time: a fix on the node then arrives with the next connect (CacheRefreshPolicy).
+                if (CacheRefreshPolicy.AfterConnect(
+                        _usingCachedConnection, usedConfig.OfferId != available[0].Id, ConnectionCache.Age))
+                    _ = RefreshCachedConnectionAsync();
 
                 // Establish TUN, apply routing
                 var tunnelOptions = BuildTunnelOptions(server, usedConfig);
@@ -462,19 +472,18 @@ namespace Horus.Application
             }
 
             // Neither check answered, which for these users usually means our own API is
-            // blocked rather than that the tunnel is broken. This used to accept the
-            // protocol on that basis, and that is how a tunnel that could not dial at all
-            // reached the user showing ЗАЩИЩЕНО. Ask the core directly instead: a SOCKS5
-            // CONNECT needs nothing of ours and its reply code says whether the core can
-            // resolve and reach anything at all.
-            var canDial = await SocksProbe.CanDialAsync(
-                socksPort, "cloudflare.com", 443, TimeSpan.FromSeconds(8), ct);
+            // blocked rather than that the tunnel is broken. Ask for something neutral
+            // through the proxy and want the answer back. Not the SOCKS reply: the core
+            // says "succeeded" to a CONNECT before its outbound has dialled anything, so a
+            // reply-only check accepted a dead Hysteria2 and showed ЗАЩИЩЕНО over nothing.
+            var carried = await SocksRoundTrip.AnyCarriesAsync(
+                socksPort, SocksRoundTrip.DefaultTargets, TimeSpan.FromSeconds(8), ct);
 
-            OnProtocolOutput(this, canDial
-                ? "[preflight] Both checks silent, but the core dialled out — accepting."
-                : "[preflight] Both checks silent and the core could not dial — rejecting.");
+            OnProtocolOutput(this, carried
+                ? "[preflight] Both checks silent, but a request through the proxy was answered — accepting."
+                : "[preflight] Both checks silent and nothing came back through the proxy — rejecting.");
 
-            return canDial;
+            return carried;
         }
 
         // ── Health and recovery ─────────────────────────────────────────────
@@ -1194,6 +1203,22 @@ namespace Horus.Application
         /// failure should discard them and try the API once more.
         /// </summary>
         private bool _usingCachedConnection;
+
+        /// <summary>
+        /// Fetches the node's endpoints again for next time — see <see cref="CacheRefreshPolicy"/>.
+        /// The app's own traffic bypasses the tunnel here, so this does not depend on it.
+        /// </summary>
+        private async Task RefreshCachedConnectionAsync()
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var fresh = await _api.GetServerConnectionAsync(cts.Token);
+                ConnectionCache.Write(fresh);
+                Diag.Info("cache", "endpoints refreshed in the background");
+            }
+            catch (Exception ex) { Diag.Info("cache", $"background refresh skipped: {ex.Message}"); }
+        }
 
         /// <summary>
         /// Reserves a slot on the chosen node, when the user chose one.

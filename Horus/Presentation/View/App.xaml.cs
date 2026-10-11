@@ -104,7 +104,7 @@ namespace Horus
             // system does not always restart a sticky foreground service — measured on a
             // real device, it did not restart it at all — so this is what actually brings
             // the VPN back for a user who never turned it off.
-            try { await _services.GetRequiredService<VpnManager>().TryRestoreOrAutoConnectAsync(); }
+            try { await _services.GetRequiredService<IVpnController>().TryRestoreOrAutoConnectAsync(); }
             catch (Exception ex) { Diag.Warn("app", $"startup connect failed: {ex.Message}"); }
         }
     }

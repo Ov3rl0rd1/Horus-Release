@@ -52,6 +52,13 @@ namespace Horus.Application.Routing
             get { lock (_gate) return _compiled; }
         }
 
+        /// <summary>
+        /// Raised after a rule is added or removed. The Windows client applies the change to
+        /// the running core at once (a routing reload, no reconnect); nothing on Android
+        /// listens, so there it still applies from the next connect.
+        /// </summary>
+        public event EventHandler? Changed;
+
         /// <summary>What the screen shows.</summary>
         public IReadOnlyList<StoredSiteRule> Entries
         {
@@ -73,6 +80,7 @@ namespace Horus.Application.Routing
             }
 
             Save();
+            Changed?.Invoke(this, EventArgs.Empty);
             return true;
         }
 
@@ -86,6 +94,7 @@ namespace Horus.Application.Routing
             }
 
             Save();
+            Changed?.Invoke(this, EventArgs.Empty);
         }
 
         /// <summary>Rebuilds the normalised list. Called with the lock held.</summary>

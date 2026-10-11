@@ -50,7 +50,7 @@ namespace Horus.Application.Update
         private readonly IDeviceConditions _conditions;
         private readonly IUserNotifier _notifier;
         private readonly IHttpClientFactory _http;
-        private readonly VpnManager _vpn;
+        private readonly IVpnController _vpn;
         private readonly IErrorReportingService _log;
 
         private CancellationTokenSource? _cts;
@@ -149,7 +149,7 @@ namespace Horus.Application.Update
             IDeviceConditions conditions,
             IUserNotifier notifier,
             IHttpClientFactory http,
-            VpnManager vpn,
+            IVpnController vpn,
             IErrorReportingService log)
         {
             // Order matters: GitHub first, the site as the fallback.

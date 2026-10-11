@@ -17,7 +17,7 @@ namespace Horus.Presentation.ViewModels
     /// </summary>
     public partial class MainViewModel : ObservableObject
     {
-        private readonly VpnManager _vpnManager;
+        private readonly IVpnController _vpnManager;
         private readonly ITrafficMonitorService _traffic;
         private readonly ISubscriptionService _subscription;
         private readonly IAuthService _auth;
@@ -83,7 +83,7 @@ namespace Horus.Presentation.ViewModels
         }
 
         public MainViewModel(
-            VpnManager vpnManager,
+            IVpnController vpnManager,
             ITrafficMonitorService traffic,
             ISubscriptionService subscription,
             IAuthService auth,
@@ -384,12 +384,16 @@ namespace Horus.Presentation.ViewModels
             }
             catch (Exception ex)
             {
-                // Offer the archive right here — a tester who has to go hunting through
-                // Settings after a failure mostly just doesn't.
-                var collect = await Dialog.Confirm(
-                    "Не удалось подключиться", ex.Message, "Собрать логи", "Закрыть");
+                // Offer the archive and a way to reach us right here — someone who has to go
+                // hunting through Settings after a failure mostly just doesn't.
+                const string logs = "Собрать логи";
+                const string support = "Написать в поддержку";
+                var choice = await Dialog.ActionSheet(
+                    $"Не удалось подключиться\n\n{ex.Message}", "Закрыть", null,
+                    SupportChannels.Configured.Count > 0 ? [support, logs] : [logs]);
 
-                if (collect) await CollectLogsAsync();
+                if (choice == logs) await CollectLogsAsync();
+                else if (choice == support) await SupportPage.ChooseAsync();
             }
         }
 

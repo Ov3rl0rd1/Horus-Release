@@ -57,6 +57,13 @@
                     <Button Text="Вернуться ко входу" Style="{StaticResource HzPrimaryButton}"
                             Command="{Binding GoLoginCommand}" />
                 </VerticalStackLayout>
+                <HorizontalStackLayout HorizontalOptions="Center" Spacing="6" Margin="0,16,0,0"
+                                       IsVisible="{Binding HasSupport}">
+                    <Label Style="{StaticResource HzDim}" Text="Нужна помощь?" />
+                    <Button Text="Поддержка" Padding="0" BackgroundColor="Transparent"
+                            TextColor="{StaticResource HzGoldLight}" FontSize="13"
+                            FontFamily="{StaticResource FontBold}" Command="{Binding ContactSupportCommand}" />
+                </HorizontalStackLayout>
               </VerticalStackLayout>
             </Border>
         </Grid>

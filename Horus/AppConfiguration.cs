@@ -17,6 +17,12 @@ namespace Horus
         /// <summary>Telegram handle shown on the Settings screen for support contact.</summary>
         public static string SupportHandle { get; set; } = "@horus_vpn";
 
+        /// <summary>Support in Telegram, a link or a handle (<c>SupportHandleTG</c>). See <see cref="Application.SupportChannels"/>.</summary>
+        public static string SupportTelegram { get; set; } = "";
+
+        /// <summary>Support in VK, a link or a handle (<c>SupportHandleVK</c>).</summary>
+        public static string SupportVk { get; set; } = "";
+
         /// <summary>
         /// The GitHub releases page, exactly as a person would paste it from a browser.
         /// The updater derives the API endpoint from it, so pointing this at a different

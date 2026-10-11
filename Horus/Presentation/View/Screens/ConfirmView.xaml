@@ -49,6 +49,13 @@
                         BackgroundColor="Transparent" TextColor="{StaticResource HzTextDim}"
                         FontSize="13" FontFamily="{StaticResource FontBold}"
                         Command="{Binding ResendCodeCommand}" />
+                <HorizontalStackLayout HorizontalOptions="Center" Spacing="6" Margin="0,4,0,0"
+                                       IsVisible="{Binding HasSupport}">
+                    <Label Style="{StaticResource HzDim}" Text="Нужна помощь?" />
+                    <Button Text="Поддержка" Padding="0" BackgroundColor="Transparent"
+                            TextColor="{StaticResource HzGoldLight}" FontSize="13"
+                            FontFamily="{StaticResource FontBold}" Command="{Binding ContactSupportCommand}" />
+                </HorizontalStackLayout>
               </VerticalStackLayout>
             </Border>
         </Grid>

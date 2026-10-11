@@ -1,4 +1,5 @@
 using Horus.Application;
+using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 using Horus.Presentation.Navigation;
 
@@ -96,7 +97,7 @@ namespace Horus.DevTools
         /// cost is that nothing is listed until the app has connected once — acceptable for
         /// a test build, and the panel says so.</para>
         /// </summary>
-        public static async Task ShowAsync(VpnManager vpn)
+        public static async Task ShowAsync(IVpnController vpn)
         {
             var cached = ConnectionCache.Read(vpn.ActiveServer?.Id);
             IReadOnlyList<ConnectionCandidate> candidates = cached?.Candidates() ?? [];
@@ -171,7 +172,7 @@ namespace Horus.DevTools
         /// the next manual connect. Failures are shown rather than swallowed — this is a
         /// diagnostic tool, and a protocol that cannot come up is the result being looked for.
         /// </summary>
-        private static async Task ReconnectAsync(VpnManager vpn)
+        private static async Task ReconnectAsync(IVpnController vpn)
         {
             try
             {
