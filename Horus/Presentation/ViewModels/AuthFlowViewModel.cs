@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Horus.Application;
 using Horus.Domain.Interfaces;
 using Horus.Domain.Models;
 using Horus.Presentation.Navigation;
@@ -90,6 +91,12 @@ namespace Horus.Presentation.ViewModels
         [RelayCommand] private void GoRegister() { ClearError(); _nav.Go(AppScreen.Register); }
         [RelayCommand] private void GoReset() { ClearError(); ResetSent = false; _nav.Go(AppScreen.Reset); }
         [RelayCommand] private void BackFromConfirm() { if (_confirmFromLogin) GoLogin(); else GoRegister(); }
+
+        /// <summary>Someone stuck before signing in (no code, forgotten login) can still reach support.</summary>
+        [RelayCommand] private Task ContactSupportAsync() => SupportPage.ChooseAsync("Нужна помощь со входом?");
+
+        /// <summary>The support row is shown only when this build has somewhere to write.</summary>
+        public bool HasSupport => SupportChannels.Configured.Count > 0;
 
         // ── Login ──
         [RelayCommand]

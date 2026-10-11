@@ -19,9 +19,15 @@ namespace Horus.Platforms.Windows.Tunnel
     public sealed class NodeLatencyMonitor
     {
         public const int Capacity = 60;
-        private const int Window = 15;
+        public const int Window = 15;
         private const int MissesBeforeNextPort = 2;
-        private static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(2);
+        /// <summary>
+        /// One handshake every ten seconds. It was two: five times the load on every node
+        /// for each user watching the home screen, for a number that moves on the scale of
+        /// minutes. Ten still fills the strip (<see cref="Capacity"/> samples, ten minutes) and
+        /// gives the label <see cref="Window"/> samples to judge by.
+        /// </summary>
+        public static readonly TimeSpan DefaultInterval = TimeSpan.FromSeconds(10);
         private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
         private static readonly int[] FallbackPorts = [443, 80];
 

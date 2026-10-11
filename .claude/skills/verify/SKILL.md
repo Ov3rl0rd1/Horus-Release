@@ -43,7 +43,7 @@ failed with "Missing from the publish output: publish/win-x64/wintun.dll".
 | Android Debug | 39 warnings, 0 errors |
 | Windows Debug | 129 warnings, 0 errors |
 | WinUiTypeCheck | builds, warnings are the shared MVVM-toolkit ones |
-| tests | **361 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed |
+| tests | **403 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed |
 
 The counts are noisy by design (obsolete MAUI `Frame`, `CA1416` platform-availability,
 `CS0067` unused events on the stub services). What matters is that no **new kind** appears —
@@ -72,9 +72,14 @@ not one — it is the wrong TFM. `Horus.csproj:14-16` is the source of truth.
   Windows has no bridge at all, and a test keeps it that way.
 - `WindowsTunnelConfigTests` — the config the Windows core runs: TUN inbound, DNS hijack,
   lead routing rules, process matchers for split tunnelling.
-- `SocksRoundTripTests` — the Windows proof that the proxy carries traffic. Its fake SOCKS
+- `SocksRoundTripTests` — the proof, on both platforms, that the proxy carries traffic. Its fake SOCKS
   server says "succeeded" before dialling, as xray does; a probe that trusts the reply accepts
   a dead outbound. Only a status line from the far end counts.
+- `OutboundFixupsTests` — what is corrected in a node's outbound before the core sees it
+  (a port written as a string, Hysteria2 without `h3`) and the no-hopping retry added after a
+  candidate with `udpHop`. A string port makes the core reject the whole config.
+- `HomeLayoutTests` — the fixed Windows window on real work areas (1080p at 150 %, 1366×768
+  at 125 %): it never exceeds the screen, and the connect ring shrinks instead of scrolling.
 - `NetworkPathTests`, `ProxyStallDetectorTests` — which network events and which traffic
   patterns the Windows controller may act on. Acting on the wrong one resets sessions.
 - `AppTrafficTests`, `WindowsTelemetryTests` — the applications screen's per-app routes and

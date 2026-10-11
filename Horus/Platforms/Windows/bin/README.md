@@ -23,7 +23,8 @@ go build -buildmode=c-shared -trimpath -buildvcs=false \
   -o xray.dll ./libxray
 ```
 
-The shipped `xray.dll` is fork commit **3a7d99ff** (the core logs it at start: `Xray 26.9.9 … 3a7d99ff`):
+The shipped `xray.dll` is fork commit **d813c77d** — the fork rebased onto upstream v26.10.10, release
+`lib-from-v26.10.10` (the core logs it at start: `Xray 26.10.10 … d813c77`). It carries the
 embedded-TUN lifecycle, live controls, outbound binding by route metric, the gVisor NIC
 attached only after its handlers, and an adapter GUID that is not still held by the previous
 adapter's device (`proxy/tun/fork_open_windows.go` — a reconnect used to fail with wintun's

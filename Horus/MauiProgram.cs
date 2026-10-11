@@ -6,6 +6,7 @@ using Horus.Presentation.View;
 using Horus.Presentation.ViewModels;
 using Horus.Protocols;
 using Microsoft.Extensions.Logging;
+using Microsoft.Maui.LifecycleEvents;
 using System.Reflection;
 using System.Text.Json;
 
@@ -30,6 +31,11 @@ namespace Horus
 
             builder
                 .UseMauiApp<App>()
+#if WINDOWS
+                // One fixed window size (Platforms/Windows/WindowSizing.cs): the home screen
+                // is laid out for it and does not scroll.
+                .ConfigureLifecycleEvents(events => events.AddWindows(w => w.OnWindowCreated(WindowSizing.Apply)))
+#endif
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
@@ -229,6 +235,11 @@ namespace Horus
                     AppConfiguration.SupportHandle = tg.GetString() ?? AppConfiguration.SupportHandle;
                 else if (root.TryGetProperty("SupportHandle", out var handle))
                     AppConfiguration.SupportHandle = handle.GetString() ?? AppConfiguration.SupportHandle;
+                AppConfiguration.SupportTelegram = AppConfiguration.SupportHandle;
+
+                // Links or handles; SupportChannels turns either into something to open.
+                if (root.TryGetProperty("SupportHandleVK", out var vk))
+                    AppConfiguration.SupportVk = vk.GetString() ?? AppConfiguration.SupportVk;
 
                 if (root.TryGetProperty("UpdateReleasesUrl", out var releases))
                     AppConfiguration.UpdateReleasesUrl = releases.GetString() ?? AppConfiguration.UpdateReleasesUrl;
