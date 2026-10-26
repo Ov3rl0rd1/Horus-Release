@@ -12,18 +12,18 @@ namespace Horus.Platforms.Windows
     /// The Windows side of the tunnel, now that the core owns it.
     ///
     /// <para><b>What moved into the core.</b> This class used to start hev-socks5-tunnel as
-    /// a child process, wait for the wintun adapter it created, then install routes with
-    /// <c>route add</c>, set DNS with <c>netsh</c>, keep a journal of every route for crash
-    /// recovery, and kill orphaned bridges left by earlier crashes. The core's TUN inbound
-    /// creates the adapter in-process and sets its address, MTU, metric, DNS server and
-    /// routes through IP Helper; the routes live on the adapter, so they vanish with it — a
-    /// crash cannot strand them, and there is nothing to journal or sweep. The core also
-    /// pins its own sockets to the physical interface, so no host route is needed to keep
-    /// its connection to the node out of the tunnel.</para>
+    /// a child process, wait for the wintun adapter it created, then install host routes,
+    /// set DNS, keep a journal of every route for crash recovery, and kill orphaned bridges
+    /// left by earlier crashes. The core's TUN inbound creates the adapter in-process and
+    /// sets its address, MTU, metric, DNS server and routes through IP Helper; the routes
+    /// live on the adapter, so they vanish with it. It also keeps DNS from leaving by any
+    /// other interface with WFP filters in a dynamic session, which Windows deletes with the
+    /// process. Nothing this tunnel changes in the system outlives the app — a crash or a
+    /// shutdown with the VPN on cannot leave the machine without name resolution.</para>
     ///
     /// <para><b>What is left here.</b> Confirming the adapter actually came up, the one
-    /// thing the core cannot do — a name-resolution policy (NRPT) that stops Windows asking
-    /// the physical adapter's resolvers in parallel — and the counters for the speed graph.</para>
+    /// thing the core cannot do, the counters for the speed graph, and removing what older
+    /// builds left behind.</para>
     /// </summary>
     [SupportedOSPlatform("windows")]
     public sealed class WindowsVpnService : IVpnPlatformService
@@ -31,21 +31,21 @@ namespace Horus.Platforms.Windows
         /// <summary>How long the adapter gets to report itself up after the core started.</summary>
         private static readonly TimeSpan AdapterTimeout = TimeSpan.FromSeconds(15);
 
-        /// <summary>Tags our NRPT rules so cleanup removes ours and nobody else's.</summary>
-        private const string NrptComment = "Horus VPN";
+        /// <summary>Tags the NRPT rules older builds added, so the sweep removes theirs and nobody else's.</summary>
+        private const string LegacyNrptComment = "Horus VPN";
 
         private TunnelState _state = TunnelState.Stopped;
         private int _ifIndex;
 
         public WindowsVpnService()
         {
-            // A previous run may have died with its DNS policy in place: unlike routes, an
-            // NRPT rule is not tied to the adapter and outlives a crash. Builds before this
-            // one also left route journals; their routes are gone with their adapters, but
-            // their host routes on the physical interface are not.
+            // Older builds bound DNS with an NRPT rule, which is not tied to the adapter: one
+            // that died with the VPN on left every lookup on the machine pointed at a resolver
+            // that no longer existed. Older still, they left route journals; those routes are
+            // gone with their adapters, but their host routes on the physical interface are not.
             _ = Task.Run(async () =>
             {
-                try { await ClearDnsPolicyAsync(); }
+                try { await ClearLegacyDnsPolicyAsync(); }
                 catch (Exception ex) { Debug.WriteLine($"[Horus] NRPT sweep: {ex.Message}"); }
 
                 try { await SweepLegacyRoutesAsync(); }
@@ -80,8 +80,8 @@ namespace Horus.Platforms.Windows
         }
 
         /// <summary>
-        /// Called once the core is running with its TUN inbound. Waits for the adapter and
-        /// applies the DNS policy; the routes are already in place.
+        /// Called once the core is running with its TUN inbound. Waits for the adapter; its
+        /// routes and DNS are already in place.
         /// </summary>
         public async Task StartTunnelAsync(TunnelOptions options, CancellationToken ct = default)
         {
@@ -94,12 +94,6 @@ namespace Horus.Platforms.Windows
                         "без него TUN-адаптер не создать. Переустановите приложение.");
 
                 _ifIndex = await WaitForAdapterAsync(ct);
-
-                // Not awaited into the connect: the tunnel already carries DNS, and the policy
-                // only closes the parallel-query path to the router. A second here or there is
-                // not worth delaying the user's connection for.
-                _ = ApplyDnsPolicyAsync(options.DnsServers);
-
                 SetState(TunnelState.Started);
             }
             catch
@@ -110,26 +104,21 @@ namespace Horus.Platforms.Windows
             }
         }
 
-        public async Task StopTunnelAsync()
+        /// <summary>The adapter goes with the core; this only records that it went.</summary>
+        public Task StopTunnelAsync()
         {
-            if (_state == TunnelState.Stopped) return;
-
-            SetState(TunnelState.Stopping);
-            try
-            {
-                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-                await ClearDnsPolicyAsync().WaitAsync(timeout.Token);
-            }
-            catch (Exception ex) { Diag.Warn("tunnel", $"DNS policy not cleared: {ex.Message}"); }
+            if (_state == TunnelState.Stopped) return Task.CompletedTask;
 
             _ifIndex = 0;
             SetState(TunnelState.Stopped);
+            return Task.CompletedTask;
         }
 
         /// <summary>Per-destination policy is the core's routing; nothing to do here.</summary>
         public Task ApplyRoutingRulesAsync(IEnumerable<RoutingRule> rules) => Task.CompletedTask;
 
-        public Task SetDnsAsync(string[] dnsServers) => ApplyDnsPolicyAsync(dnsServers);
+        /// <summary>DNS is the core's: the adapter's server and the leak filters come with the TUN.</summary>
+        public Task SetDnsAsync(string[] dnsServers) => Task.CompletedTask;
 
         /// <summary>
         /// <c>[tx_packets, tx_bytes, rx_packets, rx_bytes]</c> from the adapter — "tx" is what
@@ -202,44 +191,13 @@ namespace Horus.Platforms.Windows
             }
         }
 
-        // ── DNS policy ───────────────────────────────────────────────────────
+        // ── Leftovers from older builds ──────────────────────────────────────
 
-        /// <summary>
-        /// Binds all name resolution to the tunnel's resolver.
-        ///
-        /// <para>Setting the adapter's DNS server is half the job: since Windows 10 1703 the
-        /// resolver asks every interface's servers in parallel and takes the first answer, so
-        /// the router still sees every lookup — and where a provider answers blocked names
-        /// with its own stub address, its answer can win the race and the site "does not
-        /// open". The NRPT binds the catch-all namespace <c>.</c> to our server whatever the
-        /// interface order.</para>
-        /// </summary>
-        private static async Task ApplyDnsPolicyAsync(string[] dnsServers)
-        {
-            if (dnsServers.Length == 0) return;
-            try
-            {
-                await ClearDnsPolicyAsync();
-                var servers = string.Join(",", dnsServers.Select(s => $"'{s}'"));
-                await RunPowerShellAsync(
-                    $"Add-DnsClientNrptRule -Namespace '.' -NameServers {servers} -Comment '{NrptComment}'; " +
-                    "Clear-DnsClientCache");
-                Diag.Info("tunnel", $"DNS policy bound to {string.Join(", ", dnsServers)}");
-            }
-            catch (Exception ex)
-            {
-                // Not fatal: DNS still goes through the tunnel; only the parallel-query path reopens.
-                Diag.Warn("tunnel", $"DNS policy not applied: {ex.Message}");
-            }
-        }
-
-        private static Task ClearDnsPolicyAsync() =>
+        private static Task ClearLegacyDnsPolicyAsync() =>
             RunPowerShellAsync(
-                $"Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{NrptComment}' }} | " +
-                "ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force }",
+                $"$left = Get-DnsClientNrptRule | Where-Object {{ $_.Comment -eq '{LegacyNrptComment}' }}; " +
+                "if ($left) { $left | ForEach-Object { Remove-DnsClientNrptRule -Name $_.Name -Force }; Clear-DnsClientCache }",
                 fatal: false);
-
-        // ── Leftovers from builds that used host routes ──────────────────────
 
         /// <summary>
         /// Builds before the core owned the TUN installed host routes on the physical

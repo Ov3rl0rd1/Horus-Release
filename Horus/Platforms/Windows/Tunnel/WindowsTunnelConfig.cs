@@ -12,10 +12,14 @@ namespace Horus.Platforms.Windows.Tunnel
     /// for everything sharing the link, which is the wrong trade for a game.</param>
     /// <param name="CaptureIpv6">Route IPv6 into the tunnel too. Without it every IPv6
     /// destination leaves the machine directly, beside the VPN.</param>
+    /// <param name="BlockDnsLeaks">Have the core stop DNS from leaving by any other interface.
+    /// Windows asks every interface's resolvers in parallel, so the router would otherwise
+    /// see each lookup and could win the race with its own answer.</param>
     public sealed record WindowsTunSettings(
         string Name = WindowsTunnelConfig.AdapterName,
         int Mtu = WindowsTunnelConfig.DefaultMtu,
-        bool CaptureIpv6 = true);
+        bool CaptureIpv6 = true,
+        bool BlockDnsLeaks = true);
 
     /// <summary>Per-application routing, as the user chose it.</summary>
     /// <param name="Mode">Blacklist: these apps bypass the VPN. Whitelist: only these use it.</param>
@@ -59,6 +63,7 @@ namespace Horus.Platforms.Windows.Tunnel
         public const string ProxyTag = "proxy";
         public const string DirectTag = "direct";
         public const string SocksTag = "socks-in";
+        private const string LeakBlockKey = "autoSystemWfpBlockLeak";
 
         /// <summary>The interface's own address. Inside 198.18.0.0/15, the range reserved for benchmarking, so it collides with nothing real.</summary>
         public const string Address = "198.18.0.1";
@@ -127,6 +132,14 @@ namespace Horus.Platforms.Windows.Tunnel
         /// </summary>
         public static string RoutingOf(string configJson) =>
             (JsonNode.Parse(configJson)?["routing"] ?? new JsonObject()).ToJsonString();
+
+        /// <summary>
+        /// Whether the core refused to start because it could not install the DNS leak filters
+        /// (the Base Filtering Engine is off, or another product holds it). The tunnel is then
+        /// worth more without them than not at all.
+        /// </summary>
+        public static bool IsLeakBlockRefusal(string coreError) =>
+            coreError.Contains(LeakBlockKey, StringComparison.Ordinal);
 
         /// <summary>The outbound with <paramref name="tag"/>, for <c>XrayReplaceOutbound</c>.</summary>
         public static string? OutboundOf(string configJson, string tag = ProxyTag) =>
@@ -208,6 +221,11 @@ namespace Horus.Platforms.Windows.Tunnel
             foreach (var r in Routes4) routes.Add(r);
             if (tun.CaptureIpv6) foreach (var r in Routes6) routes.Add(r);
             settings["autoSystemRoutingTable"] = routes;
+
+            // WFP filters in a dynamic session: Windows deletes them when the process ends,
+            // however it ends. The NRPT rule they replace was persistent, and one left behind
+            // by a crash or a shutdown pointed every lookup at a resolver that no longer existed.
+            if (tun.BlockDnsLeaks) settings[LeakBlockKey] = new JsonArray("dns");
 
             var inbound = new JsonObject
             {

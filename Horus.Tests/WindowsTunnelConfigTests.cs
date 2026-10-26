@@ -66,6 +66,28 @@ public class WindowsTunnelConfigTests
     }
 
     [Fact]
+    public void Dns_outside_the_tunnel_is_blocked_by_filters_that_die_with_the_process()
+    {
+        var settings = Build()["inbounds"]![0]!["settings"]!;
+
+        Assert.Equal(["dns"], settings["autoSystemWfpBlockLeak"]!.AsArray().Select(n => n!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void The_dns_leak_block_can_be_left_out()
+    {
+        var settings = Build(tun: new WindowsTunSettings(BlockDnsLeaks: false))["inbounds"]![0]!["settings"]!;
+
+        Assert.Null(settings["autoSystemWfpBlockLeak"]);
+    }
+
+    [Theory]
+    [InlineData("unable to block DNS outside the TUN (remove autoSystemWfpBlockLeak to run without) > access denied", true)]
+    [InlineData("unable to create TUN: problem code 0x1F", false)]
+    public void A_core_that_cannot_install_the_leak_block_is_recognised(string error, bool refused) =>
+        Assert.Equal(refused, WindowsTunnelConfig.IsLeakBlockRefusal(error));
+
+    [Fact]
     public void Ipv6_is_captured_unless_turned_off()
     {
         var routes = Build()["inbounds"]![0]!["settings"]!["autoSystemRoutingTable"]!.AsArray()

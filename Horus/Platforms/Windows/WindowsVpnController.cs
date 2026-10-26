@@ -78,6 +78,7 @@ namespace Horus.Platforms.Windows
         private string _lastHealth = "—";
         private bool _loopWarned;
         private CancellationTokenSource? _rulesDebounce;
+        private WindowsTunSettings _tunSettings = WindowsPreferences.TunSettings;
 
         public WindowsVpnController(
             IApiService api,
@@ -232,20 +233,15 @@ namespace Horus.Platforms.Windows
 
             // Phase two: the same outbound, now with the TUN. Off the caller's thread: the
             // adapter takes about a second to create, and wintun can wait 15 s for a device.
-            var run = BuildRunConfig(config);
-            await Task.Run(() =>
-            {
-                XrayInterop.Stop();
-                XrayInterop.Test(run);
-                XrayInterop.Start(run);
-            }, CancellationToken.None);
-            Diag.Info("connect", $"core up with TUN ({config.OfferId}, mtu {WindowsPreferences.TunSettings.Mtu}, split {_split.CurrentRules.Mode}/{_split.CurrentRules.Processes.Count})");
+            _tunSettings = WindowsPreferences.TunSettings;
+            await Task.Run(() => StartWithTun(config), CancellationToken.None);
+            Diag.Info("connect", $"core up with TUN ({config.OfferId}, mtu {_tunSettings.Mtu}, split {_split.CurrentRules.Mode}/{_split.CurrentRules.Processes.Count})");
 
             await _tunnel.StartTunnelAsync(new TunnelOptions
             {
                 TunAddress = WindowsTunnelConfig.Address,
                 TunPrefix = 30,
-                Mtu = WindowsPreferences.TunSettings.Mtu,
+                Mtu = _tunSettings.Mtu,
                 DnsServers = [WindowsTunnelConfig.DnsAddress],
                 BypassApps = [],
                 AllTraffic = true,
@@ -452,7 +448,34 @@ namespace Horus.Platforms.Windows
         }
 
         private string BuildRunConfig(XrayConfig config) =>
-            WindowsTunnelConfig.Build(config.ToConfig(), WindowsPreferences.TunSettings, _split.CurrentRules);
+            WindowsTunnelConfig.Build(config.ToConfig(), _tunSettings, _split.CurrentRules);
+
+        /// <summary>
+        /// Starts the core with the TUN. A machine whose filtering engine refuses the DNS leak
+        /// filters still gets a tunnel — one where the router may see lookups, which is what
+        /// every build before the filters gave everyone.
+        /// </summary>
+        private void StartWithTun(XrayConfig config)
+        {
+            XrayInterop.Stop();
+            try
+            {
+                StartCore(BuildRunConfig(config));
+            }
+            catch (InvalidOperationException ex) when (_tunSettings.BlockDnsLeaks && WindowsTunnelConfig.IsLeakBlockRefusal(ex.Message))
+            {
+                Diag.Warn("connect", $"DNS leak filters refused, starting without them: {ex.Message}");
+                _tunSettings = _tunSettings with { BlockDnsLeaks = false };
+                XrayInterop.Stop();
+                StartCore(BuildRunConfig(config));
+            }
+
+            static void StartCore(string run)
+            {
+                XrayInterop.Test(run);
+                XrayInterop.Start(run);
+            }
+        }
 
         /// <summary>
         /// Whether the proxy reaches the internet with an address other than ours — the same

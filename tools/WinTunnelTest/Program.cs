@@ -7,8 +7,9 @@
 // pinned to the physical interface would loop; DNS through the TUN's resolver answers both
 // A and SRV; rules reload and outbounds swap without a restart; and the core survives being
 // stopped and started under load (the wintun session teardown patched in the fork); a dead
-// proxy fails the client's probe; and the adapter comes up when its usual identity is
-// still held by another device (the fork's fork_open_windows.go).
+// proxy fails the client's probe; the adapter comes up when its usual identity is
+// still held by another device (the fork's fork_open_windows.go); and a client killed with
+// the tunnel up leaves the machine resolving names without it.
 //
 // Run elevated: `dotnet run -c Release` from tools/WinTunnelTest. Exit code = failures.
 // The "node" is a second copy of this program (`server` mode) hosting the core as a VLESS
@@ -32,6 +33,15 @@ const string Uuid = "b831381d-6324-4d53-ad4f-8cda48b30811";
 if (args is ["server", ..])
 {
     RunServer();
+    return 0;
+}
+
+// A client in a process of its own, for the parent to kill — what a crash, or Windows shutting
+// down with the VPN on, does to the app.
+if (args is ["doomed-client", var doomedConfig])
+{
+    XrayInterop.Start(File.ReadAllText(doomedConfig));
+    Thread.Sleep(Timeout.Infinite);
     return 0;
 }
 
@@ -292,6 +302,29 @@ var freeUp = freeErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(15))
 Check("identity 0 is used again once it is free", freeUp && AdapterGuid() == Identity(0),
     freeErr ?? IdentityName(AdapterGuid()));
 
+// ── A killed client leaves nothing behind ────────────────────────────────────
+// What users hit: the app died with the VPN on and after a reboot no name resolved until Horus
+// was started again, because a persistent NRPT rule still pointed every lookup at the TUN's
+// resolver. The DNS leak filters live in a dynamic WFP session, so they die with the process.
+XrayInterop.Stop();
+var doomedConfigPath = Path.Combine(logs, "doomed-client.json");
+File.WriteAllText(doomedConfigPath, runJson);
+var doomed = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, $"doomed-client \"{doomedConfigPath}\"")
+{
+    UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = dir
+})!;
+var doomedUp = await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+var resolvedThroughDoomed = await SystemResolvesAsync("example.com", TimeSpan.FromSeconds(20));
+Check("the system resolver answers through a client in another process", doomedUp && resolvedThroughDoomed,
+    doomedUp ? "" : "its adapter never came up");
+try { doomed.Kill(); doomed.WaitForExit(10_000); } catch { }
+var adapterGone = await WaitAdapterGoneAsync(TimeSpan.FromSeconds(20));
+Check("the adapter goes with a killed client", adapterGone);
+Check("names resolve once the killed client is gone", await SystemResolvesAsync("example.com", TimeSpan.FromSeconds(20)));
+var strandedPolicy = Shell("powershell",
+    $"-NoProfile -Command \"(Get-DnsClientNrptRule | Where-Object {{ $_.NameServers -contains '{WindowsTunnelConfig.DnsAddress}' }} | Measure-Object).Count\"").Trim();
+Check("no name resolution policy points at the tunnel's resolver", strandedPolicy == "0", $"{strandedPolicy} rule(s)");
+
 Finish();
 return failures;
 
@@ -343,6 +376,31 @@ static async Task<bool> WaitAdapterAsync(TimeSpan timeout)
     {
         if (AdapterUp()) return true;
         await Task.Delay(200);
+    }
+    return false;
+}
+
+static async Task<bool> WaitAdapterGoneAsync(TimeSpan timeout)
+{
+    var end = DateTime.UtcNow + timeout;
+    while (DateTime.UtcNow < end)
+    {
+        if (AdapterGuid() is null) return true;
+        await Task.Delay(200);
+    }
+    return false;
+}
+
+// Through Windows' own resolver and nothing cached: what every application on the machine gets.
+static async Task<bool> SystemResolvesAsync(string name, TimeSpan timeout)
+{
+    var end = DateTime.UtcNow + timeout;
+    while (DateTime.UtcNow < end)
+    {
+        var answer = Shell("powershell",
+            $"-NoProfile -Command \"Clear-DnsClientCache; (Resolve-DnsName {name} -Type A -DnsOnly -ErrorAction Stop).IPAddress\"");
+        if (IPAddress.TryParse(answer.Trim().Split('\n')[0].Trim(), out _)) return true;
+        await Task.Delay(1000);
     }
     return false;
 }
