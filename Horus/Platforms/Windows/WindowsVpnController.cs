@@ -66,6 +66,7 @@ namespace Horus.Platforms.Windows
 
         /// <summary>Connect, disconnect, recover and rule changes never overlap.</summary>
         private readonly SemaphoreSlim _ops = new(1, 1);
+        private readonly InFlightConnect _connect = new();
         private readonly ProxyStallDetector _stall = new();
 
         private Session? _session;
@@ -179,18 +180,33 @@ namespace Horus.Platforms.Windows
             SetState(VpnState.Connecting, null);
             DiagnosticPaths.Rotate(DiagnosticPaths.XrayLog);
 
-            await _ops.WaitAsync(ct);
+            await _connect.RunAsync(token => ConnectExclusiveAsync(server, token), ct);
+        }
+
+        /// <summary>
+        /// The connect, under <see cref="_ops"/>. Cancelled by <see cref="DisconnectAsync"/>
+        /// through <see cref="_connect"/>, and whatever it had built is taken down before it returns.
+        /// </summary>
+        private async Task ConnectExclusiveAsync(ServerInfo? server, CancellationToken ct)
+        {
+            try { await _ops.WaitAsync(ct); }
+            catch (OperationCanceledException)
+            {
+                SetState(VpnState.Disconnected, "Cancelled");
+                throw;
+            }
+
             try
             {
                 await ConnectCoreAsync(server, ct);
                 _reconnectAttempt = 0;
                 VpnIntent.ResetRestartBudget();
             }
-            catch (OperationCanceledException)
+            catch (Exception) when (ct.IsCancellationRequested)
             {
                 await TeardownAsync();
                 SetState(VpnState.Disconnected, "Cancelled");
-                throw;
+                throw new OperationCanceledException(ct);
             }
             catch (Exception ex)
             {
@@ -249,6 +265,7 @@ namespace Horus.Platforms.Windows
                 SocksPort = config.SocksPort
             }, ct);
 
+            ct.ThrowIfCancellationRequested();
             if (_traffic is TrafficMonitorService tms) tms.Reset();
             _traffic.Start();
 
@@ -299,6 +316,9 @@ namespace Horus.Platforms.Windows
             _retryCts?.Cancel();
             _demotedOffer = null;
             _reconnectAttempt = 0;
+
+            // A connect in progress unwinds itself, its teardown included.
+            await _connect.CancelAsync();
 
             if (State == VpnState.Disconnected) return;
 

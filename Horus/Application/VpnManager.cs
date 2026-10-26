@@ -107,6 +107,7 @@ namespace Horus.Application
 
         private int _reconnectAttempt;
         private CancellationTokenSource? _reconnectCts;
+        private readonly InFlightConnect _connect = new();
 
         /// <summary>
         /// How long a tunnel may be diagnosed as "the link is down, not us" before it is
@@ -261,6 +262,15 @@ namespace Horus.Application
             // having.
             DiagnosticPaths.Rotate(DiagnosticPaths.XrayLog);
 
+            await _connect.RunAsync(token => EstablishAsync(server, token), ct);
+        }
+
+        /// <summary>
+        /// The connect itself. Cancelled by <see cref="DisconnectAsync"/> through
+        /// <see cref="_connect"/>, and whatever it had built is taken down before it returns.
+        /// </summary>
+        private async Task EstablishAsync(ServerInfo? server, CancellationToken ct)
+        {
             try
             {
                 await BindServerIfNeededAsync(server, ct);
@@ -308,9 +318,12 @@ namespace Horus.Application
                         _usingCachedConnection, usedConfig.OfferId != available[0].Id, ConnectionCache.Age))
                     _ = RefreshCachedConnectionAsync();
 
-                // Establish TUN, apply routing
+                // Establish TUN, apply routing. Not abandoned half-way when cancelled: the
+                // service builds the interface on its own thread, and a stop that overtook it
+                // would leave a tunnel nobody owns. It takes a fraction of a second.
                 var tunnelOptions = BuildTunnelOptions(server, usedConfig);
-                await _platform.StartTunnelAsync(tunnelOptions, ct);
+                await _platform.StartTunnelAsync(tunnelOptions, CancellationToken.None);
+                ct.ThrowIfCancellationRequested();
 
                 // Routing rules are advisory today: the Android platform hook is a no-op
                 // and xray does its own routing from the generated config. Never let them
@@ -354,11 +367,11 @@ namespace Horus.Application
                 _endpoint = new TunnelHealthMonitor.Endpoint(tunnelOptions.SocksPort);
                 _health.Start(_endpoint);
             }
-            catch (OperationCanceledException)
+            catch (Exception) when (ct.IsCancellationRequested)
             {
                 await SafeTeardownAsync();
                 SetState(VpnState.Disconnected, "Cancelled");
-                throw;
+                throw new OperationCanceledException(ct);
             }
             catch (Exception ex)
             {
@@ -382,7 +395,10 @@ namespace Horus.Application
             _reconnectAttempt = 0;
             _demotedOffer = null;
 
-            if (State == VpnState.Disconnected) return;
+            // A connect in progress unwinds itself, its teardown included.
+            await _connect.CancelAsync();
+
+            if (State is VpnState.Disconnected or VpnState.Disconnecting) return;
 
             SetState(VpnState.Disconnecting, null);
             try
@@ -391,16 +407,20 @@ namespace Horus.Application
                 _traffic.Stop();
                 await _platform.StopTunnelAsync();
                 await DetachProtocolAsync();
-
-                ActiveServer = null;
-                ActiveOfferId = null;
-            ActiveOfferLabel = null;
                 SetState(VpnState.Disconnected, null);
             }
             catch (Exception ex)
             {
-                SetState(VpnState.Error, ex.Message);
+                // Still off as far as anyone can act on it: a state the button cannot leave
+                // would be worse than a teardown that complained.
+                SetState(VpnState.Disconnected, ex.Message);
                 throw;
+            }
+            finally
+            {
+                ActiveServer = null;
+                ActiveOfferId = null;
+                ActiveOfferLabel = null;
             }
         }
 
@@ -969,7 +989,17 @@ namespace Horus.Application
 
                     return (protocol, config);
                 }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
+                catch (Exception) when (ct.IsCancellationRequested)
+                {
+                    // Not yet the active protocol, so the teardown would not find it.
+                    if (protocol != null)
+                    {
+                        Detach(protocol);
+                        try { await protocol.DisconnectAsync(); } catch { /* already dead */ }
+                    }
+                    throw;
+                }
+                catch (Exception ex)
                 {
                     lastEx = ex;
 

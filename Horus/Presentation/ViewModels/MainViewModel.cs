@@ -99,6 +99,10 @@ namespace Horus.Presentation.ViewModels
             _showPublisherWarning = publisherTrust.NeedsTrust;
 
             _vpnManager = vpnManager;
+            // The tunnel may be up before this screen exists: started from the Quick Settings
+            // tile, or restored after the process died, both with no UI. Starting from
+            // "disconnected" showed it off while it ran.
+            _vpnState = vpnManager.State;
             _traffic = traffic;
             _subscription = subscription;
             _auth = auth;
@@ -269,10 +273,20 @@ namespace Horus.Presentation.ViewModels
         }
 
         // ── Commands ──────────────────────────────────────────────────────────
-        [RelayCommand]
+
+        /// <summary>
+        /// Concurrent on purpose: the press that cancels a connect arrives while the press that
+        /// started it is still running. Without it the command disabled itself for the whole
+        /// connect, and the button "only worked once connected".
+        /// </summary>
+        [RelayCommand(AllowConcurrentExecutions = true)]
         private async Task ToggleConnectAsync()
         {
-            if (IsOn || IsConnecting) { await DisconnectAsync(); return; }
+            if (ConnectButton.ActionFor(LiveVpnState()) == ConnectButtonAction.Disconnect)
+            {
+                await DisconnectAsync();
+                return;
+            }
 
             // Only block on a subscription the server has actually confirmed is gone.
             // While the state is Unknown we let the attempt through: the API is the
@@ -291,6 +305,23 @@ namespace Horus.Presentation.ViewModels
             }
 
             await ConnectAsync();
+        }
+
+        /// <summary>The controller's state now — not what this screen last heard.</summary>
+        private VpnState LiveVpnState()
+        {
+#if DEBUG
+            if (AppConfiguration.UseDevBypass) return VpnState;
+#endif
+            return _vpnManager.State;
+        }
+
+        /// <summary>Catches the screen up with the controller, for when the app comes back to the front.</summary>
+        public void SyncVpnState()
+        {
+            if (VpnState == LiveVpnState()) return;
+            VpnState = LiveVpnState();
+            RaiseAll();
         }
 
         [RelayCommand] private void GoServers() => _nav.Go(AppScreen.Servers);
@@ -369,6 +400,10 @@ namespace Horus.Presentation.ViewModels
                     _session.PinResolved(bound);
                     RaiseServerCard();
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelled by a second press: the user's own decision, not a failure.
             }
             catch (SubscriptionExpiredException)
             {

@@ -30,6 +30,7 @@ namespace Horus
             var permissions = _services.GetRequiredService<ISystemPermissions>();
             var notices = _services.GetRequiredService<INoticeService>();
             var updates = _services.GetRequiredService<IUpdateService>();
+            var home = _services.GetRequiredService<MainViewModel>();
 
             window.Resumed += (_, __) =>
             {
@@ -38,6 +39,10 @@ namespace Horus
                 // whether anybody can.
                 AppVisibility.SetForeground();
                 accounts.OnForeground();
+
+                // The tunnel lives on while the app is away, and may have been switched from
+                // the Quick Settings tile meanwhile.
+                home.SyncVpnState();
 
                 // Resume is the only signal Android gives for "the user may have changed a
                 // permission". There is no broadcast for granting "install unknown apps",
