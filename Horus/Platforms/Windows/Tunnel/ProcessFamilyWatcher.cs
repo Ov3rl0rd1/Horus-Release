@@ -42,7 +42,11 @@ namespace Horus.Platforms.Windows.Tunnel
         {
             _cts?.Cancel();
             _cts = null;
-            Volatile.Write(ref _followers, []);
+            lock (_gate)
+            {
+                _watchedFor = [];
+                Volatile.Write(ref _followers, []);
+            }
         }
 
         private async Task WatchAsync(Func<WindowsSplitRules> rules, CancellationToken ct)
