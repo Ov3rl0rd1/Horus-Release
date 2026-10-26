@@ -202,7 +202,8 @@ Check("DNS SRV via the TUN resolver is forwarded, not blanked",
 // ── Helpers a chosen app starts take its route ───────────────────────────────
 // GitHub Desktop through the VPN left its Copilot helper, another executable, going direct.
 // Here powershell is the chosen app (blacklist: direct) and a copy of curl it starts twice is
-// the helper: the first run is noticed, the second goes direct from its first packet.
+// the helper: the first run, longer than a look at the process list, is noticed; the second
+// goes direct from its first packet.
 try { curl.Kill(); } catch { }
 var helperExe = Path.Combine(logs, "helper.exe");
 File.Copy(Path.Combine(Environment.SystemDirectory, "curl.exe"), helperExe, overwrite: true);
@@ -213,7 +214,7 @@ helpers.Changed += (_, _) => XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingO
 helpers.Start(() => familyRules);
 const string download = "https://speed.cloudflare.com/__down?bytes=2000000";
 var family = Process.Start(new ProcessStartInfo("powershell",
-    $"-NoProfile -Command \"& '{helperExe}' -sS -o NUL --max-time 3 '{download}'; Start-Sleep 5; & '{helperExe}' -sS -o NUL --limit-rate 40k --max-time 25 '{download}'\"")
+    $"-NoProfile -Command \"& '{helperExe}' -sS -o NUL --limit-rate 100k --max-time 5 '{download}'; Start-Sleep 3; & '{helperExe}' -sS -o NUL --limit-rate 40k --max-time 25 '{download}'\"")
 { UseShellExecute = false, CreateNoWindow = true })!;
 AppTraffic? helperRow = null;
 var helperClock = Stopwatch.StartNew();
@@ -257,6 +258,14 @@ Check("adapter survived reload and swap", AdapterUp());
 // routes to the proxy. xray answers a SOCKS CONNECT before its outbound has dialled anything,
 // so only a request that comes back means something: the reply alone passed a dead Hysteria2
 // in the field.
+var keeperExe = Path.Combine(logs, "keeper.exe");
+File.Copy(Path.Combine(Environment.SystemDirectory, "curl.exe"), keeperExe, overwrite: true);
+var keeper = Process.Start(new ProcessStartInfo(keeperExe, $"-sS -o NUL --limit-rate 30k --max-time 90 {download}")
+{ UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true })!;
+long KeeperDown() => monitor.Snapshot().FirstOrDefault(a => a.Name.Equals("keeper.exe", StringComparison.OrdinalIgnoreCase))?.Down ?? 0;
+var keeperClock = Stopwatch.StartNew();
+while (KeeperDown() < 20_000 && !keeper.HasExited && keeperClock.Elapsed < TimeSpan.FromSeconds(15)) await Task.Delay(500);
+
 var live = await SocksRoundTrip.AnyCarriesAsync(SocksPort, SocksRoundTrip.DefaultTargets, TimeSpan.FromSeconds(10), default);
 Check("a round trip through the live proxy answers", live);
 var deadProxy = $$"""{ "tag": "proxy", "protocol": "vless", "settings": { "vnext": [ { "address": "127.0.0.1", "port": 1, "users": [ { "id": "{{Uuid}}", "encryption": "none" } ] } ] }, "streamSettings": { "network": "tcp" } }""";
@@ -268,16 +277,11 @@ Check("a dead proxy fails the round trip", toDead == XrayLive.Result.Ok && !dead
 
 // ── Around a dead proxy the tunnel stays, and so do its direct connections ────
 // Recovery used to take the adapter down after a few failures, and the game routed direct went
-// with it. Now it reloads the rules around the proxy: a direct download started before must
-// carry on through the switch and back.
-var keeper = Process.Start(new ProcessStartInfo("curl.exe", $"-sS -o NUL --limit-rate 30k --max-time 60 {download}")
-{ UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true })!;
-long KeeperDown() => monitor.Snapshot().FirstOrDefault(a => a.Name.Equals("curl.exe", StringComparison.OrdinalIgnoreCase))?.Down ?? 0;
-var keeperClock = Stopwatch.StartNew();
-while (KeeperDown() < 20_000 && !keeper.HasExited && keeperClock.Elapsed < TimeSpan.FromSeconds(15)) await Task.Delay(500);
-var keeperBefore = KeeperDown();
+// with it. Now it reloads the rules around the proxy: a direct download started while the proxy
+// was alive must carry on through its death, the switch and back.
 var failOpen = XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(
     WindowsTunnelConfig.Build(cfg.ToConfig(), new WindowsTunSettings(), new WindowsSplitRules(SplitTunnelingMode.Whitelist, [mine]), TunnelRouting.FailOpen)));
+var keeperBefore = KeeperDown();
 var aroundDead = await GetAsync("https://www.gstatic.com/generate_204");
 Check("around a dead proxy traffic leaves directly", failOpen == XrayLive.Result.Ok && aroundDead.Ok,
     failOpen == XrayLive.Result.Ok ? aroundDead.Detail : XrayLive.LastError);
