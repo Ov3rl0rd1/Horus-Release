@@ -23,8 +23,16 @@ namespace Horus.Domain.Interfaces
 
         event EventHandler<VpnStateChangedEventArgs>? StateChanged;
 
-        Task ConnectAsync(ServerInfo? server = null, CancellationToken ct = default);
+        /// <summary>Connects to the account's server (see <see cref="IAccountServer"/>); the API picks one for an account with none.</summary>
+        Task ConnectAsync(CancellationToken ct = default);
         Task DisconnectAsync();
+
+        /// <summary>
+        /// The account was moved to another server — by the user, from another device, or by
+        /// support — and a running tunnel has to move with it: the old node no longer has the
+        /// account. Nothing to do when the tunnel is not running.
+        /// </summary>
+        Task FollowAccountServerAsync(CancellationToken ct = default);
 
         /// <summary>Brings the tunnel back at startup if the user left it on, or if they asked for auto-connect.</summary>
         Task TryRestoreOrAutoConnectAsync(CancellationToken ct = default);

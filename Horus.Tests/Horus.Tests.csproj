@@ -66,6 +66,7 @@
     <Compile Include="..\Horus\Protocols\OutboundFixups.cs" Link="Linked\OutboundFixups.cs" />
     <Compile Include="..\Horus\Application\CacheRefreshPolicy.cs" Link="Linked\CacheRefreshPolicy.cs" />
     <Compile Include="..\Horus\Application\InFlightConnect.cs" Link="Linked\InFlightConnect.cs" />
+    <Compile Include="..\Horus\Application\AccountServerRules.cs" Link="Linked\AccountServerRules.cs" />
     <Compile Include="..\Horus\Domain\Models\VpnState.cs" Link="Linked\VpnState.cs" />
     <Compile Include="..\Horus\Presentation\ViewModels\ConnectButton.cs" Link="Linked\ConnectButton.cs" />
     <Compile Include="..\Horus\Application\SupportChannels.cs" Link="Linked\SupportChannels.cs" />

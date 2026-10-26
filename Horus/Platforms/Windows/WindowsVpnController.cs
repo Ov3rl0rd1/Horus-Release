@@ -180,7 +180,7 @@ namespace Horus.Platforms.Windows
 
         // ── Connect / disconnect ─────────────────────────────────────────────
 
-        public async Task ConnectAsync(ServerInfo? server = null, CancellationToken ct = default)
+        public async Task ConnectAsync(CancellationToken ct = default)
         {
             if (State != VpnState.Disconnected) return;
 
@@ -190,14 +190,14 @@ namespace Horus.Platforms.Windows
             SetState(VpnState.Connecting, null);
             DiagnosticPaths.Rotate(DiagnosticPaths.XrayLog);
 
-            await _connect.RunAsync(token => ConnectExclusiveAsync(server, token), ct);
+            await _connect.RunAsync(ConnectExclusiveAsync, ct);
         }
 
         /// <summary>
         /// The connect, under <see cref="_ops"/>. Cancelled by <see cref="DisconnectAsync"/>
         /// through <see cref="_connect"/>, and whatever it had built is taken down before it returns.
         /// </summary>
-        private async Task ConnectExclusiveAsync(ServerInfo? server, CancellationToken ct)
+        private async Task ConnectExclusiveAsync(CancellationToken ct)
         {
             try { await _ops.WaitAsync(ct); }
             catch (OperationCanceledException)
@@ -208,7 +208,7 @@ namespace Horus.Platforms.Windows
 
             try
             {
-                await ConnectCoreAsync(server, ct);
+                await ConnectCoreAsync(ct);
                 _reconnectAttempt = 0;
                 VpnIntent.ResetRestartBudget();
             }
@@ -232,7 +232,7 @@ namespace Horus.Platforms.Windows
             }
         }
 
-        private async Task ConnectCoreAsync(ServerInfo? server, CancellationToken ct)
+        private async Task ConnectCoreAsync(CancellationToken ct)
         {
             if (!await _tunnel.RequestPermissionsAsync())
                 throw new InvalidOperationException(
@@ -240,8 +240,7 @@ namespace Horus.Platforms.Windows
             if (!_tunnel.IsSupported)
                 throw new InvalidOperationException("Не найден wintun.dll рядом с приложением — переустановите Horus.");
 
-            await BindServerIfNeededAsync(server, ct);
-            var (connection, fromCache) = await FetchConnectionAsync(server, ct);
+            var (connection, fromCache) = await FetchConnectionAsync(ct);
 
             var candidates = CandidatesOf(connection);
             if (candidates.Count == 0)
@@ -289,7 +288,7 @@ namespace Horus.Platforms.Windows
                 Addresses = addresses
             };
 
-            ActiveServer = connection.Server?.ToServerInfo() ?? server;
+            ActiveServer = connection.Server?.ToServerInfo();
             ActiveOfferId = config.OfferId;
             ActiveOfferLabel = config.DisplayName;
             _failedRecoveries = 0;
@@ -346,6 +345,40 @@ namespace Horus.Platforms.Windows
             }
         }
 
+        /// <summary>
+        /// Moves a running tunnel to the account's new server. In place when the API answers
+        /// and one of the new node's offers does — the adapter, and what it carries direct,
+        /// stay; otherwise the tunnel is built again on the new server.
+        /// </summary>
+        public async Task FollowAccountServerAsync(CancellationToken ct = default)
+        {
+            if (State is not (VpnState.Connected or VpnState.Reconnecting) || _session is null) return;
+
+            const string reason = "the account moved to another server";
+            await _ops.WaitAsync(ct);
+            try
+            {
+                if (_session is not { } session) return;
+                Diag.Info("connect", reason);
+                SetState(VpnState.Reconnecting, reason);
+
+                if (await TryFreshEndpointsAsync(session, ct))
+                {
+                    Recovered(session, $"moved to {ActiveServer?.Name ?? "?"} in place");
+                    return;
+                }
+
+                await TeardownAsync();
+                SetState(VpnState.Disconnected, reason);
+            }
+            finally
+            {
+                _ops.Release();
+            }
+
+            if (WantsConnection) await ConnectAsync(ct);
+        }
+
         public async Task TryRestoreOrAutoConnectAsync(CancellationToken ct = default)
         {
             if (State != VpnState.Disconnected) return;
@@ -360,7 +393,7 @@ namespace Horus.Platforms.Windows
             }
 
             Diag.Info("connect", restoring ? "restoring tunnel — the VPN was on when the app last ran" : "auto-connect on launch");
-            try { await ConnectAsync(ActiveServer, ct); }
+            try { await ConnectAsync(ct); }
             catch (Exception ex) { Diag.Warn("connect", $"startup connect failed: {ex.Message}"); }
         }
 
@@ -935,7 +968,7 @@ namespace Horus.Platforms.Windows
                     if (delay > TimeSpan.Zero) await Task.Delay(delay, cts.Token);
                     if (cts.IsCancellationRequested || !WantsConnection || State != VpnState.Disconnected) return;
                     _reconnectAttempt++;
-                    await ConnectAsync(ActiveServer, cts.Token);
+                    await ConnectAsync(cts.Token);
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex)
@@ -1018,23 +1051,15 @@ namespace Horus.Platforms.Windows
 
         // ── Connection helpers (same semantics as the shared manager) ────────
 
-        private async Task<(ServerConnection Connection, bool FromCache)> FetchConnectionAsync(ServerInfo? server, CancellationToken ct)
+        /// <summary>The account's server: a move of the account discards the stored endpoints (<see cref="IAccountServer"/>).</summary>
+        private async Task<(ServerConnection Connection, bool FromCache)> FetchConnectionAsync(CancellationToken ct)
         {
-            var cached = ConnectionCache.Read(server?.Id ?? ActiveServer?.Id);
+            var cached = ConnectionCache.Read();
             if (cached is not null) return (cached, true);
 
             var fresh = await _api.GetServerConnectionAsync(ct);
             ConnectionCache.Write(fresh);
             return (fresh, false);
-        }
-
-        private async Task BindServerIfNeededAsync(ServerInfo? server, CancellationToken ct)
-        {
-            if (server is null || ActiveServer?.Id == server.Id) return;
-
-            Diag.Info("connect", $"binding to server {server.Id} ({server.Location})");
-            var bound = await _api.SelectServerAsync(server.Id, ct);
-            Diag.Info("connect", $"[api] bound to {bound.Name} ({bound.Location})");
         }
 
         /// <summary>

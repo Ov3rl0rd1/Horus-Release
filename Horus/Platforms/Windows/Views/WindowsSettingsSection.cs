@@ -103,11 +103,10 @@ namespace Horus.Platforms.Windows.Views
             action.VerticalOptions = LayoutOptions.Center;
             action.GestureRecognizers.Add(Ui.Tap(async () =>
             {
-                var server = _vpn.ActiveServer;
                 try
                 {
                     await _vpn.DisconnectAsync();
-                    await _vpn.ConnectAsync(server);
+                    await _vpn.ConnectAsync();
                 }
                 catch (Exception ex)
                 {

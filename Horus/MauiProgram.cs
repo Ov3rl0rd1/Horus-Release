@@ -90,6 +90,7 @@ namespace Horus
                 .AddSingleton<IAuthService, AuthService>()
                 .AddSingleton<ISubscriptionService, SubscriptionService>()
                 .AddSingleton<IAccountSync, AccountSyncService>()
+                .AddSingleton<IAccountServer, AccountServerService>()
                 .AddSingleton<ITrafficMonitorService, TrafficMonitorService>()
                 .AddSingleton<IRoutingService, RoutingService>()
                 .AddSingleton<IGeoDataService, GeoDataService>()
@@ -188,7 +189,7 @@ namespace Horus
             // ── Navigation + shared UI state (v2 custom root, no Shell) ──────
             services
                 .AddSingleton<Navigator>()
-                .AddSingleton<AppSession>();
+                .AddSingleton<ServerSwitcher>();
 
             // ── ViewModels ───────────────────────────────────────────────────
             // Singletons: the shell holds them and screens are reused (e.g. Settings

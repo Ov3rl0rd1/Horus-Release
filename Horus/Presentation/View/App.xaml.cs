@@ -15,6 +15,10 @@ namespace Horus
         {
             _services = services;
             InitializeComponent();
+
+            // A running tunnel follows the account's server whether or not a screen is open:
+            // on Android this process is often started for the tunnel alone.
+            _services.GetRequiredService<IAccountServer>();
         }
 
         protected override Window CreateWindow(IActivationState? activationState)
