@@ -376,7 +376,15 @@ namespace Horus.Platforms.Windows
                 _ops.Release();
             }
 
-            if (WantsConnection) await ConnectAsync(ct);
+            if (!WantsConnection) return;
+            try { await ConnectAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The user wants the tunnel and the new node may just be slow to take the
+                // account: keep trying, as after any failed reconnect.
+                Diag.Warn("connect", $"the new server did not connect: {ex.Message}");
+                ScheduleReconnect(reason, immediate: false);
+            }
         }
 
         public async Task TryRestoreOrAutoConnectAsync(CancellationToken ct = default)

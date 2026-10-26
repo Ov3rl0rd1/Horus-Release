@@ -433,7 +433,15 @@ namespace Horus.Application
             ActiveOfferLabel = null;
             SetState(VpnState.Disconnected, reason);
 
-            if (WantsConnection) await ConnectAsync(ct);
+            if (!WantsConnection) return;
+            try { await ConnectAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The user wants the tunnel and the new node may just be slow to take the
+                // account: keep trying, as a recovery does.
+                OnProtocolOutput(this, $"[recover] the new server did not connect: {ex.Message}");
+                ScheduleReconnect(reason, immediate: false);
+            }
         }
 
         // ── Preflight ───────────────────────────────────────────────────────
