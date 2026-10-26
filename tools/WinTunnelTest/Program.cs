@@ -260,7 +260,7 @@ Check("adapter survived reload and swap", AdapterUp());
 // in the field.
 var keeperExe = Path.Combine(logs, "keeper.exe");
 File.Copy(Path.Combine(Environment.SystemDirectory, "curl.exe"), keeperExe, overwrite: true);
-var keeper = Process.Start(new ProcessStartInfo(keeperExe, $"-sS -o NUL --limit-rate 30k --max-time 90 {download}")
+var keeper = Process.Start(new ProcessStartInfo(keeperExe, $"-sS -o NUL --limit-rate 60k --max-time 90 {download}")
 { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true })!;
 long KeeperDown() => monitor.Snapshot().FirstOrDefault(a => a.Name.Equals("keeper.exe", StringComparison.OrdinalIgnoreCase))?.Down ?? 0;
 var keeperClock = Stopwatch.StartNew();
@@ -281,16 +281,19 @@ Check("a dead proxy fails the round trip", toDead == XrayLive.Result.Ok && !dead
 // was alive must carry on through its death, the switch and back.
 var failOpen = XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(
     WindowsTunnelConfig.Build(cfg.ToConfig(), new WindowsTunSettings(), new WindowsSplitRules(SplitTunnelingMode.Whitelist, [mine]), TunnelRouting.FailOpen)));
-var keeperBefore = KeeperDown();
 var aroundDead = await GetAsync("https://www.gstatic.com/generate_204");
 Check("around a dead proxy traffic leaves directly", failOpen == XrayLive.Result.Ok && aroundDead.Ok,
     failOpen == XrayLive.Result.Ok ? aroundDead.Detail : XrayLive.LastError);
 Check("around a dead proxy names still resolve", await SystemResolvesAsync("example.org", TimeSpan.FromSeconds(15)));
 var closedAgain = XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(whitelistUs));
-await Task.Delay(3000);
-Check("a direct connection lives through the switch and back", closedAgain == XrayLive.Result.Ok && !keeper.HasExited && KeeperDown() > keeperBefore,
-    keeper.HasExited ? $"curl exited {keeper.ExitCode}: {keeper.StandardError.ReadToEnd().Trim()}" : $"{keeperBefore} -> {KeeperDown()} bytes");
 Check("the adapter stays through the switch", AdapterUp());
+// Completion, not the byte counter: the core reads ahead of a rate-limited curl and holds over a
+// megabyte, so its counter stands still for seconds on a healthy connection. A cut one ends curl
+// with an error instead.
+var keeperDone = keeper.WaitForExit(60_000);
+Check("a direct download started before completes through the switch and back",
+    closedAgain == XrayLive.Result.Ok && keeperDone && keeper.ExitCode == 0,
+    keeperDone ? $"curl exited {keeper.ExitCode} {keeper.StandardError.ReadToEnd().Trim()}" : "still running after 60 s");
 try { keeper.Kill(); } catch { }
 var back = XrayLive.ReplaceOutbound(WindowsTunnelConfig.OutboundOf(whitelistUs)!);
 var afterBack = await GetAsync("https://www.gstatic.com/generate_204");
