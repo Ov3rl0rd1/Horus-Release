@@ -28,7 +28,27 @@ namespace Horus.Platforms.Windows.Tunnel
     {
         public static readonly WindowsSplitRules None = new(SplitTunnelingMode.Disabled, []);
 
+        /// <summary>
+        /// Full paths of the helpers the chosen applications started (<see cref="ProcessFamily"/>).
+        /// They take their application's route, matched by path only.
+        /// </summary>
+        public IReadOnlyList<string> Followers { get; init; } = [];
+
         public bool IsActive => Mode != SplitTunnelingMode.Disabled && Processes.Count > 0;
+    }
+
+    /// <summary>Where the tunnel sends what it carries.</summary>
+    public enum TunnelRouting
+    {
+        /// <summary>Through the proxy, as the user's rules say.</summary>
+        Vpn,
+
+        /// <summary>
+        /// Everything direct, the health probe excepted, while the proxy is dead and the kill
+        /// switch is off. The adapter stays, so the connections it carries — direct ones above
+        /// all — are not cut; see <see cref="DeadProxyPolicy"/>.
+        /// </summary>
+        FailOpen
     }
 
     /// <summary>
@@ -59,6 +79,7 @@ namespace Horus.Platforms.Windows.Tunnel
         public const string AdapterName = "Horus";
         public const string TunTag = "tun-in";
         public const string DnsOutTag = "dns-out";
+        public const string DnsDirectTag = "dns-direct";
         public const string DnsModuleTag = "dns-internal";
         public const string ProxyTag = "proxy";
         public const string DirectTag = "direct";
@@ -89,7 +110,8 @@ namespace Horus.Platforms.Windows.Tunnel
         /// split-tunnel rules. Candidates are proved working on the unshaped config first,
         /// which has no TUN, so a fallback between them never creates and destroys adapters.
         /// </summary>
-        public static string Build(string baseConfigJson, WindowsTunSettings tun, WindowsSplitRules split)
+        public static string Build(
+            string baseConfigJson, WindowsTunSettings tun, WindowsSplitRules split, TunnelRouting routing = TunnelRouting.Vpn)
         {
             var root = JsonNode.Parse(baseConfigJson)?.AsObject()
                 ?? throw new ArgumentException("Empty base config.", nameof(baseConfigJson));
@@ -116,12 +138,14 @@ namespace Horus.Platforms.Windows.Tunnel
                     if (ss.Count == 0) ob.Remove("streamSettings");
                 }
             }
-            outbounds.Add(DnsOutbound());
+            outbounds.Add(DnsOutbound(throughProxy: true));
+            outbounds.Add(DnsOutbound(throughProxy: false));
             root["outbounds"] = outbounds;
 
-            var routing = root["routing"] as JsonObject ?? [];
-            routing["rules"] = Rules(routing["rules"] as JsonArray ?? [], split);
-            root["routing"] = routing;
+            var routingObject = root["routing"] as JsonObject ?? [];
+            var shared = routingObject["rules"] as JsonArray ?? [];
+            routingObject["rules"] = routing == TunnelRouting.FailOpen ? FailOpenRules(shared) : Rules(shared, split);
+            root["routing"] = routingObject;
 
             return root.ToJsonString(Indented);
         }
@@ -239,31 +263,36 @@ namespace Horus.Platforms.Windows.Tunnel
         }
 
         /// <summary>
-        /// Answers Windows' DNS from the core's own resolver, through the tunnel.
+        /// Answers Windows' DNS from the core's own resolver.
         ///
-        /// <para>A and AAAA are answered by the core (cached, and resolved through the
-        /// proxy). Everything else — SRV, TXT, MX, which launchers and game services do use
-        /// — is passed on to a public resolver, also through the proxy. Left to its default
-        /// the dns outbound would answer those with an empty success, and a game looking up
-        /// its server's SRV record would be told there is none.</para>
+        /// <para>A and AAAA are answered by the core (cached, and resolved as the routing says
+        /// the DNS module goes). Everything else — SRV, TXT, MX, which launchers and game
+        /// services do use — is passed on to a public resolver. Left to its default the dns
+        /// outbound would answer those with an empty success, and a game looking up its
+        /// server's SRV record would be told there is none.</para>
+        ///
+        /// <para>Two of them, so that failing open is a routing change alone: the one the VPN
+        /// routing uses forwards through the proxy, the other leaves directly.</para>
         /// </summary>
-        private static JsonObject DnsOutbound() => new()
+        private static JsonObject DnsOutbound(bool throughProxy)
         {
-            ["tag"] = DnsOutTag,
-            ["protocol"] = "dns",
-            ["settings"] = new JsonObject
+            var outbound = new JsonObject
             {
-                ["address"] = "1.1.1.1",
-                ["port"] = 53,
-                ["rules"] = new JsonArray(
-                    new JsonObject { ["action"] = "hijack", ["qType"] = "1,28" },
-                    new JsonObject { ["action"] = "direct" })
-            },
-            ["streamSettings"] = new JsonObject
-            {
-                ["sockopt"] = new JsonObject { ["dialerProxy"] = ProxyTag }
-            }
-        };
+                ["tag"] = throughProxy ? DnsOutTag : DnsDirectTag,
+                ["protocol"] = "dns",
+                ["settings"] = new JsonObject
+                {
+                    ["address"] = "1.1.1.1",
+                    ["port"] = 53,
+                    ["rules"] = new JsonArray(
+                        new JsonObject { ["action"] = "hijack", ["qType"] = "1,28" },
+                        new JsonObject { ["action"] = "direct" })
+                }
+            };
+            if (throughProxy)
+                outbound["streamSettings"] = new JsonObject { ["sockopt"] = new JsonObject { ["dialerProxy"] = ProxyTag } };
+            return outbound;
+        }
 
         /// <summary>
         /// The shared rules with the Windows ones placed around them.
@@ -284,41 +313,7 @@ namespace Horus.Platforms.Windows.Tunnel
         /// </summary>
         private static JsonArray Rules(JsonArray shared, WindowsSplitRules split)
         {
-            var rules = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["type"] = "field",
-                    ["inboundTag"] = new JsonArray(DnsModuleTag),
-                    ["outboundTag"] = ProxyTag
-                },
-                new JsonObject
-                {
-                    ["type"] = "field",
-                    ["inboundTag"] = new JsonArray(TunTag),
-                    ["port"] = "53",
-                    ["network"] = "tcp,udp",
-                    ["outboundTag"] = DnsOutTag
-                },
-                // The TUN's own subnet has nothing behind it but the resolver above. Windows
-                // still talks to it — NetBIOS broadcasts to the /30's broadcast address, seen
-                // on a real run — and the shared rules would send that out "direct".
-                new JsonObject
-                {
-                    ["type"] = "field",
-                    ["ip"] = new JsonArray(Address[..^1] + "0/30", Address6[..^1] + "0/126"),
-                    ["outboundTag"] = "block"
-                },
-                // The SOCKS inbound is the probe channel: health checks dial through it to
-                // learn whether the proxy works. Under a whitelist the catch-all is direct,
-                // and a probe that went direct would report a dead proxy as healthy.
-                new JsonObject
-                {
-                    ["type"] = "field",
-                    ["inboundTag"] = new JsonArray(SocksTag),
-                    ["outboundTag"] = ProxyTag
-                }
-            };
+            var rules = LeadRules(dnsModule: ProxyTag, tunDns: DnsOutTag);
 
             var items = shared.Select(n => n?.DeepClone()).OfType<JsonNode>().ToList();
 
@@ -334,7 +329,7 @@ namespace Horus.Platforms.Windows.Tunnel
             var lead = 0;
             while (lead < items.Count && IsRangeRule(items[lead])) lead++;
 
-            var matchers = split.IsActive ? ProcessMatchers(split.Processes) : [];
+            var matchers = split.IsActive ? [.. ProcessMatchers(split.Processes), .. FollowerMatchers(split.Followers)] : new List<string>();
             var useSplit = matchers.Count > 0;
 
             for (var i = 0; i < lead; i++) rules.Add(items[i]);
@@ -366,6 +361,75 @@ namespace Horus.Platforms.Windows.Tunnel
 
             return rules;
         }
+
+        /// <summary>
+        /// Everything around the dead proxy: DNS answered directly, the probe still on the proxy
+        /// so that its return is noticed, the user's blocks and the shared ranges kept, the rest
+        /// direct. No process rules — every application takes the same way now.
+        /// </summary>
+        private static JsonArray FailOpenRules(JsonArray shared)
+        {
+            var rules = LeadRules(dnsModule: DirectTag, tunDns: DnsDirectTag);
+
+            foreach (var rule in shared.Select(n => n?.DeepClone()).OfType<JsonNode>())
+            {
+                if (IsRangeRule(rule) || rule["outboundTag"]?.GetValue<string>() == "block") rules.Add(rule);
+            }
+
+            rules.Add(new JsonObject
+            {
+                ["type"] = "field",
+                ["network"] = "tcp,udp",
+                ["outboundTag"] = DirectTag
+            });
+            return rules;
+        }
+
+        /// <summary>The rules ahead of everything else, whatever the routing.</summary>
+        /// <param name="dnsModule">Where the core's own DNS queries go.</param>
+        /// <param name="tunDns">The DNS outbound that answers Windows.</param>
+        private static JsonArray LeadRules(string dnsModule, string tunDns) =>
+        [
+            new JsonObject
+            {
+                ["type"] = "field",
+                ["inboundTag"] = new JsonArray(DnsModuleTag),
+                ["outboundTag"] = dnsModule
+            },
+            new JsonObject
+            {
+                ["type"] = "field",
+                ["inboundTag"] = new JsonArray(TunTag),
+                ["port"] = "53",
+                ["network"] = "tcp,udp",
+                ["outboundTag"] = tunDns
+            },
+            // The TUN's own subnet has nothing behind it but the resolver above. Windows
+            // still talks to it — NetBIOS broadcasts to the /30's broadcast address, seen
+            // on a real run — and the shared rules would send that out "direct".
+            new JsonObject
+            {
+                ["type"] = "field",
+                ["ip"] = new JsonArray(Address[..^1] + "0/30", Address6[..^1] + "0/126"),
+                ["outboundTag"] = "block"
+            },
+            // The SOCKS inbound is the probe channel: health checks dial through it to
+            // learn whether the proxy works. Under a whitelist the catch-all is direct,
+            // and a probe that went direct would report a dead proxy as healthy.
+            new JsonObject
+            {
+                ["type"] = "field",
+                ["inboundTag"] = new JsonArray(SocksTag),
+                ["outboundTag"] = ProxyTag
+            }
+        ];
+
+        /// <summary>Exact paths as xray compares them, forward slashes. Never a bare name — see <see cref="WindowsSplitRules.Followers"/>.</summary>
+        private static IEnumerable<string> FollowerMatchers(IEnumerable<string> followers) =>
+            followers
+                .Select(f => f.Trim().Trim('"').Replace('\\', '/'))
+                .Where(f => f.Contains('/'))
+                .Distinct(StringComparer.Ordinal);
 
         private static JsonObject ProcessRule(IReadOnlyList<string> matchers, string tag)
         {

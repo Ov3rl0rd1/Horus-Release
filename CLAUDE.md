@@ -105,10 +105,14 @@ silent when broken — see the `windows-tunnel` skill for how to re-check them.
    reset on Hysteria2 drops every TCP session it carries (bench: 16 of 16 long sessions), and the
    old monitor reset on any adapter appearing. `NetworkPathSelector.Classify`: a better path
    appearing is left alone; only `Replaced`/`Restored` act.
-2. **Recovery never restarts the core while something cheaper works**: reset sessions → probe →
-   swap the proxy outbound in place (`XrayReplaceOutbound`) → hold. A restart removes the adapter
-   and every connection on the machine. The tunnel is torn down only after repeated failed
-   recoveries, and not at all with the kill switch on.
+2. **Recovery never takes the adapter down for a dead proxy**: reset sessions → probe → swap the
+   proxy outbound in place (`XrayReplaceOutbound`) → hold closed. A restart or a teardown removes
+   the adapter and every connection on the machine — the game split tunnelling sends direct
+   included. After `DeadProxyPolicy.ClosedRecoveries` failed recoveries (never with the kill switch
+   on) the rules are reloaded around the proxy (`TunnelRouting.FailOpen`: everything direct, DNS
+   answered directly, the SOCKS probe still on the proxy), fresh endpoints are fetched from the API,
+   and the VPN routing comes back once the probe answers. Only an adapter that is itself gone is
+   rebuilt.
 3. **Health is judged from the core's per-connection bytes through the proxy**
    (`ProxyStallDetector`), never from adapter counters or a TCP probe through the TUN: the TUN's
    gVisor stack completes handshakes and ACKs locally, so both look healthy while the proxy is dead.
@@ -119,6 +123,13 @@ silent when broken — see the `windows-tunnel` skill for how to re-check them.
 4. **Rule changes apply live** (`XrayReloadRouting`), so changing split tunnelling or site rules
    never interrupts anything; open connections keep their route until the user restarts that
    app's connections from the «Приложения» screen.
+5. **The helpers a chosen app starts take its route.** The core's `process` rule matches the
+   executable that owns a connection; GitHub Desktop through the VPN left its Copilot helper
+   direct. `ProcessFamilyWatcher` walks the process tree every 2 s (`ProcessFamily`: by parent id,
+   a child never older than its parent, system binaries walked through but not named) and the
+   helpers go into the rule by full path only — a bare name would take every copy of the
+   executable along. Helpers seen are kept while the app runs, so a short-lived one (git, per
+   fetch) is matched from its first packet the next time.
 
 **Testing the Windows tunnel behind a system-wide proxy client** (Proxifier and friends): those hook outbound TCP at the WFP layer *before* routing, so TCP never reaches the Horus adapter and the tunnel appears to carry only UDP and ICMP. Exclude `Horus.exe` or stop the redirector before drawing conclusions.
 

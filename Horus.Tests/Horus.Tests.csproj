@@ -100,6 +100,8 @@
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\ProxyStallDetector.cs" Link="Linked\Windows\ProxyStallDetector.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppTraffic.cs" Link="Linked\Windows\AppTraffic.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppRoutePolicy.cs" Link="Linked\Windows\AppRoutePolicy.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\ProcessFamily.cs" Link="Linked\Windows\ProcessFamily.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\DeadProxyPolicy.cs" Link="Linked\Windows\DeadProxyPolicy.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\NodeLatencyMonitor.cs" Link="Linked\Windows\NodeLatencyMonitor.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\PhysicalProbe.cs" Link="Linked\Windows\PhysicalProbe.cs" />
     <Compile Include="..\Horus\Protocols\SocksRoundTrip.cs" Link="Linked\SocksRoundTrip.cs" />

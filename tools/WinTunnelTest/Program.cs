@@ -199,13 +199,43 @@ Check("DNS SRV via the TUN resolver is forwarded, not blanked",
     srv.Contains("gmail.com", StringComparison.OrdinalIgnoreCase) || srv.Contains("jabber.org", StringComparison.OrdinalIgnoreCase),
     srv.Trim().Replace("\r\n", " | "));
 
+// ── Helpers a chosen app starts take its route ───────────────────────────────
+// GitHub Desktop through the VPN left its Copilot helper, another executable, going direct.
+// Here powershell is the chosen app (blacklist: direct) and a copy of curl it starts twice is
+// the helper: the first run is noticed, the second goes direct from its first packet.
+try { curl.Kill(); } catch { }
+var helperExe = Path.Combine(logs, "helper.exe");
+File.Copy(Path.Combine(Environment.SystemDirectory, "curl.exe"), helperExe, overwrite: true);
+var familyRules = new WindowsSplitRules(SplitTunnelingMode.Blacklist, ["powershell.exe"]);
+var helpers = new ProcessFamilyWatcher();
+helpers.Changed += (_, _) => XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(
+    WindowsTunnelConfig.Build(cfg.ToConfig(), new WindowsTunSettings(), familyRules with { Followers = helpers.Followers })));
+helpers.Start(() => familyRules);
+const string download = "https://speed.cloudflare.com/__down?bytes=2000000";
+var family = Process.Start(new ProcessStartInfo("powershell",
+    $"-NoProfile -Command \"& '{helperExe}' -sS -o NUL --max-time 3 '{download}'; Start-Sleep 5; & '{helperExe}' -sS -o NUL --limit-rate 40k --max-time 25 '{download}'\"")
+{ UseShellExecute = false, CreateNoWindow = true })!;
+AppTraffic? helperRow = null;
+var helperClock = Stopwatch.StartNew();
+while (helperClock.Elapsed < TimeSpan.FromSeconds(30) && !family.HasExited)
+{
+    helperRow = monitor.Snapshot().FirstOrDefault(a => a.Name.Equals("helper.exe", StringComparison.OrdinalIgnoreCase));
+    if (helperRow is { Direct: > 0 }) break;
+    await Task.Delay(500);
+}
+Check("a helper the chosen app started is found", helpers.Followers.Any(f => f.EndsWith("/helper.exe", StringComparison.OrdinalIgnoreCase)),
+    helpers.Followers.Count == 0 ? "none" : string.Join(", ", helpers.Followers));
+Check("a helper started again takes the chosen app's route from its first packet", helperRow is { Direct: > 0 },
+    helperRow is null ? $"not seen{(family.HasExited ? $"; powershell exited {family.ExitCode}" : "")}" : $"vpn {helperRow.ViaVpn}, direct {helperRow.Direct}");
+helpers.Stop();
+try { family.Kill(entireProcessTree: true); } catch { }
+
 // ── Live reload: whitelist us, so curl falls to the catch-all (direct) and we stay on the proxy ──
 var whitelistUs = Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, [mine]));
 var reload = XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(whitelistUs));
 Check("routing reloads live", reload == XrayLive.Result.Ok, reload == XrayLive.Result.Ok ? "" : XrayLive.LastError);
 var after = await GetAsync("https://www.gstatic.com/generate_204");
 Check("traffic still flows after the reload", after.Ok, after.Detail);
-try { curl.Kill(); } catch { }
 
 // ── Restart our connections: they come back under the new rules ──────────────
 var before = monitor.Snapshot().FirstOrDefault(a => a.Name.Equals(mine, StringComparison.OrdinalIgnoreCase));
@@ -235,6 +265,29 @@ var replyOnly = await SocksProbe.CanDialAsync(SocksPort, "cp.cloudflare.com", 80
 var deadAnswers = await SocksRoundTrip.AnyCarriesAsync(SocksPort, SocksRoundTrip.DefaultTargets, TimeSpan.FromSeconds(6), default);
 Check("a dead proxy fails the round trip", toDead == XrayLive.Result.Ok && !deadAnswers,
     $"swap {toDead}; the SOCKS reply alone said {(replyOnly ? "succeeded" : "failed")}");
+
+// ── Around a dead proxy the tunnel stays, and so do its direct connections ────
+// Recovery used to take the adapter down after a few failures, and the game routed direct went
+// with it. Now it reloads the rules around the proxy: a direct download started before must
+// carry on through the switch and back.
+var keeper = Process.Start(new ProcessStartInfo("curl.exe", $"-sS -o NUL --limit-rate 30k --max-time 60 {download}")
+{ UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true })!;
+long KeeperDown() => monitor.Snapshot().FirstOrDefault(a => a.Name.Equals("curl.exe", StringComparison.OrdinalIgnoreCase))?.Down ?? 0;
+var keeperClock = Stopwatch.StartNew();
+while (KeeperDown() < 20_000 && !keeper.HasExited && keeperClock.Elapsed < TimeSpan.FromSeconds(15)) await Task.Delay(500);
+var keeperBefore = KeeperDown();
+var failOpen = XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(
+    WindowsTunnelConfig.Build(cfg.ToConfig(), new WindowsTunSettings(), new WindowsSplitRules(SplitTunnelingMode.Whitelist, [mine]), TunnelRouting.FailOpen)));
+var aroundDead = await GetAsync("https://www.gstatic.com/generate_204");
+Check("around a dead proxy traffic leaves directly", failOpen == XrayLive.Result.Ok && aroundDead.Ok,
+    failOpen == XrayLive.Result.Ok ? aroundDead.Detail : XrayLive.LastError);
+Check("around a dead proxy names still resolve", await SystemResolvesAsync("example.org", TimeSpan.FromSeconds(15)));
+var closedAgain = XrayLive.ReloadRouting(WindowsTunnelConfig.RoutingOf(whitelistUs));
+await Task.Delay(3000);
+Check("a direct connection lives through the switch and back", closedAgain == XrayLive.Result.Ok && !keeper.HasExited && KeeperDown() > keeperBefore,
+    keeper.HasExited ? $"curl exited {keeper.ExitCode}: {keeper.StandardError.ReadToEnd().Trim()}" : $"{keeperBefore} -> {KeeperDown()} bytes");
+Check("the adapter stays through the switch", AdapterUp());
+try { keeper.Kill(); } catch { }
 var back = XrayLive.ReplaceOutbound(WindowsTunnelConfig.OutboundOf(whitelistUs)!);
 var afterBack = await GetAsync("https://www.gstatic.com/generate_204");
 Check("the live proxy swaps back", back == XrayLive.Result.Ok && afterBack.Ok, afterBack.Detail);
@@ -318,12 +371,25 @@ var resolvedThroughDoomed = await SystemResolvesAsync("example.com", TimeSpan.Fr
 Check("the system resolver answers through a client in another process", doomedUp && resolvedThroughDoomed,
     doomedUp ? "" : "its adapter never came up");
 try { doomed.Kill(); doomed.WaitForExit(10_000); } catch { }
-var adapterGone = await WaitAdapterGoneAsync(TimeSpan.FromSeconds(20));
-Check("the adapter goes with a killed client", adapterGone);
+// Windows may keep the device of a killed adapter for a while (removal is deferred); what
+// matters is that nothing is carried into it any more.
+var stoppedCarrying = await WaitUntilAsync(() => !AdapterUp(), TimeSpan.FromSeconds(20));
+Check("a killed client's adapter stops carrying", stoppedCarrying,
+    AdapterGuid() is null ? "device removed" : "device still present, down");
 Check("names resolve once the killed client is gone", await SystemResolvesAsync("example.com", TimeSpan.FromSeconds(20)));
+var directAfterKill = await GetAsync("https://www.gstatic.com/generate_204");
+Check("the internet works without the killed client", directAfterKill.Ok, directAfterKill.Detail);
 var strandedPolicy = Shell("powershell",
     $"-NoProfile -Command \"(Get-DnsClientNrptRule | Where-Object {{ $_.NameServers -contains '{WindowsTunnelConfig.DnsAddress}' }} | Measure-Object).Count\"").Trim();
 Check("no name resolution policy points at the tunnel's resolver", strandedPolicy == "0", $"{strandedPolicy} rule(s)");
+
+// The app started again after the crash: whatever the killed one left, a tunnel comes up.
+string? againErr = null;
+try { XrayInterop.Start(runJson); } catch (Exception ex) { againErr = ex.Message; }
+var againUp = againErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+var againTraffic = againUp ? await GetAsync("https://www.gstatic.com/generate_204") : (Ok: false, Detail: "");
+Check("a new tunnel comes up after a killed one", againUp && againTraffic.Ok,
+    againErr ?? $"{IdentityName(AdapterGuid())}, {againTraffic.Detail}");
 
 Finish();
 return failures;
@@ -380,12 +446,12 @@ static async Task<bool> WaitAdapterAsync(TimeSpan timeout)
     return false;
 }
 
-static async Task<bool> WaitAdapterGoneAsync(TimeSpan timeout)
+static async Task<bool> WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
 {
     var end = DateTime.UtcNow + timeout;
     while (DateTime.UtcNow < end)
     {
-        if (AdapterGuid() is null) return true;
+        if (condition()) return true;
         await Task.Delay(200);
     }
     return false;

@@ -9,12 +9,16 @@ description: How the Windows tunnel is built and how to test a change to it with
 
 The core (`xray.dll`, the fork's `libxray`) runs **in-process and owns the TUN**: its `tun`
 inbound creates the wintun adapter, installs `0/1 + 128/1` on it, answers DNS at
-`198.18.0.2`, and pins every socket it opens to the physical interface
-(`autoOutboundsInterface`, `IP_UNICAST_IF`). There is no hev, no route.exe, no WinDivert.
+`198.18.0.2`, keeps DNS off every other interface with WFP filters in a dynamic session
+(`autoSystemWfpBlockLeak`, gone with the process), and pins every socket it opens to the
+physical interface (`autoOutboundsInterface`, `IP_UNICAST_IF`). There is no hev, no route.exe,
+no WinDivert, and nothing the app changes in Windows outlives it (`WindowsSystemFootprintTests`).
 
 | Piece | File | Job |
 |---|---|---|
-| Config shaping | `Platforms/Windows/Tunnel/WindowsTunnelConfig.cs` | TUN inbound, DNS, routing lead rules, process rules for split tunnelling |
+| Config shaping | `Platforms/Windows/Tunnel/WindowsTunnelConfig.cs` | TUN inbound (DNS leak filters included), DNS, routing lead rules, process rules for split tunnelling, the fail-open routing |
+| Split helpers | `Tunnel/ProcessFamily.cs`, `Tunnel/ProcessFamilyWatcher.cs` | the processes a chosen app started, by full path |
+| Dead proxy | `Tunnel/DeadProxyPolicy.cs` | hold closed, then fail open — never drop the adapter |
 | Controller | `Platforms/Windows/WindowsVpnController.cs` | prove candidates on SOCKS, start with TUN, health loop, recovery, live reload |
 | Network | `WindowsNetworkMonitor.cs`, `Tunnel/NetworkPath.cs` | act only when the path the core is bound to is gone |
 | Health | `Tunnel/ProxyStallDetector.cs` | judge from the core's per-connection bytes, never from adapter counters |
