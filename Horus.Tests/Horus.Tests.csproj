@@ -65,6 +65,10 @@
     <Compile Include="..\Horus\Protocols\OutboundAddress.cs" Link="Linked\OutboundAddress.cs" />
     <Compile Include="..\Horus\Protocols\OutboundFixups.cs" Link="Linked\OutboundFixups.cs" />
     <Compile Include="..\Horus\Application\CacheRefreshPolicy.cs" Link="Linked\CacheRefreshPolicy.cs" />
+    <Compile Include="..\Horus\Application\InFlightConnect.cs" Link="Linked\InFlightConnect.cs" />
+    <Compile Include="..\Horus\Application\AccountServerRules.cs" Link="Linked\AccountServerRules.cs" />
+    <Compile Include="..\Horus\Domain\Models\VpnState.cs" Link="Linked\VpnState.cs" />
+    <Compile Include="..\Horus\Presentation\ViewModels\ConnectButton.cs" Link="Linked\ConnectButton.cs" />
     <Compile Include="..\Horus\Application\SupportChannels.cs" Link="Linked\SupportChannels.cs" />
     <Compile Include="..\Horus\Domain\Models\GeoRouting.cs" Link="Linked\GeoRouting.cs" />
     <Compile Include="..\Horus\Domain\Models\RuleAction.cs" Link="Linked\RuleAction.cs" />
@@ -97,6 +101,8 @@
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\ProxyStallDetector.cs" Link="Linked\Windows\ProxyStallDetector.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppTraffic.cs" Link="Linked\Windows\AppTraffic.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\AppRoutePolicy.cs" Link="Linked\Windows\AppRoutePolicy.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\ProcessFamily.cs" Link="Linked\Windows\ProcessFamily.cs" />
+    <Compile Include="..\Horus\Platforms\Windows\Tunnel\DeadProxyPolicy.cs" Link="Linked\Windows\DeadProxyPolicy.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\NodeLatencyMonitor.cs" Link="Linked\Windows\NodeLatencyMonitor.cs" />
     <Compile Include="..\Horus\Platforms\Windows\Tunnel\PhysicalProbe.cs" Link="Linked\Windows\PhysicalProbe.cs" />
     <Compile Include="..\Horus\Protocols\SocksRoundTrip.cs" Link="Linked\SocksRoundTrip.cs" />

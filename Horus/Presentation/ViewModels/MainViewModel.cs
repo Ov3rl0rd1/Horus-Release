@@ -24,7 +24,8 @@ namespace Horus.Presentation.ViewModels
         private readonly IApiService _api;
         private readonly IAccountSync _accountSync;
         private readonly IErrorReportingService _errorReporting;
-        private readonly AppSession _session;
+        private readonly IAccountServer _accountServer;
+        private readonly ServerSwitcher _serverSwitcher;
         private readonly Navigator _nav;
         private readonly IPublisherTrustService _publisherTrust;
         private readonly INoticeService _notices;
@@ -90,7 +91,8 @@ namespace Horus.Presentation.ViewModels
             IApiService api,
             IAccountSync accountSync,
             IErrorReportingService errorReporting,
-            AppSession session,
+            IAccountServer accountServer,
+            ServerSwitcher serverSwitcher,
             Navigator nav,
             IPublisherTrustService publisherTrust,
             INoticeService notices)
@@ -99,13 +101,18 @@ namespace Horus.Presentation.ViewModels
             _showPublisherWarning = publisherTrust.NeedsTrust;
 
             _vpnManager = vpnManager;
+            // The tunnel may be up before this screen exists: started from the Quick Settings
+            // tile, or restored after the process died, both with no UI. Starting from
+            // "disconnected" showed it off while it ran.
+            _vpnState = vpnManager.State;
             _traffic = traffic;
             _subscription = subscription;
             _auth = auth;
             _api = api;
             _accountSync = accountSync;
             _errorReporting = errorReporting;
-            _session = session;
+            _accountServer = accountServer;
+            _serverSwitcher = serverSwitcher;
             _nav = nav;
             _notices = notices;
 
@@ -114,7 +121,7 @@ namespace Horus.Presentation.ViewModels
 
             _vpnManager.StateChanged += OnVpnStateChanged;
             _traffic.TrafficUpdated += OnTrafficUpdated;
-            _session.PropertyChanged += (_, __) => RaiseServerCard();
+            _accountServer.Changed += (_, __) => MainThread.BeginInvokeOnMainThread(RaiseServerCard);
 
             // The poll runs whether or not this screen asked for it, so pick up its result
             // wherever it lands. Without this a subscription granted while the user watches
@@ -192,22 +199,23 @@ namespace Horus.Presentation.ViewModels
             RaiseAll();
         }
 
-        // ── Selected-server card ──
-        // In Auto mode the "display" server is the fastest known one (first quick server).
-        private ServerInfo? DisplayServer => _session.IsAutoSelect
-            ? QuickServers.FirstOrDefault()?.Server
-            : _session.SelectedServer;
+        // ── The account's server card ──
+        // One server for every device on the account; none until the first connect picks one.
+        private ServerInfo? AccountServer => _accountServer.Current;
 
-        public bool CurIsAuto => _session.IsAutoSelect;
-        public string CurCode => _session.SelectedServer is { } s ? new ServerRow(s).Code : "AUTO";
-        public string CurName => CurIsAuto ? "Автовыбор" : (_session.SelectedServer?.Name ?? "Автовыбор");
-        public string CurSub => CurIsAuto
-            ? (IsOn && DisplayServer is { City: { Length: > 0 } c } ? $"{c} · оптимальный сервер" : "Выберет самый быстрый сервер")
-            : (_session.SelectedServer?.City ?? "");
+        /// <summary>Measured on the servers list, when the account's server is in it.</summary>
+        private int? AccountServerPing =>
+            QuickServers.FirstOrDefault(r => r.Server.Id == AccountServer?.Id)?.Server.PingMs;
 
-        public bool ShowCurPing => (IsOn || !CurIsAuto) && DisplayServer?.PingMs is not null;
-        public string CurPing => DisplayServer?.PingMs is { } p ? $"{p} мс" : "";
-        public Color CurPingColor => ServerRow.PingColorFor(DisplayServer?.PingMs);
+        public string CurCode => AccountServer is { } s ? new ServerRow(s).Code : "—";
+        public string CurName => AccountServer?.Name ?? "Сервер не выбран";
+        public string CurSub => AccountServer is { } s
+            ? (s.City.Length > 0 ? s.Country : string.Empty)
+            : "Назначим при подключении";
+
+        public bool ShowCurPing => AccountServerPing is not null;
+        public string CurPing => AccountServerPing is { } p ? $"{p} мс" : "";
+        public Color CurPingColor => ServerRow.PingColorFor(AccountServerPing);
 
         // ── Subscription / renew banner (real expiry) ──
         public int SubDaysLeft
@@ -269,10 +277,20 @@ namespace Horus.Presentation.ViewModels
         }
 
         // ── Commands ──────────────────────────────────────────────────────────
-        [RelayCommand]
+
+        /// <summary>
+        /// Concurrent on purpose: the press that cancels a connect arrives while the press that
+        /// started it is still running. Without it the command disabled itself for the whole
+        /// connect, and the button "only worked once connected".
+        /// </summary>
+        [RelayCommand(AllowConcurrentExecutions = true)]
         private async Task ToggleConnectAsync()
         {
-            if (IsOn || IsConnecting) { await DisconnectAsync(); return; }
+            if (ConnectButton.ActionFor(LiveVpnState()) == ConnectButtonAction.Disconnect)
+            {
+                await DisconnectAsync();
+                return;
+            }
 
             // Only block on a subscription the server has actually confirmed is gone.
             // While the state is Unknown we let the attempt through: the API is the
@@ -291,6 +309,23 @@ namespace Horus.Presentation.ViewModels
             }
 
             await ConnectAsync();
+        }
+
+        /// <summary>The controller's state now — not what this screen last heard.</summary>
+        private VpnState LiveVpnState()
+        {
+#if DEBUG
+            if (AppConfiguration.UseDevBypass) return VpnState;
+#endif
+            return _vpnManager.State;
+        }
+
+        /// <summary>Catches the screen up with the controller, for when the app comes back to the front.</summary>
+        public void SyncVpnState()
+        {
+            if (VpnState == LiveVpnState()) return;
+            VpnState = LiveVpnState();
+            RaiseAll();
         }
 
         [RelayCommand] private void GoServers() => _nav.Go(AppScreen.Servers);
@@ -325,17 +360,15 @@ namespace Horus.Presentation.ViewModels
                 QuickServers.Clear();
                 foreach (var s in top) QuickServers.Add(new ServerRow(s));
                 OnPropertyChanged(nameof(HasQuick));
-                RaiseServerCard(); // DisplayServer (Auto) depends on QuickServers
+                RaiseServerCard(); // the account server's ping comes from this list
             }
             catch { /* leave list as-is */ }
         }
 
         [RelayCommand]
-        private void SelectQuick(ServerRow? row)
+        private async Task SelectQuickAsync(ServerRow? row)
         {
-            if (row is null) return;
-            _session.Select(row.Server);
-            RaiseServerCard();
+            if (row is not null) await _serverSwitcher.SwitchToAsync(row.Server);
         }
 
         [RelayCommand]
@@ -356,19 +389,12 @@ namespace Horus.Presentation.ViewModels
 #endif
             try
             {
-                // The API picks and binds the server itself (GET /servers/connect takes no
-                // id); the resolved server is passed only so the UI can label the session.
-                await _vpnManager.ConnectAsync(await ResolveServerAsync());
-
-                // "Auto" has now resolved to something concrete: the account is bound to that
-                // node and its endpoints are cached, so every following connect lands on it
-                // too. Leaving the card on "Автовыбор" would describe a decision that has
-                // already been taken.
-                if (_vpnManager.ActiveServer is { } bound)
-                {
-                    _session.PinResolved(bound);
-                    RaiseServerCard();
-                }
+                // To the account's server; the API picks one for an account that has none.
+                await _vpnManager.ConnectAsync();
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelled by a second press: the user's own decision, not a failure.
             }
             catch (SubscriptionExpiredException)
             {
@@ -472,25 +498,6 @@ namespace Horus.Presentation.ViewModels
         }
 #endif
 
-        /// <summary>
-        /// The server to bind to, or null to leave the binding alone.
-        ///
-        /// <para>Null in Auto mode, and that is the point. Binding is a reservation on a
-        /// node, so naming one here would move the account on <i>every</i> connect —
-        /// costing a re-provision and throwing away the stability the binding exists to
-        /// provide. "Auto" means the user does not care which node, not that they want a
-        /// new one each time; an account with no binding at all is still auto-picked by
-        /// the connect endpoint.</para>
-        ///
-        /// <para>This used to return the least-loaded node it could find, which was
-        /// harmless when the API ignored the argument and is not now.</para>
-        /// </summary>
-        /// <para>Only an <i>explicit</i> choice is passed on. A selection this app pinned
-        /// after a connect (see <see cref="AppSession.PinResolved"/>) is there to label the
-        /// session, not to re-bind on every connect — which would undo the paragraph above.</para>
-        private Task<ServerInfo?> ResolveServerAsync() =>
-            Task.FromResult(_session.IsExplicit ? _session.SelectedServer : null);
-
         // ── Event handlers ──
         private void OnVpnStateChanged(object? sender, VpnStateChangedEventArgs e)
         {
@@ -523,7 +530,6 @@ namespace Horus.Presentation.ViewModels
 
         private void RaiseServerCard()
         {
-            OnPropertyChanged(nameof(CurIsAuto));
             OnPropertyChanged(nameof(CurCode));
             OnPropertyChanged(nameof(CurName));
             OnPropertyChanged(nameof(CurSub));

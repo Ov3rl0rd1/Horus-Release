@@ -10,7 +10,6 @@ namespace Horus.Application
     {
         public event EventHandler<VpnStateChangedEventArgs>? StateChanged;
         public event EventHandler<ConnectionErrorEventArgs>? ConnectionError;
-        public event EventHandler<ServerChangedEventArgs>? ServerChanged;
         public event EventHandler<ProtocolFallbackEventArgs>? ProtocolFallback;
 
         /// <summary>Raw stdout/stderr lines from the xray process.</summary>
@@ -107,6 +106,7 @@ namespace Horus.Application
 
         private int _reconnectAttempt;
         private CancellationTokenSource? _reconnectCts;
+        private readonly InFlightConnect _connect = new();
 
         /// <summary>
         /// How long a tunnel may be diagnosed as "the link is down, not us" before it is
@@ -232,17 +232,15 @@ namespace Horus.Application
         }
 
         /// <summary>
-        /// Connects, binding the account to <paramref name="server"/> first when one was
-        /// chosen.
+        /// Connects to the server the account is bound to.
         ///
-        /// <para>Selection and connection are now two calls, not one. The API used to pick
-        /// a node as a side effect of handing out links, which meant the app could not
-        /// honour a user's choice at all; <c>POST /servers/select</c> reserves the slot and
-        /// <c>GET /servers/connect</c> only reads back what the account is bound to. Passing
-        /// null means "leave the binding alone" — the connect endpoint still auto-picks for
-        /// an account that has never been bound.</para>
+        /// <para>Selection and connection are two calls. <c>POST /servers/select</c> moves the
+        /// account, and only when the user picks a server (<see cref="IAccountServer"/>);
+        /// <c>GET /servers/connect</c> reads back what the account is bound to, and picks one
+        /// for an account that has none. A connect never selects: an automatic reconnect that
+        /// did would move the account back from a server chosen on another device.</para>
         /// </summary>
-        public async Task ConnectAsync(ServerInfo? server = null, CancellationToken ct = default)
+        public async Task ConnectAsync(CancellationToken ct = default)
         {
             if (State != VpnState.Disconnected) return;
 
@@ -261,11 +259,18 @@ namespace Horus.Application
             // having.
             DiagnosticPaths.Rotate(DiagnosticPaths.XrayLog);
 
+            await _connect.RunAsync(EstablishAsync, ct);
+        }
+
+        /// <summary>
+        /// The connect itself. Cancelled by <see cref="DisconnectAsync"/> through
+        /// <see cref="_connect"/>, and whatever it had built is taken down before it returns.
+        /// </summary>
+        private async Task EstablishAsync(CancellationToken ct)
+        {
             try
             {
-                await BindServerIfNeededAsync(server, ct);
-
-                var connection = await FetchConnectionAsync(server, ct);
+                var connection = await FetchConnectionAsync(ct);
 
                 bool granted = await _platform.RequestPermissionsAsync();
                 if (!granted)
@@ -308,9 +313,12 @@ namespace Horus.Application
                         _usingCachedConnection, usedConfig.OfferId != available[0].Id, ConnectionCache.Age))
                     _ = RefreshCachedConnectionAsync();
 
-                // Establish TUN, apply routing
-                var tunnelOptions = BuildTunnelOptions(server, usedConfig);
-                await _platform.StartTunnelAsync(tunnelOptions, ct);
+                // Establish TUN, apply routing. Not abandoned half-way when cancelled: the
+                // service builds the interface on its own thread, and a stop that overtook it
+                // would leave a tunnel nobody owns. It takes a fraction of a second.
+                var tunnelOptions = BuildTunnelOptions(usedConfig);
+                await _platform.StartTunnelAsync(tunnelOptions, CancellationToken.None);
+                ct.ThrowIfCancellationRequested();
 
                 // Routing rules are advisory today: the Android platform hook is a no-op
                 // and xray does its own routing from the generated config. Never let them
@@ -328,14 +336,8 @@ namespace Horus.Application
                 if (_traffic is TrafficMonitorService tms) tms.Reset();
                 _traffic.Start();
 
-                // The API is the authority on which node this actually is. In Auto mode
-                // nothing was passed in, and even when it was, the connect response carries
-                // a display name the ping catalogue does not have — so prefer it and fall
-                // back to the caller's idea only if the API said nothing.
-                var previous = ActiveServer;
-                ActiveServer = connection.Server?.ToServerInfo() ?? server;
-                if (previous != null && server != null)
-                    ServerChanged?.Invoke(this, new ServerChangedEventArgs(previous, server));
+                // The API is the authority on which node this actually is.
+                ActiveServer = connection.Server?.ToServerInfo();
 
                 SetState(VpnState.Connected, null);
 
@@ -354,11 +356,11 @@ namespace Horus.Application
                 _endpoint = new TunnelHealthMonitor.Endpoint(tunnelOptions.SocksPort);
                 _health.Start(_endpoint);
             }
-            catch (OperationCanceledException)
+            catch (Exception) when (ct.IsCancellationRequested)
             {
                 await SafeTeardownAsync();
                 SetState(VpnState.Disconnected, "Cancelled");
-                throw;
+                throw new OperationCanceledException(ct);
             }
             catch (Exception ex)
             {
@@ -382,7 +384,10 @@ namespace Horus.Application
             _reconnectAttempt = 0;
             _demotedOffer = null;
 
-            if (State == VpnState.Disconnected) return;
+            // A connect in progress unwinds itself, its teardown included.
+            await _connect.CancelAsync();
+
+            if (State is VpnState.Disconnected or VpnState.Disconnecting) return;
 
             SetState(VpnState.Disconnecting, null);
             try
@@ -391,24 +396,52 @@ namespace Horus.Application
                 _traffic.Stop();
                 await _platform.StopTunnelAsync();
                 await DetachProtocolAsync();
-
-                ActiveServer = null;
-                ActiveOfferId = null;
-            ActiveOfferLabel = null;
                 SetState(VpnState.Disconnected, null);
             }
             catch (Exception ex)
             {
-                SetState(VpnState.Error, ex.Message);
+                // Still off as far as anyone can act on it: a state the button cannot leave
+                // would be worse than a teardown that complained.
+                SetState(VpnState.Disconnected, ex.Message);
                 throw;
+            }
+            finally
+            {
+                ActiveServer = null;
+                ActiveOfferId = null;
+                ActiveOfferLabel = null;
             }
         }
 
-        public async Task ReconnectAsync(ServerInfo? server = null, CancellationToken ct = default)
+        /// <summary>
+        /// Moves a running tunnel to the account's new server: the core is replaced, the
+        /// interface is held — the same path as a recovery, without waiting for the old node
+        /// to fail first. The stored endpoints are already the new server's, or gone
+        /// (<see cref="IAccountServer"/> sees to it).
+        /// </summary>
+        public async Task FollowAccountServerAsync(CancellationToken ct = default)
         {
-            var target = server ?? ActiveServer;
-            await DisconnectAsync();
-            await ConnectAsync(target, ct);
+            if (State is not (VpnState.Connected or VpnState.Reconnecting)) return;
+
+            const string reason = "the account moved to another server";
+            _reconnectCts?.Cancel();
+            SetState(VpnState.Reconnecting, reason);
+            _health.Stop();
+            _traffic.Stop();
+            try { await DetachProtocolAsync(); } catch { /* already dead */ }
+            ActiveOfferId = null;
+            ActiveOfferLabel = null;
+            SetState(VpnState.Disconnected, reason);
+
+            if (!WantsConnection) return;
+            try { await ConnectAsync(ct); }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // The user wants the tunnel and the new node may just be slow to take the
+                // account: keep trying, as a recovery does.
+                OnProtocolOutput(this, $"[recover] the new server did not connect: {ex.Message}");
+                ScheduleReconnect(reason, immediate: false);
+            }
         }
 
         // ── Preflight ───────────────────────────────────────────────────────
@@ -741,7 +774,7 @@ namespace Horus.Application
                 ? "restoring tunnel — intent survived, nothing was running"
                 : "auto-connect on launch");
 
-            try { await ConnectAsync(ActiveServer, ct); }
+            try { await ConnectAsync(ct); }
             catch (Exception ex) { Diag.Warn("connect", $"startup connect failed: {ex.Message}"); }
         }
 
@@ -755,11 +788,6 @@ namespace Horus.Application
             if (!WantsConnection) return;
 
             var protocol = ActiveOfferId ?? "Unknown";
-
-            // Captured before the teardown, which clears it. Without this the reconnect
-            // would come back in Auto mode and the Home card would forget the server the
-            // user picked.
-            var server = ActiveServer;
 
             SetState(VpnState.Reconnecting, reason);
 
@@ -794,10 +822,10 @@ namespace Horus.Application
             SetState(VpnState.Disconnected, reason);
             ConnectionError?.Invoke(this, new ConnectionErrorEventArgs(protocol, reason, true));
 
-            ScheduleReconnect(reason, immediate: false, server);
+            ScheduleReconnect(reason, immediate: false);
         }
 
-        private void ScheduleReconnect(string reason, bool immediate, ServerInfo? server = null)
+        private void ScheduleReconnect(string reason, bool immediate)
         {
             if (!WantsConnection) return;
 
@@ -806,7 +834,6 @@ namespace Horus.Application
             _reconnectCts = new CancellationTokenSource();
             var ct = _reconnectCts.Token;
 
-            var target = server ?? ActiveServer;
             var delay = immediate
                 ? TimeSpan.Zero
                 : ReconnectBackoff[Math.Min(_reconnectAttempt, ReconnectBackoff.Length - 1)];
@@ -835,12 +862,12 @@ namespace Horus.Application
                         // Mid-teardown or wedged in Error. Come back rather than abandoning
                         // recovery for the rest of the session.
                         default:
-                            ScheduleReconnect(reason, immediate: false, target);
+                            ScheduleReconnect(reason, immediate: false);
                             return;
                     }
 
                     _reconnectAttempt++;
-                    await ConnectAsync(target, ct).ConfigureAwait(false);
+                    await ConnectAsync(ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex)
@@ -854,7 +881,7 @@ namespace Horus.Application
                     if (IsSessionFailure(ex))
                         _reconnectAttempt = Math.Max(0, _reconnectAttempt - 1);
 
-                    ScheduleReconnect(reason, immediate: false, target);
+                    ScheduleReconnect(reason, immediate: false);
                 }
             }, ct);
         }
@@ -969,7 +996,17 @@ namespace Horus.Application
 
                     return (protocol, config);
                 }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
+                catch (Exception) when (ct.IsCancellationRequested)
+                {
+                    // Not yet the active protocol, so the teardown would not find it.
+                    if (protocol != null)
+                    {
+                        Detach(protocol);
+                        try { await protocol.DisconnectAsync(); } catch { /* already dead */ }
+                    }
+                    throw;
+                }
+                catch (Exception ex)
                 {
                     lastEx = ex;
 
@@ -1080,7 +1117,7 @@ namespace Horus.Application
 
         // ── Private helpers ─────────────────────────────────────────────────
 
-        private static TunnelOptions BuildTunnelOptions(ServerInfo? server, ProtocolConfig config) => new()
+        private static TunnelOptions BuildTunnelOptions(ProtocolConfig config) => new()
         {
             // Single source for the three places that must agree: hev's YAML, the Android
             // Builder.AddAddress call, and the Windows route/netsh commands.
@@ -1179,13 +1216,12 @@ namespace Horus.Application
         /// connect attempt, and <see cref="ConnectionCache.Invalidate"/> is called when every
         /// endpoint has failed.</para>
         ///
-        /// <para>The binding step above is what keeps this honest for the "changed region on
-        /// another device" case: a user who picks a different node goes through
-        /// <c>select</c>, and the id mismatch discards the cache before it is read.</para>
+        /// <para>A move of the account, from here or from another device, discards the cache
+        /// (<see cref="IAccountServer"/>), so what is read here is the account's server.</para>
         /// </summary>
-        private async Task<ServerConnection> FetchConnectionAsync(ServerInfo? server, CancellationToken ct)
+        private async Task<ServerConnection> FetchConnectionAsync(CancellationToken ct)
         {
-            var cached = ConnectionCache.Read(server?.Id ?? ActiveServer?.Id);
+            var cached = ConnectionCache.Read();
             if (cached is not null)
             {
                 _usingCachedConnection = true;
@@ -1218,31 +1254,6 @@ namespace Horus.Application
                 Diag.Info("cache", "endpoints refreshed in the background");
             }
             catch (Exception ex) { Diag.Info("cache", $"background refresh skipped: {ex.Message}"); }
-        }
-
-        /// <summary>
-        /// Reserves a slot on the chosen node, when the user chose one.
-        ///
-        /// <para>Skipped for auto: asking the API to auto-pick on every connect would move
-        /// an account off a node it is happily bound to, which costs a re-provision and
-        /// loses the stability the binding exists to provide. A user who wants a different
-        /// node says so on the Servers screen, and that is the only thing that moves them.</para>
-        ///
-        /// <para>Skipped too when the account is already on that node — <c>select</c> is
-        /// idempotent, but a round trip on every connect is not free on a mobile link.</para>
-        /// </summary>
-        private async Task BindServerIfNeededAsync(ServerInfo? server, CancellationToken ct)
-        {
-            if (server is null) return;
-            if (ActiveServer?.Id == server.Id) return;
-
-            Diag.Info("connect", $"binding to server {server.Id} ({server.Location})");
-            var bound = await _api.SelectServerAsync(server.Id, ct);
-
-            // The API's name is the authoritative one: the ping catalogue has no display
-            // name at all, so this is the first point at which the node can be called
-            // anything better than its city.
-            OnProtocolOutput(this, $"[api] bound to {bound.Name} ({bound.Location})");
         }
 
         /// <summary>

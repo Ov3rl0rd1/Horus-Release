@@ -39,8 +39,10 @@ public class WindowsTunnelConfigTests
         return cfg.ToConfig();
     }
 
-    private static JsonObject Build(WindowsSplitRules? split = null, WindowsTunSettings? tun = null, Action<XrayConfig>? configure = null) =>
-        JsonNode.Parse(WindowsTunnelConfig.Build(Base(configure), tun ?? new WindowsTunSettings(), split ?? WindowsSplitRules.None))!.AsObject();
+    private static JsonObject Build(
+        WindowsSplitRules? split = null, WindowsTunSettings? tun = null, Action<XrayConfig>? configure = null,
+        TunnelRouting routing = TunnelRouting.Vpn) =>
+        JsonNode.Parse(WindowsTunnelConfig.Build(Base(configure), tun ?? new WindowsTunSettings(), split ?? WindowsSplitRules.None, routing))!.AsObject();
 
     private static JsonArray Rules(JsonObject root) => root["routing"]!["rules"]!.AsArray();
 
@@ -64,6 +66,28 @@ public class WindowsTunnelConfigTests
         Assert.Equal("auto", s["autoOutboundsInterface"]!.GetValue<string>());
         Assert.Equal(["198.18.0.2"], s["dns"]!.AsArray().Select(n => n!.GetValue<string>()));
     }
+
+    [Fact]
+    public void Dns_outside_the_tunnel_is_blocked_by_filters_that_die_with_the_process()
+    {
+        var settings = Build()["inbounds"]![0]!["settings"]!;
+
+        Assert.Equal(["dns"], settings["autoSystemWfpBlockLeak"]!.AsArray().Select(n => n!.GetValue<string>()));
+    }
+
+    [Fact]
+    public void The_dns_leak_block_can_be_left_out()
+    {
+        var settings = Build(tun: new WindowsTunSettings(BlockDnsLeaks: false))["inbounds"]![0]!["settings"]!;
+
+        Assert.Null(settings["autoSystemWfpBlockLeak"]);
+    }
+
+    [Theory]
+    [InlineData("unable to block DNS outside the TUN (remove autoSystemWfpBlockLeak to run without) > access denied", true)]
+    [InlineData("unable to create TUN: problem code 0x1F", false)]
+    public void A_core_that_cannot_install_the_leak_block_is_recognised(string error, bool refused) =>
+        Assert.Equal(refused, WindowsTunnelConfig.IsLeakBlockRefusal(error));
 
     [Fact]
     public void Ipv6_is_captured_unless_turned_off()
@@ -192,6 +216,82 @@ public class WindowsTunnelConfigTests
         var plain = Rules(Build()).ToJsonString();
         Assert.Equal(plain, Rules(Build(new WindowsSplitRules(SplitTunnelingMode.Whitelist, []))).ToJsonString());
         Assert.Equal(plain, Rules(Build(new WindowsSplitRules(SplitTunnelingMode.Disabled, ["a.exe"]))).ToJsonString());
+    }
+
+    [Theory]
+    [InlineData(SplitTunnelingMode.Whitelist, "proxy")]
+    [InlineData(SplitTunnelingMode.Blacklist, "direct")]
+    public void Helpers_a_chosen_app_started_take_its_route_matched_by_full_path_only(SplitTunnelingMode mode, string route)
+    {
+        const string copilot = "C:/Users/u/AppData/Local/GitHubDesktop/app-3.5.2/copilot/copilot-language-server.exe";
+        var split = new WindowsSplitRules(mode, ["GitHub Desktop.exe"]) { Followers = [copilot] };
+
+        var rule = Rules(Build(split)).Single(r => r?["process"] is not null)!;
+        var matchers = rule["process"]!.AsArray().Select(n => n!.GetValue<string>()).ToList();
+
+        Assert.Equal(route, Tag(rule));
+        Assert.Contains("GitHub Desktop", matchers);
+        Assert.Contains(copilot, matchers);
+        // A bare name would take every copy of the helper, started by anything, along with it.
+        Assert.DoesNotContain(matchers, m => m.StartsWith("copilot", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Helpers_without_a_chosen_app_change_nothing()
+    {
+        var split = new WindowsSplitRules(SplitTunnelingMode.Whitelist, []) { Followers = ["C:/x/helper.exe"] };
+
+        Assert.Equal(Rules(Build()).ToJsonString(), Rules(Build(split)).ToJsonString());
+    }
+
+    [Theory]
+    [InlineData(SplitTunnelingMode.Disabled)]
+    [InlineData(SplitTunnelingMode.Whitelist)]
+    [InlineData(SplitTunnelingMode.Blacklist)]
+    public void Around_a_dead_vpn_everything_goes_direct_but_the_probe(SplitTunnelingMode mode)
+    {
+        var rules = Rules(Build(
+            new WindowsSplitRules(mode, ["game.exe"]),
+            configure: c => c.SiteRules = [new SiteRule("example.com", RuleAction.Proxy)],
+            routing: TunnelRouting.FailOpen));
+
+        var toProxy = Assert.Single(rules, r => Tag(r) == "proxy");
+        Assert.Equal(WindowsTunnelConfig.SocksTag, toProxy!["inboundTag"]![0]!.GetValue<string>());
+        Assert.DoesNotContain(rules, r => r?["process"] is not null);
+        Assert.Equal("direct", Tag(rules[^1]));
+    }
+
+    [Fact]
+    public void Around_a_dead_vpn_names_still_resolve()
+    {
+        var rules = Rules(Build(routing: TunnelRouting.FailOpen));
+
+        Assert.Equal("direct", Tag(rules.Single(r => r?["inboundTag"]?[0]?.GetValue<string>() == WindowsTunnelConfig.DnsModuleTag)));
+        Assert.Equal(WindowsTunnelConfig.DnsDirectTag, Tag(rules.Single(r => r?["port"]?.GetValue<string>() == "53")));
+    }
+
+    [Fact]
+    public void Around_a_dead_vpn_what_the_user_blocks_stays_blocked()
+    {
+        var rules = Rules(Build(
+            configure: c => c.SiteRules = [new SiteRule("ads.example", RuleAction.Reject)],
+            routing: TunnelRouting.FailOpen));
+
+        Assert.Equal("block", Tag(rules.Single(r => r?["domain"] is not null)));
+        Assert.Equal("block", Tag(rules.Single(r => r?["ip"]?.AsArray().Any(ip => ip!.GetValue<string>() == "198.18.0.0/30") == true)));
+    }
+
+    [Fact]
+    public void Switching_routing_needs_no_new_outbound()
+    {
+        // A routing reload is all the switch costs: the TUN, and every connection on it, stay.
+        var vpn = Build();
+        var dnsDirect = vpn["outbounds"]!.AsArray().Single(o => o!["tag"]!.GetValue<string>() == WindowsTunnelConfig.DnsDirectTag)!;
+
+        Assert.Equal("dns", dnsDirect["protocol"]!.GetValue<string>());
+        Assert.Null(dnsDirect["streamSettings"]?["sockopt"]?["dialerProxy"]);
+        Assert.Equal(vpn["outbounds"]!.ToJsonString(), Build(routing: TunnelRouting.FailOpen)["outbounds"]!.ToJsonString());
+        Assert.DoesNotContain(Rules(vpn), r => Tag(r) == WindowsTunnelConfig.DnsDirectTag);
     }
 
     [Theory]

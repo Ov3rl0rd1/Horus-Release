@@ -43,7 +43,7 @@ failed with "Missing from the publish output: publish/win-x64/wintun.dll".
 | Android Debug | 39 warnings, 0 errors |
 | Windows Debug | 129 warnings, 0 errors |
 | WinUiTypeCheck | builds, warnings are the shared MVVM-toolkit ones |
-| tests | **405 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed |
+| tests | **464 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed (26.10.2026) |
 
 The counts are noisy by design (obsolete MAUI `Frame`, `CA1416` platform-availability,
 `CS0067` unused events on the stub services). What matters is that no **new kind** appears —
@@ -89,6 +89,14 @@ not one — it is the wrong TFM. `Horus.csproj:14-16` is the source of truth.
   are filled only under `#if WINDOWS`, so Android keeps the shared UI and default behaviour.
 - `HevLogCapContractTests` — the `log-max-size` key the patched bridge expects.
 - `ConnectResponseTests` — the shape of `GET /servers/connect`.
+- `WindowsSystemFootprintTests` — nothing the Windows client changes in the system may outlive
+  its process (a persistent NRPT rule left machines without DNS after a reboot).
+- `InFlightConnectTests`, `ConnectButtonTests` — a press while connecting cancels the connect and
+  waits for it to unwind; the button decides from the controller's state, not the screen's.
+- `ProcessFamilyTests`, `DeadProxyPolicyTests` — split-tunnel helpers found by parent id and
+  matched by path; a dead proxy never takes the adapter down (hold closed, then fail open).
+- `AccountServerRulesTests` — the server is the account's: followed when it moves, never
+  re-selected by a connect.
 
 When touching the port, the YAML generator or the API models, expect these to fail first and
 treat that as the tests working.

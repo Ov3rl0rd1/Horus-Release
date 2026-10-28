@@ -7,21 +7,21 @@ using Horus.Domain.Models;
 namespace Horus.Presentation.ViewModels
 {
     /// <summary>
-    /// Server picker. Server list and per-server load come from the real
-    /// <see cref="ISubscriptionService"/>. Per-server <b>ping</b> is a placeholder —
-    /// there is no latency-measurement service yet, so rows show server load only
-    /// (see PLAN-remaining-functions.md).
+    /// Server picker. The list and per-server load come from <see cref="ISubscriptionService"/>,
+    /// latency from <c>LatencyProbe</c>. The account's own server is shown on its own at the
+    /// top — it is one for every device on the account, and picking another moves them all
+    /// (<see cref="ServerSwitcher"/> asks first).
     /// </summary>
     public partial class ServersViewModel : ObservableObject
     {
         private readonly ISubscriptionService _subscription;
-        private readonly AppSession _session;
+        private readonly IAccountServer _accountServer;
+        private readonly ServerSwitcher _serverSwitcher;
 
         private List<ServerInfo> _all = new();
 
         [ObservableProperty] private string _searchQuery = string.Empty;
         [ObservableProperty] private bool _isLoading;
-        [ObservableProperty] private bool _isAutoSelected = true;
         [ObservableProperty] private bool _hasError;
 
         /// <summary>True once the server list has been fetched — avoids re-loading on every tab switch.</summary>
@@ -30,17 +30,23 @@ namespace Horus.Presentation.ViewModels
         public ObservableCollection<ServerRow> Recommended { get; } = new();
         public ObservableCollection<ServerRow> AllServers { get; } = new();
 
+        /// <summary>The account's server; null while it has none.</summary>
+        public ServerRow? AccountServer => _accountServer.Current is { } s ? new ServerRow(s) { IsSelected = true } : null;
+        public bool HasAccountServer => AccountServer is not null;
+        public bool NoAccountServer => !HasAccountServer;
+
         public bool HasRecommended => Recommended.Count > 0;
         public bool HasAll => AllServers.Count > 0;
-        public bool NoResults => !IsLoading && Recommended.Count == 0 && AllServers.Count == 0 && _all.Count > 0;
+        public bool NoResults => !IsLoading && SearchQuery.Trim().Length > 0 && Recommended.Count == 0 && AllServers.Count == 0;
         public int LocationCount => _all.Count;
         public string LocationCountText => $"{_all.Count} локаций";
 
-        public ServersViewModel(ISubscriptionService subscription, AppSession session)
+        public ServersViewModel(ISubscriptionService subscription, IAccountServer accountServer, ServerSwitcher serverSwitcher)
         {
             _subscription = subscription;
-            _session = session;
-            _session.PropertyChanged += (_, __) => SyncSelection();
+            _accountServer = accountServer;
+            _serverSwitcher = serverSwitcher;
+            _accountServer.Changed += (_, __) => MainThread.BeginInvokeOnMainThread(Rebuild);
         }
 
         partial void OnSearchQueryChanged(string value) => Rebuild();
@@ -76,26 +82,16 @@ namespace Horus.Presentation.ViewModels
         public Task RefreshAsync() { HasLoaded = false; return LoadAsync(); }
 
         [RelayCommand]
-        private void SelectAuto()
+        private async Task SelectServerAsync(ServerRow? row)
         {
-            _session.SelectAuto();
-            IsAutoSelected = true;
-            SyncSelection();
-        }
-
-        [RelayCommand]
-        private void SelectServer(ServerRow? row)
-        {
-            if (row is null) return;
-            _session.Select(row.Server);
-            IsAutoSelected = false;
-            SyncSelection();
+            if (row is not null) await _serverSwitcher.SwitchToAsync(row.Server);
         }
 
         private void Rebuild()
         {
             var q = (SearchQuery ?? string.Empty).Trim().ToLowerInvariant();
             var filtered = _all
+                .Where(s => s.Id != _accountServer.Current?.Id)
                 .Where(s => q.Length == 0 ||
                             ($"{s.Name} {s.City} {s.Country}").ToLowerInvariant().Contains(q))
                 .ToList();
@@ -108,11 +104,14 @@ namespace Horus.Presentation.ViewModels
             AllServers.Clear();
             foreach (var s in filtered.OrderBy(PingKey).ThenBy(s => s.CurrentLoad))
             {
-                var row = new ServerRow(s) { IsSelected = IsSelectedServer(s) };
+                var row = new ServerRow(s);
                 if (recIds.Contains(s.Id)) Recommended.Add(row);
                 else AllServers.Add(row);
             }
 
+            OnPropertyChanged(nameof(AccountServer));
+            OnPropertyChanged(nameof(HasAccountServer));
+            OnPropertyChanged(nameof(NoAccountServer));
             OnPropertyChanged(nameof(HasRecommended));
             OnPropertyChanged(nameof(HasAll));
             OnPropertyChanged(nameof(NoResults));
@@ -120,15 +119,6 @@ namespace Horus.Presentation.ViewModels
             OnPropertyChanged(nameof(LocationCountText));
         }
 
-        private bool IsSelectedServer(ServerInfo s) =>
-            !_session.IsAutoSelect && _session.SelectedServer?.Id == s.Id;
-
-        private void SyncSelection()
-        {
-            IsAutoSelected = _session.IsAutoSelect;
-            foreach (var r in Recommended) r.IsSelected = IsSelectedServer(r.Server);
-            foreach (var r in AllServers) r.IsSelected = IsSelectedServer(r.Server);
-        }
     }
 
     /// <summary>Display wrapper for one server row (highlightable selection).</summary>

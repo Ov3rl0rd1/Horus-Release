@@ -43,10 +43,17 @@ IPv6 halves) on it, and points the adapter's DNS at `198.18.0.2`. The routes liv
 adapter, so they vanish with it — a crash cannot strand them. The core pins every socket it
 opens to the physical interface (`autoOutboundsInterface`), so its own connection to the node
 never enters the tunnel; when no physical interface exists it refuses the socket instead of
-letting it loop. See `Platforms/Windows/Tunnel/WindowsTunnelConfig.cs`.
+letting it loop. It also keeps DNS from leaving by any other interface
+(`autoSystemWfpBlockLeak: ["dns"]`), so Windows does not ask the router's resolver in parallel;
+the filters live in a dynamic WFP session, which Windows deletes with the process. See
+`Platforms/Windows/Tunnel/WindowsTunnelConfig.cs`.
 
-What the app still does itself: wait for the adapter, add an NRPT rule so Windows does not
-also ask the router's resolver in parallel, read the adapter's counters for the speed graph.
+Nothing the tunnel changes in the system outlives the process. Builds before this one bound DNS
+with a persistent NRPT rule instead, and an app that died with the VPN on (a crash, a shutdown)
+left every lookup on the machine pointed at `198.18.0.2` — after a reboot nothing resolved until
+Horus was started again. The app removes such a rule at start.
+
+What the app still does itself: wait for the adapter, read its counters for the speed graph.
 
 | | Android | Windows |
 |---|---|---|

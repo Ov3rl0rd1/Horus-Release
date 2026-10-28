@@ -26,31 +26,35 @@
                 </Grid>
             </Border>
 
-            <!-- Auto select -->
-            <Border Padding="14,13" BackgroundColor="{StaticResource HzSurface}"
-                    Stroke="{Binding IsAutoSelected, Converter={StaticResource SelectionRingColor}}">
-                <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
-                <Border.GestureRecognizers>
-                    <TapGestureRecognizer Command="{Binding SelectAutoCommand}" />
-                </Border.GestureRecognizers>
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" VerticalOptions="Center">
-                    <Border Grid.Column="0" WidthRequest="38" HeightRequest="38"
-                            BackgroundColor="{StaticResource HzGoldSoft}" Stroke="{StaticResource HzGoldBorder}">
-                        <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
-                        <controls:IconView Kind="Auto" IconSize="17" Color="{StaticResource HzGold}"
-                            HorizontalOptions="Center" VerticalOptions="Center" />
-                    </Border>
-                    <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
-                        <Label Text="Автовыбор" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
-                        <Label Text="Сам найдёт самый быстрый сервер" Style="{StaticResource HzDim}" FontSize="12" />
-                    </VerticalStackLayout>
-                    <Grid Grid.Column="2" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
-                        <Ellipse Stroke="{Binding IsAutoSelected, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
-                        <Ellipse WidthRequest="10" HeightRequest="10"
-                                 Fill="{Binding IsAutoSelected, Converter={StaticResource SelectionDotColor}}" />
+            <!-- The account's server: one for every device on the account -->
+            <VerticalStackLayout Spacing="6" IsVisible="{Binding HasAccountServer}">
+                <Label Text="ВАШ СЕРВЕР" Style="{StaticResource HzEyebrow}" FontSize="10"
+                       TextColor="{StaticResource HzGoldLight}" Margin="4,0" />
+                <Border Padding="14,13" BackgroundColor="{StaticResource HzSurface}"
+                        Stroke="{Binding HasAccountServer, Converter={StaticResource SelectionRingColor}}">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" VerticalOptions="Center">
+                        <Border Grid.Column="0" WidthRequest="38" HeightRequest="38"
+                                BackgroundColor="{StaticResource HzGoldSoft}" Stroke="{StaticResource HzGoldBorder}">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                            <Label Text="{Binding AccountServer.Code}" TextColor="{StaticResource HzGoldLight}" FontSize="10"
+                                   FontAttributes="Bold" HorizontalOptions="Center" VerticalOptions="Center"
+                                   FontFamily="{StaticResource FontBody}" />
+                        </Border>
+                        <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                            <Label Text="{Binding AccountServer.Name}" Style="{StaticResource HzBodyLabel}" FontAttributes="Bold" />
+                            <Label Text="Общий для всех устройств аккаунта" Style="{StaticResource HzDim}" FontSize="12" />
+                        </VerticalStackLayout>
+                        <Grid Grid.Column="2" WidthRequest="20" HeightRequest="20" VerticalOptions="Center">
+                            <Ellipse Stroke="{Binding HasAccountServer, Converter={StaticResource SelectionRingColor}}" StrokeThickness="2" />
+                            <Ellipse WidthRequest="10" HeightRequest="10"
+                                     Fill="{Binding HasAccountServer, Converter={StaticResource SelectionDotColor}}" />
+                        </Grid>
                     </Grid>
-                </Grid>
-            </Border>
+                </Border>
+            </VerticalStackLayout>
+            <Label IsVisible="{Binding NoAccountServer}" Style="{StaticResource HzDim}" FontSize="12" Margin="4,0"
+                   Text="Сервер ещё не выбран. Выберите его ниже — или при первом подключении назначим наименее загруженный." />
 
             <!-- Recommended -->
             <VerticalStackLayout Spacing="6" IsVisible="{Binding HasRecommended}">
