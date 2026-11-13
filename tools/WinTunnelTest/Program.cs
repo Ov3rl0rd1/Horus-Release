@@ -8,8 +8,9 @@
 // A and SRV; rules reload and outbounds swap without a restart; and the core survives being
 // stopped and started under load (the wintun session teardown patched in the fork); a dead
 // proxy fails the client's probe; the adapter comes up when its usual identity is
-// still held by another device (the fork's fork_open_windows.go); and a client killed with
-// the tunnel up leaves the machine resolving names without it.
+// still held by another device (the fork's fork_open_windows.go); a client killed with
+// the tunnel up leaves the machine resolving names without it; and a direct IPv6 destination
+// is refused, not looped into the tunnel, on an adapter IPv6 cannot be pinned to.
 //
 // Run elevated: `dotnet run -c Release` from tools/WinTunnelTest. Exit code = failures.
 // The "node" is a second copy of this program (`server` mode) hosting the core as a VLESS
@@ -398,6 +399,103 @@ var againTraffic = againUp ? await GetAsync("https://www.gstatic.com/generate_20
 Check("a new tunnel comes up after a killed one", againUp && againTraffic.Ok,
     againErr ?? $"{IdentityName(AdapterGuid())}, {againTraffic.Detail}");
 
+// ── A direct IPv6 destination must not come back into the tunnel ─────────────
+// What users hit on 0.12.0 as "the connection drops every 10–15 minutes". With IPv6 unticked on
+// the physical adapter, IPV6_UNICAST_IF fails there; the core only logged that and opened the
+// socket unpinned, and the one IPv6 route on the machine led into the TUN. Each turn of that
+// loop was a new socket — 16 000 from a single datagram in 80 seconds — until Windows ran out
+// of ephemeral ports and nothing on the machine could open a connection for five minutes.
+// Last, because it reconfigures the runner's own adapter.
+XrayInterop.Stop();
+const string Lost6 = "2001:db8::1";   // the documentation prefix: routed nowhere, answers nothing
+if (path is null) Check("a physical path to take IPv6 off", false);
+else
+{
+    var loopback6 = System.Net.NetworkInformation.NetworkInterface.IPv6LoopbackInterfaceIndex;
+    Console.WriteLine($"   IPV6_UNICAST_IF with IPv6 on the adapter: physical #{path.InterfaceIndex} {Pin6(path.InterfaceIndex)}, loopback #{loopback6} {Pin6(loopback6)}");
+    Console.WriteLine(Shell("powershell",
+        $"-NoProfile -Command \"Disable-NetAdapterBinding -Name '{path.Name}' -ComponentID ms_tcpip6 -Confirm:$false; " +
+        $"Get-NetAdapterBinding -Name '{path.Name}' -ComponentID ms_tcpip6 | Format-Table -AutoSize Name,ComponentID,Enabled | Out-String -Width 200\"").Trim());
+    try
+    {
+        // Rebinding a protocol can bounce the adapter; nothing below means anything until it is back.
+        var settle = Stopwatch.StartNew();
+        var direct = await GetAsync("https://www.gstatic.com/generate_204");
+        while (!direct.Ok && settle.Elapsed < TimeSpan.FromSeconds(40)) { await Task.Delay(1000); direct = await GetAsync("https://www.gstatic.com/generate_204"); }
+        Check("the internet works with IPv6 unticked on the adapter", direct.Ok, $"{direct.Detail}, {settle.ElapsedMilliseconds} ms after the change");
+
+        var pinPhysical = Pin6(path.InterfaceIndex);
+        var pinLoopback = Pin6(loopback6);
+        Check("with IPv6 unticked, a socket's IPv6 cannot be pinned to the adapter", pinPhysical != "ok",
+            $"physical #{path.InterfaceIndex}: {pinPhysical}; loopback #{loopback6}: {pinLoopback}; dual-stack IPv4 half: {Pin4OnDualStack(path.InterfaceIndex)}");
+
+        // Everything direct, IPv6 captured: the configuration the field failure had.
+        var allDirect = Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"]));
+        string? loopErr = null;
+        try { XrayInterop.Start(allDirect); } catch (Exception ex) { loopErr = ex.Message; }
+        var loopUp = loopErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+        Check("the tunnel comes up over an adapter without IPv6", loopUp, loopErr ?? "");
+
+        if (loopUp)
+        {
+            // How the core refuses: the IPv6 half pinned to loopback has no way to anything remote.
+            var refusedTcp = await Refused6Async(loopback6, Lost6, 444);
+            var refusedUdp = RefusedDatagram6(loopback6, Lost6, 10);
+            await Task.Delay(1500);
+            var leaked = monitor.Connections().Count(c => c.Destination is $"[{Lost6}]:444" or $"[{Lost6}]:10");
+            Check("a socket whose IPv6 is pinned to loopback never reaches the TUN", leaked == 0,
+                $"{leaked} TUN connection(s); tcp connect: {refusedTcp}; udp send: {refusedUdp}");
+
+            var udpSeen = await TurnsAsync(() =>
+            {
+                using var u = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetworkV6);
+                u.Send([1, 2, 3, 4], new IPEndPoint(IPAddress.Parse(Lost6), 9));
+            }, 9);
+            Check("one direct IPv6 datagram is not brought back into the tunnel", udpSeen <= 2,
+                $"{udpSeen}{(udpSeen > 100 ? "+" : "")} TUN connection(s) to [{Lost6}]:9 within 5 s of a single datagram");
+
+            var tcpSeen = await TurnsAsync(() =>
+            {
+                var t = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+                _ = t.ConnectAsync(new IPEndPoint(IPAddress.Parse(Lost6), 443)).ContinueWith(_ => { Thread.Sleep(4000); t.Dispose(); });
+            }, 443);
+            Check("one direct IPv6 TCP connection is not brought back into the tunnel", tcpSeen <= 2,
+                $"{tcpSeen}{(tcpSeen > 100 ? "+" : "")} TUN connection(s) to [{Lost6}]:443 within 5 s of a single connect");
+
+            var stillWorks = await GetAsync("https://www.gstatic.com/generate_204");
+            Check("direct IPv4 is unaffected", stillWorks.Ok, stillWorks.Detail);
+        }
+    }
+    finally
+    {
+        XrayInterop.Stop();
+        Shell("powershell", $"-NoProfile -Command \"Enable-NetAdapterBinding -Name '{path.Name}' -ComponentID ms_tcpip6 -Confirm:$false\"");
+    }
+}
+
+// Counts the TUN connections one action leads to. More than a couple to the same destination is
+// the loop; the core is stopped the moment that is clear, which closes every socket of the
+// loop — the runner needs its ephemeral ports as much as a user's machine does.
+async Task<int> TurnsAsync(Action trigger, int port)
+{
+    if (!XrayInterop.IsRunning())
+    {
+        XrayInterop.Start(Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"])));
+        await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+    }
+    var seen = new HashSet<ulong>();
+    try { trigger(); } catch (Exception ex) { Console.WriteLine($"   trigger: {ex.GetType().Name}: {ex.Message}"); }
+    var watch = Stopwatch.StartNew();
+    while (watch.Elapsed < TimeSpan.FromSeconds(5) && seen.Count <= 100)
+    {
+        foreach (var c in monitor.Connections())
+            if (c.Destination == $"[{Lost6}]:{port}") seen.Add(c.Id);
+        await Task.Delay(100);
+    }
+    if (seen.Count > 100) XrayInterop.Stop();
+    return seen.Count;
+}
+
 Finish();
 return failures;
 
@@ -476,6 +574,50 @@ static async Task<bool> SystemResolvesAsync(string name, TimeSpan timeout)
         await Task.Delay(1000);
     }
     return false;
+}
+
+// IPV6_UNICAST_IF as the core sets it (host byte order for IPv6): "ok" or the socket error.
+static string Pin6(int ifIndex)
+{
+    using var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp);
+    try { s.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IPv6, (System.Net.Sockets.SocketOptionName)31, ifIndex); return "ok"; }
+    catch (System.Net.Sockets.SocketException ex) { return $"{ex.SocketErrorCode} ({ex.NativeErrorCode})"; }
+}
+
+// IP_UNICAST_IF on a dual-stack socket, the way Go opens its UDP sockets (network byte order).
+static string Pin4OnDualStack(int ifIndex)
+{
+    using var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp) { DualMode = true };
+    try { s.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IP, (System.Net.Sockets.SocketOptionName)31, IPAddress.HostToNetworkOrder(ifIndex)); return "ok"; }
+    catch (System.Net.Sockets.SocketException ex) { return $"{ex.SocketErrorCode} ({ex.NativeErrorCode})"; }
+}
+
+// A TCP connect from a socket whose IPv6 is pinned to the loopback interface: what it ends with, and how fast.
+static async Task<string> Refused6Async(int loopbackIndex, string host, int port)
+{
+    using var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+    var clock = Stopwatch.StartNew();
+    try
+    {
+        s.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IPv6, (System.Net.Sockets.SocketOptionName)31, loopbackIndex);
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+        await s.ConnectAsync(new IPEndPoint(IPAddress.Parse(host), port), limit.Token);
+        return $"connected after {clock.ElapsedMilliseconds} ms";
+    }
+    catch (System.Net.Sockets.SocketException ex) { return $"{ex.SocketErrorCode} after {clock.ElapsedMilliseconds} ms"; }
+    catch (OperationCanceledException) { return $"no answer in {clock.ElapsedMilliseconds} ms"; }
+}
+
+static string RefusedDatagram6(int loopbackIndex, string host, int port)
+{
+    using var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp);
+    try
+    {
+        s.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IPv6, (System.Net.Sockets.SocketOptionName)31, loopbackIndex);
+        var sent = s.SendTo(new byte[] { 1, 2, 3, 4 }, new IPEndPoint(IPAddress.Parse(host), port));
+        return $"sent {sent} byte(s)";
+    }
+    catch (System.Net.Sockets.SocketException ex) { return ex.SocketErrorCode.ToString(); }
 }
 
 static string Shell(string exe, string arguments)
