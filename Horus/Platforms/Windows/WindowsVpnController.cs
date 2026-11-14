@@ -92,7 +92,9 @@ namespace Horus.Platforms.Windows
 
         /// <summary>Destinations a loop was seen on; dropped at the TUN until the next connect.</summary>
         private readonly List<BlockedEndpoint> _blocked = [];
+        private PortPressure _portPressure = PortPressure.Ok;
         private DateTime? _portsExhaustedSince;
+        private string _portsLast = "not read yet";
         private long _lastFreshEndpointsAt;
 
         public WindowsVpnController(
@@ -650,7 +652,7 @@ namespace Horus.Platforms.Windows
                     // Before anything that judges the proxy: with no ports left the proxy's
                     // open connections still carry traffic, and nothing else on the machine does.
                     var connections = _connections.IsSupported ? _connections.Connections() : [];
-                    NotePorts(EphemeralPorts.Probe(), connections);
+                    NotePorts(ReadPorts(), connections);
                     await BlockLoopsAsync(connections, ct);
 
                     if (_routing == TunnelRouting.FailOpen)
@@ -754,25 +756,36 @@ namespace Horus.Platforms.Windows
             Diag.Warn("health", $"routing loop: closed {closed} looped connection(s)");
         }
 
-        /// <summary>
-        /// Says when the machine runs out of local ports, and when it has them back. Nothing
-        /// can be done about it from here beyond what <see cref="BlockLoopsAsync"/> does; but
-        /// "the VPN dropped for five minutes" with a healthy proxy is otherwise unexplainable.
-        /// </summary>
-        private void NotePorts(PortShortage shortage, IReadOnlyList<CoreConnection> connections)
-        {
-            var exhausted = shortage != PortShortage.None;
-            if (exhausted == _portsExhaustedSince.HasValue) return;
+        private static PortReport ReadPorts() =>
+            EphemeralPorts.Judge(PortTable.LocalPorts(tcp: false), PortTable.LocalPorts(tcp: true));
 
-            if (exhausted)
+        /// <summary>
+        /// Says when the machine's local ports run low or out, and when they are back. Nothing
+        /// can be done about it from here beyond what <see cref="BlockLoopsAsync"/> does; but
+        /// "the VPN dropped for five minutes" with a healthy proxy is otherwise unexplainable —
+        /// the proxy's connections were open before and need no new port.
+        /// </summary>
+        private void NotePorts(PortReport ports, IReadOnlyList<CoreConnection> connections)
+        {
+            _portsLast = ports.Describe();
+            var pressure = ports.Worst;
+            if (pressure == _portPressure) return;
+            var before = _portPressure;
+            _portPressure = pressure;
+
+            switch (pressure)
             {
-                _portsExhaustedSince = DateTime.Now;
-                Diag.Error("health", $"this machine has no free local ports ({shortage}; WSAENOBUFS): no program on it can open a new connection until some are freed. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
-            }
-            else
-            {
-                Diag.Info("health", $"local ports are available again (none were since {_portsExhaustedSince:HH:mm:ss})");
-                _portsExhaustedSince = null;
+                case PortPressure.Exhausted:
+                    _portsExhaustedSince = DateTime.Now;
+                    Diag.Error("health", $"this machine has no free local ports ({_portsLast}; WSAENOBUFS): no program on it can open a new connection until some are freed. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
+                    break;
+                case PortPressure.Low:
+                    Diag.Warn("health", $"local ports are running {(before == PortPressure.Exhausted ? "low, no longer out" : "low")}: {_portsLast}. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
+                    break;
+                default:
+                    Diag.Info("health", $"local ports are fine again ({_portsLast}){(_portsExhaustedSince is { } since ? $"; there were none free from {since:HH:mm:ss}" : string.Empty)}");
+                    _portsExhaustedSince = null;
+                    break;
             }
         }
 
@@ -782,7 +795,8 @@ namespace Horus.Platforms.Windows
             if (answered > 0 || probed == 0 || State != VpnState.Connected) return;
 
             var proxyHealthy = _routing == TunnelRouting.Vpn && _failedRecoveries == 0;
-            if (PingDiagnosis.Explain(probed, answered, tunnelUp: true, proxyHealthy, EphemeralPorts.Exhausted()) is { } said)
+            var portsOut = ReadPorts().Worst == PortPressure.Exhausted;
+            if (PingDiagnosis.Explain(probed, answered, tunnelUp: true, proxyHealthy, portsOut) is { } said)
                 Diag.Warn("ping", $"{said} (path {_network.CurrentPath?.Describe() ?? "none"}, health {_lastHealth})");
         }
 
@@ -1237,7 +1251,7 @@ namespace Horus.Platforms.Windows
             yield return new("splitHelpers", string.Join(", ", _helpers.Followers));
             yield return new("routing", _routing.ToString());
             yield return new("ipv6", Ipv6Capture.Describe(WindowsPreferences.TunSettings, _tunSettings, _ipv6Pin));
-            yield return new("ports", _portsExhaustedSince is { } since ? $"none free since {since:HH:mm:ss}" : "ok");
+            yield return new("ports", _portsExhaustedSince is { } since ? $"none free since {since:HH:mm:ss}; {_portsLast}" : _portsLast);
             var blocked = Blocked();
             yield return new("blocked", blocked.Count == 0 ? null : string.Join(", ", blocked.Select(b => $"{b.Network} {b.Address}:{b.Port}")));
 

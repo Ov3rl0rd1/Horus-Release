@@ -16,7 +16,50 @@ namespace Horus.Platforms.Windows.Tunnel
     /// </summary>
     public static class EphemeralPorts
     {
+        /// <summary>Windows' default dynamic range, 49152–65535 (<c>netsh int ipv4 show dynamicport</c>).</summary>
+        public const int DefaultRangeStart = 49_152;
+        public const int DefaultRangeEnd = 65_535;
+        public const int DefaultRangeSize = DefaultRangeEnd - DefaultRangeStart + 1;
+
+        /// <summary>
+        /// Ports left before a range counts as used up. A few always come and go with the
+        /// system's own sockets; on the runner bind failed with 19 of 16 384 not ours.
+        /// </summary>
+        public const int ExhaustedMargin = 64;
+
+        /// <summary>Share of the range in use from which it is worth saying so.</summary>
+        public const double LowShare = 0.9;
+
         public static bool IsExhaustion(SocketError error) => error == SocketError.NoBufferSpaceAvailable;
+
+        /// <summary>
+        /// How close a pool is to running out: by the ports in use, or by a bind that was refused.
+        ///
+        /// <para>The count is what can be relied on. A bind that succeeds proves little where
+        /// ports are being eaten — some system socket frees one now and then and the probe can
+        /// win it; on a hosted runner one did right after the 16 365th socket was refused. The
+        /// refused bind still counts on its own: the count assumes the default range, and a
+        /// machine set to a narrower one runs out sooner.</para>
+        /// </summary>
+        public static PortPressure Assess(int inUse, int rangeSize, bool bindRefused)
+        {
+            if (bindRefused || inUse >= rangeSize - ExhaustedMargin) return PortPressure.Exhausted;
+            return inUse >= rangeSize * LowShare ? PortPressure.Low : PortPressure.Ok;
+        }
+
+        /// <summary>Distinct ports within the default dynamic range — each counted once, whatever table listed it.</summary>
+        public static int CountInRange(IEnumerable<int> ports) =>
+            ports.Where(p => p is >= DefaultRangeStart and <= DefaultRangeEnd).Distinct().Count();
+
+        /// <summary>Both pools, judged from the ports in use (from the system's socket tables) and a bind each.</summary>
+        public static PortReport Judge(IEnumerable<int> udpPorts, IEnumerable<int> tcpPorts)
+        {
+            var refused = Probe();
+            int udp = CountInRange(udpPorts), tcp = CountInRange(tcpPorts);
+            return new PortReport(
+                Assess(udp, DefaultRangeSize, refused.HasFlag(PortShortage.Udp)), udp,
+                Assess(tcp, DefaultRangeSize, refused.HasFlag(PortShortage.Tcp)), tcp);
+        }
 
         /// <summary>Whether either pool is used up. UDP and TCP ports are handed out separately.</summary>
         public static bool Exhausted() => Probe() != PortShortage.None;
@@ -39,7 +82,28 @@ namespace Horus.Platforms.Windows.Tunnel
         }
     }
 
-    /// <summary>Which of the two port pools has nothing left.</summary>
+    /// <summary>Both pools of local ports: how close each is to running out, and how many of the default range are in use.</summary>
+    public sealed record PortReport(PortPressure Udp, int UdpInUse, PortPressure Tcp, int TcpInUse)
+    {
+        public PortPressure Worst => Udp > Tcp ? Udp : Tcp;
+
+        public string Describe() =>
+            $"UDP {UdpInUse} of {EphemeralPorts.DefaultRangeSize} in use ({Udp}), TCP {TcpInUse} ({Tcp})";
+    }
+
+    /// <summary>How close a pool of local ports is to running out.</summary>
+    public enum PortPressure
+    {
+        Ok,
+
+        /// <summary>Most of the range is in use. Nothing fails yet; worth a line in the log.</summary>
+        Low,
+
+        /// <summary>No port to give: no new connection of that kind can be opened on the machine.</summary>
+        Exhausted
+    }
+
+    /// <summary>Which of the two port pools refused a bind.</summary>
     [Flags]
     public enum PortShortage
     {
@@ -82,7 +146,7 @@ namespace Horus.Platforms.Windows.Tunnel
             if (probed <= 0 || answered > 0 || !tunnelUp || !proxyHealthy) return null;
 
             return portsExhausted
-                ? $"none of {probed} node(s) answered, and the proxy is working: this machine has no free ports left " +
+                ? $"none of {probed} node(s) answered, and the proxy is working: this machine has (nearly) no free ports left " +
                   "(WSAENOBUFS), so the probe could not open a socket. Nothing on the machine can open a new connection until ports free up"
                 : $"none of {probed} node(s) answered from the physical interface, and the proxy is working: " +
                   "the nodes are not the problem — sockets pinned to the physical interface are not getting out (a firewall, or the interface has changed)";

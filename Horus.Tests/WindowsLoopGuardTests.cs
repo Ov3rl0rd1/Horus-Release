@@ -219,6 +219,43 @@ public class WindowsLoopGuardTests
         Assert.False(EphemeralPorts.Exhausted());
     }
 
+    // A bind that succeeds proves little on a machine whose ports are being eaten: some system
+    // socket frees one now and then, and the probe can win it — measured on a hosted runner,
+    // a bind succeeded right after the 16 365th socket was refused with WSAENOBUFS. The count of
+    // ports in use does not depend on such luck.
+
+    [Theory]
+    [InlineData(16_384, PortPressure.Exhausted)]   // every port of Windows' default range
+    [InlineData(16_365, PortPressure.Exhausted)]   // what the runner had when bind failed
+    [InlineData(15_000, PortPressure.Low)]
+    [InlineData(1_200, PortPressure.Ok)]
+    public void Ports_in_use_are_judged_against_the_dynamic_range(int inUse, PortPressure expected) =>
+        Assert.Equal(expected, EphemeralPorts.Assess(inUse, EphemeralPorts.DefaultRangeSize, bindRefused: false));
+
+    [Fact]
+    public void A_refused_bind_is_exhaustion_whatever_the_count() =>
+        // The count assumes Windows' default range; a machine with a narrower one is still
+        // caught by the bind itself.
+        Assert.Equal(PortPressure.Exhausted, EphemeralPorts.Assess(100, EphemeralPorts.DefaultRangeSize, bindRefused: true));
+
+    [Fact]
+    public void A_report_names_the_worse_pool_and_the_counts()
+    {
+        var report = new PortReport(PortPressure.Exhausted, 16_380, PortPressure.Low, 15_000);
+        Assert.Equal(PortPressure.Exhausted, report.Worst);
+        Assert.Equal("UDP 16380 of 16384 in use (Exhausted), TCP 15000 (Low)", report.Describe());
+        Assert.Equal(PortPressure.Low, (report with { Udp = PortPressure.Ok }).Worst);
+    }
+
+    [Fact]
+    public void Only_ports_in_the_dynamic_range_are_counted_and_each_once()
+    {
+        // A dual-stack socket is listed once in the IPv6 table, an IPv4 one in the IPv4 table;
+        // a port held by both is still one port. 53 and 3389 are not handed out by Windows.
+        int[] listed = [49_152, 49_152, 50_000, 65_535, 53, 3389, 65_536];
+        Assert.Equal(3, EphemeralPorts.CountInRange(listed));
+    }
+
     [Fact]
     public void The_busiest_destinations_lead_the_summary()
     {

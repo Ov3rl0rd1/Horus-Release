@@ -421,7 +421,7 @@ XrayInterop.Stop();
 // machine could open a connection, while the tunnel's own check — which rides connections that
 // were already open — saw nothing wrong. Taken here for a moment and given straight back.
 var hoard = new List<System.Net.Sockets.Socket>();
-var shortage = PortShortage.None;
+PortReport? shortage = null;
 string hoardEnd = "the range never ran out";
 try
 {
@@ -432,11 +432,13 @@ try
         try { sock.Bind(new IPEndPoint(IPAddress.Any, 0)); }
         catch (System.Net.Sockets.SocketException ex) { hoardEnd = $"{ex.SocketErrorCode} ({ex.NativeErrorCode}) after {hoard.Count - 1} sockets"; break; }
     }
-    shortage = EphemeralPorts.Probe();
+    shortage = EphemeralPorts.Judge(PortTable.LocalPorts(tcp: false), PortTable.LocalPorts(tcp: true));
 }
 finally { foreach (var sock in hoard) sock.Dispose(); }
-Check("with every UDP port taken, the client says the machine is out of ports", shortage.HasFlag(PortShortage.Udp), $"{shortage}; {hoardEnd}");
-Check("and that they are back once released", EphemeralPorts.Probe() == PortShortage.None, EphemeralPorts.Probe().ToString());
+Check("with every UDP port taken, the client says the machine is out of ports", shortage?.Udp == PortPressure.Exhausted,
+    $"{shortage?.Describe()}; {hoardEnd}");
+var released = EphemeralPorts.Judge(PortTable.LocalPorts(tcp: false), PortTable.LocalPorts(tcp: true));
+Check("and that they are back once released", released.Worst == PortPressure.Ok, released.Describe());
 
 const string Lost4 = "192.0.2.1";   // TEST-NET-1
 var nothingPinnedNode = JsonNode.Parse(Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"])))!;
