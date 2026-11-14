@@ -58,6 +58,33 @@ namespace Horus.Platforms.Windows.Tunnel
             return Math.Max(1, (int)clock.ElapsedMilliseconds);
         }
 
+        /// <summary>
+        /// Whether a socket's IPv6 can be pinned to the interface — the exact call the core
+        /// makes for every socket it opens, tried once on a socket that is then thrown away.
+        ///
+        /// <para>On a machine with IPv6 unticked on the adapter it answers <c>WSAEINVAL</c>
+        /// (measured on a hosted runner, both ways). The core seals such a socket's IPv6
+        /// rather than let it loop, so nothing breaks either way; what this buys is the
+        /// chance not to route IPv6 into the tunnel at all (<see cref="Ipv6Capture"/>).</para>
+        /// </summary>
+        public static Ipv6Pin ProbeIpv6Pin(int ifIndex)
+        {
+            if (ifIndex <= 0) return Ipv6Pin.Unknown;
+            try
+            {
+                using var socket = new Socket(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp);
+                socket.SetSocketOption(SocketOptionLevel.IPv6, (SocketOptionName)IpUnicastIf, ifIndex);
+                return Ipv6Pin.Works;
+            }
+            catch (SocketException)
+            {
+                // The option was refused, or the machine has no IPv6 to make a socket of:
+                // either way the core cannot send IPv6 out by this interface.
+                return Ipv6Pin.Refused;
+            }
+            catch (Exception) { return Ipv6Pin.Unknown; }
+        }
+
         private static void Pin(Socket socket, AddressFamily family, int ifIndex)
         {
             try

@@ -15,11 +15,20 @@ namespace Horus.Platforms.Windows.Tunnel
     /// <param name="BlockDnsLeaks">Have the core stop DNS from leaving by any other interface.
     /// Windows asks every interface's resolvers in parallel, so the router would otherwise
     /// see each lookup and could win the race with its own answer.</param>
+    /// <param name="BlockIpv6Outside">With IPv6 not captured, have the core keep it off every
+    /// other interface too, instead of letting it past the VPN. Set by <see cref="Ipv6Capture"/>
+    /// for a session whose physical interface cannot carry IPv6; never by the user's own
+    /// "IPv6 through the VPN: off", which means past the VPN.</param>
     public sealed record WindowsTunSettings(
         string Name = WindowsTunnelConfig.AdapterName,
         int Mtu = WindowsTunnelConfig.DefaultMtu,
         bool CaptureIpv6 = true,
-        bool BlockDnsLeaks = true);
+        bool BlockDnsLeaks = true,
+        bool BlockIpv6Outside = false)
+    {
+        /// <summary>Whether the config asks the core for any WFP filter — what a refusal of them turns off.</summary>
+        public bool AsksForFilters => BlockDnsLeaks || (BlockIpv6Outside && !CaptureIpv6);
+    }
 
     /// <summary>Per-application routing, as the user chose it.</summary>
     /// <param name="Mode">Blacklist: these apps bypass the VPN. Whitelist: only these use it.</param>
@@ -110,8 +119,11 @@ namespace Horus.Platforms.Windows.Tunnel
         /// split-tunnel rules. Candidates are proved working on the unshaped config first,
         /// which has no TUN, so a fallback between them never creates and destroys adapters.
         /// </summary>
+        /// <param name="blocked">Destinations dropped at the TUN for this session — where a
+        /// loop was seen (<see cref="LoopStormDetector"/>).</param>
         public static string Build(
-            string baseConfigJson, WindowsTunSettings tun, WindowsSplitRules split, TunnelRouting routing = TunnelRouting.Vpn)
+            string baseConfigJson, WindowsTunSettings tun, WindowsSplitRules split,
+            TunnelRouting routing = TunnelRouting.Vpn, IReadOnlyList<BlockedEndpoint>? blocked = null)
         {
             var root = JsonNode.Parse(baseConfigJson)?.AsObject()
                 ?? throw new ArgumentException("Empty base config.", nameof(baseConfigJson));
@@ -144,7 +156,9 @@ namespace Horus.Platforms.Windows.Tunnel
 
             var routingObject = root["routing"] as JsonObject ?? [];
             var shared = routingObject["rules"] as JsonArray ?? [];
-            routingObject["rules"] = routing == TunnelRouting.FailOpen ? FailOpenRules(shared) : Rules(shared, split);
+            routingObject["rules"] = routing == TunnelRouting.FailOpen
+                ? FailOpenRules(shared, blocked ?? [])
+                : Rules(shared, split, blocked ?? []);
             root["routing"] = routingObject;
 
             return root.ToJsonString(Indented);
@@ -249,7 +263,12 @@ namespace Horus.Platforms.Windows.Tunnel
             // WFP filters in a dynamic session: Windows deletes them when the process ends,
             // however it ends. The NRPT rule they replace was persistent, and one left behind
             // by a crash or a shutdown pointed every lookup at a resolver that no longer existed.
-            if (tun.BlockDnsLeaks) settings[LeakBlockKey] = new JsonArray("dns");
+            // "misconfigtun" is the core's name for an IP version no route of which leads to
+            // the TUN: it is kept off every other interface as well (Ipv6Capture).
+            var filters = new JsonArray();
+            if (tun.BlockDnsLeaks) filters.Add("dns");
+            if (tun.BlockIpv6Outside && !tun.CaptureIpv6) filters.Add("misconfigtun");
+            if (filters.Count > 0) settings[LeakBlockKey] = filters;
 
             var inbound = new JsonObject
             {
@@ -311,9 +330,9 @@ namespace Horus.Platforms.Windows.Tunnel
         /// send, and what a site rule explicitly sends to the proxy, uses the VPN.</item>
         /// </list>
         /// </summary>
-        private static JsonArray Rules(JsonArray shared, WindowsSplitRules split)
+        private static JsonArray Rules(JsonArray shared, WindowsSplitRules split, IReadOnlyList<BlockedEndpoint> blocked)
         {
-            var rules = LeadRules(dnsModule: ProxyTag, tunDns: DnsOutTag);
+            var rules = LeadRules(dnsModule: ProxyTag, tunDns: DnsOutTag, blocked);
 
             var items = shared.Select(n => n?.DeepClone()).OfType<JsonNode>().ToList();
 
@@ -367,9 +386,9 @@ namespace Horus.Platforms.Windows.Tunnel
         /// so that its return is noticed, the user's blocks and the shared ranges kept, the rest
         /// direct. No process rules — every application takes the same way now.
         /// </summary>
-        private static JsonArray FailOpenRules(JsonArray shared)
+        private static JsonArray FailOpenRules(JsonArray shared, IReadOnlyList<BlockedEndpoint> blocked)
         {
-            var rules = LeadRules(dnsModule: DirectTag, tunDns: DnsDirectTag);
+            var rules = LeadRules(dnsModule: DirectTag, tunDns: DnsDirectTag, blocked);
 
             foreach (var rule in shared.Select(n => n?.DeepClone()).OfType<JsonNode>())
             {
@@ -388,41 +407,63 @@ namespace Horus.Platforms.Windows.Tunnel
         /// <summary>The rules ahead of everything else, whatever the routing.</summary>
         /// <param name="dnsModule">Where the core's own DNS queries go.</param>
         /// <param name="tunDns">The DNS outbound that answers Windows.</param>
-        private static JsonArray LeadRules(string dnsModule, string tunDns) =>
-        [
-            new JsonObject
+        /// <param name="blocked">Destinations a loop was seen on; dropped before any rule can send them out again.</param>
+        private static JsonArray LeadRules(string dnsModule, string tunDns, IReadOnlyList<BlockedEndpoint> blocked)
+        {
+            var rules = new JsonArray
             {
-                ["type"] = "field",
-                ["inboundTag"] = new JsonArray(DnsModuleTag),
-                ["outboundTag"] = dnsModule
-            },
-            new JsonObject
+                new JsonObject
+                {
+                    ["type"] = "field",
+                    ["inboundTag"] = new JsonArray(DnsModuleTag),
+                    ["outboundTag"] = dnsModule
+                },
+                new JsonObject
+                {
+                    ["type"] = "field",
+                    ["inboundTag"] = new JsonArray(TunTag),
+                    ["port"] = "53",
+                    ["network"] = "tcp,udp",
+                    ["outboundTag"] = tunDns
+                },
+                // The TUN's own subnet has nothing behind it but the resolver above. Windows
+                // still talks to it — NetBIOS broadcasts to the /30's broadcast address, seen
+                // on a real run — and the shared rules would send that out "direct".
+                new JsonObject
+                {
+                    ["type"] = "field",
+                    ["ip"] = new JsonArray(Address[..^1] + "0/30", Address6[..^1] + "0/126"),
+                    ["outboundTag"] = "block"
+                },
+                // The SOCKS inbound is the probe channel: health checks dial through it to
+                // learn whether the proxy works. Under a whitelist the catch-all is direct,
+                // and a probe that went direct would report a dead proxy as healthy.
+                new JsonObject
+                {
+                    ["type"] = "field",
+                    ["inboundTag"] = new JsonArray(SocksTag),
+                    ["outboundTag"] = ProxyTag
+                }
+            };
+
+            // What came back into the TUN from the core's own sockets goes nowhere from now
+            // on: closing the connections of a loop does not end it, the packet is already
+            // on the next socket.
+            foreach (var endpoint in blocked)
             {
-                ["type"] = "field",
-                ["inboundTag"] = new JsonArray(TunTag),
-                ["port"] = "53",
-                ["network"] = "tcp,udp",
-                ["outboundTag"] = tunDns
-            },
-            // The TUN's own subnet has nothing behind it but the resolver above. Windows
-            // still talks to it — NetBIOS broadcasts to the /30's broadcast address, seen
-            // on a real run — and the shared rules would send that out "direct".
-            new JsonObject
-            {
-                ["type"] = "field",
-                ["ip"] = new JsonArray(Address[..^1] + "0/30", Address6[..^1] + "0/126"),
-                ["outboundTag"] = "block"
-            },
-            // The SOCKS inbound is the probe channel: health checks dial through it to
-            // learn whether the proxy works. Under a whitelist the catch-all is direct,
-            // and a probe that went direct would report a dead proxy as healthy.
-            new JsonObject
-            {
-                ["type"] = "field",
-                ["inboundTag"] = new JsonArray(SocksTag),
-                ["outboundTag"] = ProxyTag
+                rules.Add(new JsonObject
+                {
+                    ["type"] = "field",
+                    ["inboundTag"] = new JsonArray(TunTag),
+                    ["ip"] = new JsonArray(endpoint.Address),
+                    ["port"] = endpoint.Port.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["network"] = endpoint.Network,
+                    ["outboundTag"] = "block"
+                });
             }
-        ];
+
+            return rules;
+        }
 
         /// <summary>Exact paths as xray compares them, forward slashes. Never a bare name — see <see cref="WindowsSplitRules.Followers"/>.</summary>
         private static IEnumerable<string> FollowerMatchers(IEnumerable<string> followers) =>

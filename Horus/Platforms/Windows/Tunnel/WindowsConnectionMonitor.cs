@@ -46,6 +46,25 @@ namespace Horus.Platforms.Windows.Tunnel
             });
         }
 
+        /// <summary>
+        /// Whether a connection's source is a socket of this very process — the core runs
+        /// inside it, so that is what a connection routed back into the TUN looks like
+        /// (<see cref="LoopStormDetector"/>). The owner tables are read on the first call only.
+        /// </summary>
+        public Func<CoreConnection, bool> FromThisProcess()
+        {
+            Dictionary<(bool Tcp, bool V6, int Port), int>? owners = null;
+            var self = Environment.ProcessId;
+            return c =>
+            {
+                owners ??= OwnerTable.Read();
+                return owners.TryGetValue((c.Network == "tcp", c.Source.StartsWith('['), c.SourcePort), out var pid) && pid == self;
+            };
+        }
+
+        /// <summary>Closes connections by id; returns how many the core closed.</summary>
+        public int Close(IEnumerable<ulong> ids) => XrayLive.CloseConnections(ids);
+
         /// <summary>Closes an application's connections so it reconnects under the current rules.</summary>
         public int Restart(AppTraffic app)
         {

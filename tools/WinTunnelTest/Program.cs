@@ -184,6 +184,15 @@ var curlState = curl.HasExited
 var ourRow = apps.FirstOrDefault(a => a.Name.Equals(mine, StringComparison.OrdinalIgnoreCase));
 Check("connections are attributed to processes", ourRow is not null && curlRow is not null,
     $"{apps.Count} app(s): {string.Join(", ", apps.Select(a => a.Name))}");
+// The core runs inside this process, so a connection routed back into the TUN would come from
+// one of this process's sockets: that is how the client tells a loop from a busy application.
+var fromHere = monitor.FromThisProcess();
+var listed = monitor.Connections();
+var oursSeen = listed.Where(c => ourRow?.ConnectionIds.Contains(c.Id) == true).ToList();
+var curlSeen = listed.Where(c => curlRow?.ConnectionIds.Contains(c.Id) == true).ToList();
+Check("a connection from this process's own socket is told from another program's",
+    oursSeen.Count > 0 && oursSeen.All(fromHere) && curlSeen.Count > 0 && !curlSeen.Any(fromHere),
+    $"ours: {oursSeen.Count(fromHere)} of {oursSeen.Count} recognised; curl's: {curlSeen.Count(fromHere)} of {curlSeen.Count} mistaken");
 Check("curl.exe routed direct by the process rule", curlRow is { Direct: > 0, ViaVpn: 0 },
     curlRow is null ? $"not seen; {curlState}" : $"vpn {curlRow.ViaVpn}, direct {curlRow.Direct}, {curlState}");
 Check("our own traffic routed through the proxy", ourRow is { ViaVpn: > 0, Direct: 0 },
@@ -406,6 +415,29 @@ Check("a new tunnel comes up after a killed one", againUp && againTraffic.Ok,
 // Connection Sharing). With the pin switched off altogether, every direct socket follows the
 // default route straight back in — and must be dropped on arrival, not sent round again.
 XrayInterop.Stop();
+
+// ── Running out of ports is seen for what it is ──────────────────────────────
+// The symptom users had: every port in Windows' dynamic range taken, so that nothing on the
+// machine could open a connection, while the tunnel's own check — which rides connections that
+// were already open — saw nothing wrong. Taken here for a moment and given straight back.
+var hoard = new List<System.Net.Sockets.Socket>();
+var shortage = PortShortage.None;
+string hoardEnd = "the range never ran out";
+try
+{
+    while (hoard.Count < 40_000)
+    {
+        var sock = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp);
+        hoard.Add(sock);
+        try { sock.Bind(new IPEndPoint(IPAddress.Any, 0)); }
+        catch (System.Net.Sockets.SocketException ex) { hoardEnd = $"{ex.SocketErrorCode} ({ex.NativeErrorCode}) after {hoard.Count - 1} sockets"; break; }
+    }
+    shortage = EphemeralPorts.Probe();
+}
+finally { foreach (var sock in hoard) sock.Dispose(); }
+Check("with every UDP port taken, the client says the machine is out of ports", shortage.HasFlag(PortShortage.Udp), $"{shortage}; {hoardEnd}");
+Check("and that they are back once released", EphemeralPorts.Probe() == PortShortage.None, EphemeralPorts.Probe().ToString());
+
 const string Lost4 = "192.0.2.1";   // TEST-NET-1
 var nothingPinnedNode = JsonNode.Parse(Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"])))!;
 nothingPinnedNode["inbounds"]![0]!["settings"]!["autoOutboundsInterface"] = "";
@@ -450,6 +482,8 @@ else
 {
     var loopback6 = System.Net.NetworkInformation.NetworkInterface.IPv6LoopbackInterfaceIndex;
     Console.WriteLine($"   IPV6_UNICAST_IF with IPv6 on the adapter: physical #{path.InterfaceIndex} {Pin6(path.InterfaceIndex)}, loopback #{loopback6} {Pin6(loopback6)}");
+    var pinBefore = PhysicalProbe.ProbeIpv6Pin(path.InterfaceIndex);
+    Check("the client's trial pin works while the adapter has IPv6", pinBefore == Ipv6Pin.Works, pinBefore.ToString());
     Console.WriteLine(Shell("powershell",
         $"-NoProfile -Command \"Disable-NetAdapterBinding -Name '{path.Name}' -ComponentID ms_tcpip6 -Confirm:$false; " +
         $"Get-NetAdapterBinding -Name '{path.Name}' -ComponentID ms_tcpip6 | Format-Table -AutoSize Name,ComponentID,Enabled | Out-String -Width 200\"").Trim());
@@ -465,6 +499,33 @@ else
         var pinLoopback = Pin6(loopback6);
         Check("with IPv6 unticked, a socket's IPv6 cannot be pinned to the adapter", pinPhysical != "ok",
             $"physical #{path.InterfaceIndex}: {pinPhysical}; loopback #{loopback6}: {pinLoopback}; dual-stack IPv4 half: {Pin4OnDualStack(path.InterfaceIndex)}");
+
+        // ── The client, seeing that, does not route IPv6 into the tunnel at all ──
+        // The application then gets what it would without the VPN — unreachable, at once —
+        // instead of a handshake completed by the TUN and a reset a second later. And IPv6 is
+        // kept off every other interface, so a network that does have it leaks nothing.
+        var pinAfter = PhysicalProbe.ProbeIpv6Pin(path.InterfaceIndex);
+        Check("the client's trial pin is refused with IPv6 unticked", pinAfter == Ipv6Pin.Refused, pinAfter.ToString());
+        var guarded = Ipv6Capture.Decide(new WindowsTunSettings(), pinAfter);
+        var guardedJson = WindowsTunnelConfig.Build(cfg.ToConfig(), guarded, new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"]));
+        string? guardedErr = null;
+        try { XrayInterop.Test(guardedJson); XrayInterop.Start(guardedJson); } catch (Exception ex) { guardedErr = ex.Message; }
+        var guardedUp = guardedErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+        Check("a tunnel without IPv6, and with IPv6 blocked outside it, comes up", guardedUp && !guarded.CaptureIpv6 && guarded.BlockIpv6Outside, guardedErr ?? "");
+        if (guardedUp)
+        {
+            var routes6 = Shell("powershell", "-NoProfile -Command \"(Get-NetRoute -InterfaceAlias Horus -AddressFamily IPv6 -ErrorAction SilentlyContinue | Where-Object { $_.DestinationPrefix -in '::/1','8000::/1' } | Measure-Object).Count\"").Trim();
+            Check("no IPv6 route leads into it", routes6 == "0", $"{routes6} route(s)");
+            var at = Stopwatch.StartNew();
+            var plain = await Refused6Async(0, Lost6, 445);
+            await Task.Delay(500);
+            var taken = monitor.Connections().Count(c => c.Destination == $"[{Lost6}]:445");
+            Check("an application's IPv6 connect is turned away at once, not taken by the TUN",
+                taken == 0 && !plain.StartsWith("connected") && at.Elapsed < TimeSpan.FromSeconds(3), $"{plain}; {taken} TUN connection(s)");
+            var v4 = await GetAsync("https://www.gstatic.com/generate_204");
+            Check("IPv4 through that tunnel is unaffected", v4.Ok, v4.Detail);
+        }
+        XrayInterop.Stop();
 
         // Everything direct, IPv6 captured: the configuration the field failure had.
         var allDirect = Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"]));
@@ -503,9 +564,9 @@ else
             Check("direct IPv4 is unaffected", stillWorks.Ok, stillWorks.Detail);
             // At Warning, once: a client that runs the core at "warning" has to see why direct
             // IPv6 does not work. The field log had 66 000 lines of it at Info, read by nobody.
-            var said = CoreLog().Split('\n').Where(l => l.Contains("IPv6 cannot be pinned to")).ToList();
+            var said = CoreLog().Split('\n').Where(l => l.Contains("[Warning]") && l.Contains("IPv6 cannot be pinned to")).ToList();
             Check("the core says, once and as a warning, that IPv6 is refused on this adapter",
-                said.Count == 1 && said[0].Contains("[Warning]"), said.Count == 0 ? "not said" : $"{said.Count} line(s): {said[0].Trim()}");
+                said.Count == 1, said.Count == 0 ? "not said" : $"{said.Count} warning(s): {said[0].Trim()}");
         }
     }
     finally
@@ -646,14 +707,15 @@ static string Pin4OnDualStack(int ifIndex)
     catch (System.Net.Sockets.SocketException ex) { return $"{ex.SocketErrorCode} ({ex.NativeErrorCode})"; }
 }
 
-// A TCP connect from a socket whose IPv6 is pinned to the loopback interface: what it ends with, and how fast.
+// A TCP connect over IPv6, from a socket pinned to the loopback interface (or, with index 0,
+// not pinned at all): what it ends with, and how fast.
 static async Task<string> Refused6Async(int loopbackIndex, string host, int port)
 {
     using var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
     var clock = Stopwatch.StartNew();
     try
     {
-        s.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IPv6, (System.Net.Sockets.SocketOptionName)31, loopbackIndex);
+        if (loopbackIndex > 0) s.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IPv6, (System.Net.Sockets.SocketOptionName)31, loopbackIndex);
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(6));
         await s.ConnectAsync(new IPEndPoint(IPAddress.Parse(host), port), limit.Token);
         return $"connected after {clock.ElapsedMilliseconds} ms";

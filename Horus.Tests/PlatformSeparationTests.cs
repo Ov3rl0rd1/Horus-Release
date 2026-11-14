@@ -6,8 +6,9 @@ namespace Horus.Tests;
 
 /// <summary>
 /// The shared code carries a few hooks that only Windows fills: its own screens
-/// (<c>IPlatformScreens</c>) and a server-ping dial pinned to the physical interface
-/// (<c>LatencyProbe.Connector</c>). Android stays on the shared UI and the default dial
+/// (<c>IPlatformScreens</c>), a server-ping dial pinned to the physical interface
+/// (<c>LatencyProbe.Connector</c>) and a listener for how the sweep went
+/// (<c>LatencyProbe.SweepObserver</c>). Android stays on the shared UI and the default dial
 /// exactly because nothing outside Windows fills them; these tests keep it that way.
 /// </summary>
 public class PlatformSeparationTests
@@ -54,6 +55,20 @@ public class PlatformSeparationTests
         var assignments = Directory.EnumerateFiles(AppDir, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
             .Where(f => Regex.IsMatch(File.ReadAllText(f), @"LatencyProbe\.Connector\s*="))
+            .Select(f => Path.GetRelativePath(AppDir, f).Replace('\\', '/'))
+            .ToList();
+
+        Assert.Equal(["Platforms/Windows/WindowsVpnController.cs"], assignments);
+    }
+
+    [Fact]
+    public void Only_windows_code_listens_to_the_server_ping_sweep()
+    {
+        // The diagnosis it feeds ("no node answers from the physical interface while the
+        // proxy works") only means something where probes are pinned past a tunnel.
+        var assignments = Directory.EnumerateFiles(AppDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .Where(f => Regex.IsMatch(File.ReadAllText(f), @"LatencyProbe\.SweepObserver\s*="))
             .Select(f => Path.GetRelativePath(AppDir, f).Replace('\\', '/'))
             .ToList();
 

@@ -87,7 +87,12 @@ namespace Horus.Platforms.Windows
         private bool _loopWarned;
         private CancellationTokenSource? _rulesDebounce;
         private WindowsTunSettings _tunSettings = WindowsPreferences.TunSettings;
+        private Ipv6Pin _ipv6Pin = Ipv6Pin.Unknown;
         private TunnelRouting _routing = TunnelRouting.Vpn;
+
+        /// <summary>Destinations a loop was seen on; dropped at the TUN until the next connect.</summary>
+        private readonly List<BlockedEndpoint> _blocked = [];
+        private DateTime? _portsExhaustedSince;
         private long _lastFreshEndpointsAt;
 
         public WindowsVpnController(
@@ -127,6 +132,7 @@ namespace Horus.Platforms.Windows
             // the core's local handshake, about 1 ms for every server.
             LatencyProbe.Connector = (host, port, ct) => PhysicalProbe.ConnectAsync(
                 host, port, _network.CurrentPath?.InterfaceIndex ?? 0, LatencyProbe.Timeout, refusedIsAnswer: false, ct);
+            LatencyProbe.SweepObserver = OnPingSweep;
         }
 
         public VpnState State { get; private set; } = VpnState.Disconnected;
@@ -256,10 +262,11 @@ namespace Horus.Platforms.Windows
 
             // Phase two: the same outbound, now with the TUN. Off the caller's thread: the
             // adapter takes about a second to create, and wintun can wait 15 s for a device.
-            _tunSettings = WindowsPreferences.TunSettings;
+            DecideIpv6ForSession();
             _routing = TunnelRouting.Vpn;
+            lock (_blocked) _blocked.Clear();
             await Task.Run(() => StartWithTun(config), CancellationToken.None);
-            Diag.Info("connect", $"core up with TUN ({config.OfferId}, mtu {_tunSettings.Mtu}, split {_split.CurrentRules.Mode}/{_split.CurrentRules.Processes.Count})");
+            Diag.Info("connect", $"core up with TUN ({config.OfferId}, mtu {_tunSettings.Mtu}, split {_split.CurrentRules.Mode}/{_split.CurrentRules.Processes.Count}, IPv6 {(_tunSettings.CaptureIpv6 ? "captured" : "not captured")})");
 
             await _tunnel.StartTunnelAsync(new TunnelOptions
             {
@@ -522,7 +529,26 @@ namespace Horus.Platforms.Windows
 
         private string BuildRunConfig(XrayConfig config) =>
             WindowsTunnelConfig.Build(
-                config.ToConfig(), _tunSettings, _split.CurrentRules with { Followers = _helpers.Followers }, _routing);
+                config.ToConfig(), _tunSettings, _split.CurrentRules with { Followers = _helpers.Followers }, _routing, Blocked());
+
+        private List<BlockedEndpoint> Blocked()
+        {
+            lock (_blocked) return [.. _blocked];
+        }
+
+        /// <summary>
+        /// Settles, before the adapter exists, whether this session routes IPv6 into it: only
+        /// when the core can pin IPv6 to the physical interface — see <see cref="Ipv6Capture"/>.
+        /// </summary>
+        private void DecideIpv6ForSession()
+        {
+            var wanted = WindowsPreferences.TunSettings;
+            var path = _network.CurrentPath;
+            _ipv6Pin = PhysicalProbe.ProbeIpv6Pin(path?.InterfaceIndex ?? 0);
+            _tunSettings = Ipv6Capture.Decide(wanted, _ipv6Pin);
+            if (_tunSettings != wanted)
+                Diag.Warn("connect", $"IPv6 {Ipv6Capture.Describe(wanted, _tunSettings, _ipv6Pin)} — {path?.Describe() ?? "no path"}");
+        }
 
         /// <summary>
         /// What the node offers, in the order to try it. A protocol that hops ports gets a second
@@ -544,10 +570,10 @@ namespace Horus.Platforms.Windows
             {
                 StartCore(BuildRunConfig(config));
             }
-            catch (InvalidOperationException ex) when (_tunSettings.BlockDnsLeaks && WindowsTunnelConfig.IsLeakBlockRefusal(ex.Message))
+            catch (InvalidOperationException ex) when (_tunSettings.AsksForFilters && WindowsTunnelConfig.IsLeakBlockRefusal(ex.Message))
             {
-                Diag.Warn("connect", $"DNS leak filters refused, starting without them: {ex.Message}");
-                _tunSettings = _tunSettings with { BlockDnsLeaks = false };
+                Diag.Warn("connect", $"leak filters refused, starting without them: {ex.Message}");
+                _tunSettings = _tunSettings with { BlockDnsLeaks = false, BlockIpv6Outside = false };
                 XrayInterop.Stop();
                 StartCore(BuildRunConfig(config));
             }
@@ -621,6 +647,12 @@ namespace Horus.Platforms.Windows
                         return;
                     }
 
+                    // Before anything that judges the proxy: with no ports left the proxy's
+                    // open connections still carry traffic, and nothing else on the machine does.
+                    var connections = _connections.IsSupported ? _connections.Connections() : [];
+                    NotePorts(EphemeralPorts.Probe(), connections);
+                    await BlockLoopsAsync(connections, ct);
+
                     if (_routing == TunnelRouting.FailOpen)
                     {
                         sinceFailedOpenRetry += HealthInterval;
@@ -635,7 +667,7 @@ namespace Horus.Platforms.Windows
                     bool needProbe;
                     if (_connections.IsSupported)
                     {
-                        var list = _connections.Connections();
+                        var list = connections;
                         CheckForLoop(list, session);
                         var verdict = _stall.Feed(list, Environment.TickCount64);
                         _lastHealth = verdict.ToString();
@@ -684,10 +716,81 @@ namespace Horus.Platforms.Windows
             Diag.Error("health", $"routing loop: a TUN connection is going to the node itself ({loop.Destination} via {loop.Outbound ?? "?"}) — outbound binding did not hold");
         }
 
+        /// <summary>
+        /// A loop the core did not stop: many live connections to one destination, all from
+        /// this process's own sockets (<see cref="LoopStormDetector"/>). The destination is
+        /// dropped at the TUN for the rest of the session — closing the connections alone does
+        /// not end a loop, the packet is already on the next socket — and then they are closed,
+        /// which gives their ports back at once.
+        /// </summary>
+        private async Task BlockLoopsAsync(IReadOnlyList<CoreConnection> connections, CancellationToken ct)
+        {
+            if (connections.Count < LoopStormDetector.Threshold) return;
+
+            var storms = LoopStormDetector.Find(connections, _connections.FromThisProcess());
+            if (storms.Count == 0) return;
+
+            var added = false;
+            foreach (var storm in storms)
+            {
+                Diag.Error("health", $"routing loop: {storm.Count} TUN connections to {storm.Network} {storm.Destination} came from the core's own sockets — its way out does not hold for that destination; dropping it at the tunnel for this session");
+                if (BlockedEndpoint.Parse(storm.Network, storm.Destination) is not { } endpoint) continue;
+                lock (_blocked)
+                {
+                    if (_blocked.Contains(endpoint)) continue;
+                    _blocked.Add(endpoint);
+                    added = true;
+                }
+            }
+
+            try
+            {
+                if (added) await ReloadRulesAsync("a routing loop was blocked", ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Diag.Warn("health", $"loop not blocked: {ex.Message}"); }
+
+            var closed = _connections.Close(storms.SelectMany(s => s.ConnectionIds));
+            Diag.Warn("health", $"routing loop: closed {closed} looped connection(s)");
+        }
+
+        /// <summary>
+        /// Says when the machine runs out of local ports, and when it has them back. Nothing
+        /// can be done about it from here beyond what <see cref="BlockLoopsAsync"/> does; but
+        /// "the VPN dropped for five minutes" with a healthy proxy is otherwise unexplainable.
+        /// </summary>
+        private void NotePorts(PortShortage shortage, IReadOnlyList<CoreConnection> connections)
+        {
+            var exhausted = shortage != PortShortage.None;
+            if (exhausted == _portsExhaustedSince.HasValue) return;
+
+            if (exhausted)
+            {
+                _portsExhaustedSince = DateTime.Now;
+                Diag.Error("health", $"this machine has no free local ports ({shortage}; WSAENOBUFS): no program on it can open a new connection until some are freed. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
+            }
+            else
+            {
+                Diag.Info("health", $"local ports are available again (none were since {_portsExhaustedSince:HH:mm:ss})");
+                _portsExhaustedSince = null;
+            }
+        }
+
+        /// <summary>The server list's ping sweep, which leaves by the physical interface while the tunnel runs.</summary>
+        private void OnPingSweep(int probed, int answered)
+        {
+            if (answered > 0 || probed == 0 || State != VpnState.Connected) return;
+
+            var proxyHealthy = _routing == TunnelRouting.Vpn && _failedRecoveries == 0;
+            if (PingDiagnosis.Explain(probed, answered, tunnelUp: true, proxyHealthy, EphemeralPorts.Exhausted()) is { } said)
+                Diag.Warn("ping", $"{said} (path {_network.CurrentPath?.Describe() ?? "none"}, health {_lastHealth})");
+        }
+
         // ── Network changes ──────────────────────────────────────────────────
 
         private void OnPathChanged(object? sender, NetworkPathChange e)
         {
+            NoteIpv6OnNewPath(e);
             switch (e.Kind)
             {
                 case Change.Preferred:
@@ -707,6 +810,30 @@ namespace Horus.Platforms.Windows
                         ScheduleReconnect("network is back", immediate: true);
                     return;
             }
+        }
+
+        /// <summary>
+        /// Whether IPv6 is routed into the tunnel was settled at connect, for the interface of
+        /// that moment; the adapter's routes cannot follow a new one without rebuilding the
+        /// tunnel, which is never worth a dropped match. So a change is only said — and it is
+        /// safe either way: where the session captures IPv6 and the new interface cannot carry
+        /// it, the core refuses direct IPv6 rather than loop it; where it does not capture it
+        /// and the new interface could, IPv6 stays blocked outside the tunnel.
+        /// </summary>
+        private void NoteIpv6OnNewPath(NetworkPathChange e)
+        {
+            if (_session is null || e.After is null || e.Kind is Change.None or Change.Lost) return;
+
+            var pin = PhysicalProbe.ProbeIpv6Pin(e.After.InterfaceIndex);
+            if (pin == _ipv6Pin || pin == Ipv6Pin.Unknown) return;
+            _ipv6Pin = pin;
+
+            var wanted = WindowsPreferences.TunSettings;
+            if (Ipv6Capture.Decide(wanted, pin).CaptureIpv6 == _tunSettings.CaptureIpv6) return;
+
+            Diag.Warn("net", _tunSettings.CaptureIpv6
+                ? $"IPv6 cannot be pinned to {e.After.Describe()}: direct IPv6 is refused by the core until the next connect, which will stop routing IPv6 into the tunnel"
+                : $"IPv6 can be pinned to {e.After.Describe()}, but this session does not route it into the tunnel: it stays blocked until the next connect");
         }
 
         /// <summary>
@@ -1109,6 +1236,10 @@ namespace Horus.Platforms.Windows
             yield return new("split", $"{_split.CurrentRules.Mode}, {_split.CurrentRules.Processes.Count} app(s)");
             yield return new("splitHelpers", string.Join(", ", _helpers.Followers));
             yield return new("routing", _routing.ToString());
+            yield return new("ipv6", Ipv6Capture.Describe(WindowsPreferences.TunSettings, _tunSettings, _ipv6Pin));
+            yield return new("ports", _portsExhaustedSince is { } since ? $"none free since {since:HH:mm:ss}" : "ok");
+            var blocked = Blocked();
+            yield return new("blocked", blocked.Count == 0 ? null : string.Join(", ", blocked.Select(b => $"{b.Network} {b.Address}:{b.Port}")));
 
             long[] counters;
             try { counters = _tunnel.GetTunnelStats(); } catch { counters = []; }

@@ -71,6 +71,14 @@ namespace Horus.Application
         public static Func<string, int, CancellationToken, Task<int?>>? Connector { get; set; }
 
         /// <summary>
+        /// Told how each sweep went — nodes probed, nodes that answered; null everywhere but
+        /// Windows. There the probes leave by the physical interface while the tunnel runs,
+        /// so "none answered" with a working proxy is a fact about the machine, not the nodes,
+        /// and the Windows controller says which.
+        /// </summary>
+        public static Action<int, int>? SweepObserver { get; set; }
+
+        /// <summary>
         /// Fills <see cref="ServerInfo.PingMs"/> on every candidate, in place, and returns
         /// them sorted fastest-first with unreachable nodes last.
         ///
@@ -96,6 +104,7 @@ namespace Horus.Application
 
             var reachable = list.Count(s => s.PingMs is not null);
             Diag.Info("ping", $"probed {list.Count} node(s), {reachable} answered");
+            try { SweepObserver?.Invoke(list.Count, reachable); } catch { /* a diagnosis must not fail the sweep */ }
 
             return [.. Ordered(list)];
         }
