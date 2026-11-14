@@ -777,7 +777,7 @@ namespace Horus.Platforms.Windows
             {
                 case PortPressure.Exhausted:
                     _portsExhaustedSince = DateTime.Now;
-                    Diag.Error("health", $"this machine has no free local ports ({_portsLast}; WSAENOBUFS): no program on it can open a new connection until some are freed. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
+                    Diag.Error("health", $"this machine has (nearly) no free local ports ({_portsLast}): no program on it can open a new connection once they are gone (WSAENOBUFS), until some are freed. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
                     break;
                 case PortPressure.Low:
                     Diag.Warn("health", $"local ports are running {(before == PortPressure.Exhausted ? "low, no longer out" : "low")}: {_portsLast}. The tunnel's connections: {ConnectionSummary.Busiest(connections)}");
