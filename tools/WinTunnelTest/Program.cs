@@ -9,8 +9,9 @@
 // stopped and started under load (the wintun session teardown patched in the fork); a dead
 // proxy fails the client's probe; the adapter comes up when its usual identity is
 // still held by another device (the fork's fork_open_windows.go); a client killed with
-// the tunnel up leaves the machine resolving names without it; and a direct IPv6 destination
-// is refused, not looped into the tunnel, on an adapter IPv6 cannot be pinned to.
+// the tunnel up leaves the machine resolving names without it; a socket of the core's that
+// comes back into the TUN is dropped there; and a direct IPv6 destination is refused, not
+// looped into the tunnel, on an adapter IPv6 cannot be pinned to.
 //
 // Run elevated: `dotnet run -c Release` from tools/WinTunnelTest. Exit code = failures.
 // The "node" is a second copy of this program (`server` mode) hosting the core as a VLESS
@@ -399,6 +400,42 @@ var againTraffic = againUp ? await GetAsync("https://www.gstatic.com/generate_20
 Check("a new tunnel comes up after a killed one", againUp && againTraffic.Ok,
     againErr ?? $"{IdentityName(AdapterGuid())}, {againTraffic.Detail}");
 
+// ── Whatever lets a socket of the core's back into the TUN, it stops there ────
+// The pin is the first defence and the next failure will not be the one that was fixed
+// (Windows ignores the pin while forwarding is on for the interface: Mobile Hotspot, Internet
+// Connection Sharing). With the pin switched off altogether, every direct socket follows the
+// default route straight back in — and must be dropped on arrival, not sent round again.
+XrayInterop.Stop();
+const string Lost4 = "192.0.2.1";   // TEST-NET-1
+var nothingPinnedNode = JsonNode.Parse(Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"])))!;
+nothingPinnedNode["inbounds"]![0]!["settings"]!["autoOutboundsInterface"] = "";
+var nothingPinned = nothingPinnedNode.ToJsonString();
+string? nothingPinnedErr = null;
+try { XrayInterop.Start(nothingPinned); } catch (Exception ex) { nothingPinnedErr = ex.Message; }
+var nothingPinnedUp = nothingPinnedErr is null && await WaitAdapterAsync(TimeSpan.FromSeconds(20));
+Check("a tunnel that pins nothing comes up", nothingPinnedUp, nothingPinnedErr ?? "");
+if (nothingPinnedUp)
+{
+    var udp4 = await TurnsAsync(() =>
+    {
+        using var u = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetwork);
+        u.Send([1, 2, 3, 4], new IPEndPoint(IPAddress.Parse(Lost4), 9));
+    }, $"{Lost4}:9", nothingPinned);
+    Check("with nothing pinned, one datagram is still one connection", udp4 <= 2,
+        $"{udp4}{(udp4 > 100 ? "+" : "")} TUN connection(s) to {Lost4}:9 within 5 s of a single datagram");
+
+    var tcp4 = await TurnsAsync(() =>
+    {
+        var t = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+        _ = t.ConnectAsync(new IPEndPoint(IPAddress.Parse(Lost4), 443)).ContinueWith(_ => { Thread.Sleep(4000); t.Dispose(); });
+    }, $"{Lost4}:443", nothingPinned);
+    Check("with nothing pinned, one connect is still one connection", tcp4 <= 2,
+        $"{tcp4}{(tcp4 > 100 ? "+" : "")} TUN connection(s) to {Lost4}:443 within 5 s of a single connect");
+
+    var dropped = CoreLog().Split('\n').LastOrDefault(l => l.Contains("dropped a connection from the core's own socket"));
+    Check("the core says what it dropped", dropped is not null, dropped?.Trim() ?? "nothing in its log");
+}
+
 // ── A direct IPv6 destination must not come back into the tunnel ─────────────
 // What users hit on 0.12.0 as "the connection drops every 10–15 minutes". With IPv6 unticked on
 // the physical adapter, IPV6_UNICAST_IF fails there; the core only logged that and opened the
@@ -450,7 +487,7 @@ else
             {
                 using var u = new System.Net.Sockets.UdpClient(System.Net.Sockets.AddressFamily.InterNetworkV6);
                 u.Send([1, 2, 3, 4], new IPEndPoint(IPAddress.Parse(Lost6), 9));
-            }, 9);
+            }, $"[{Lost6}]:9", allDirect);
             Check("one direct IPv6 datagram is not brought back into the tunnel", udpSeen <= 2,
                 $"{udpSeen}{(udpSeen > 100 ? "+" : "")} TUN connection(s) to [{Lost6}]:9 within 5 s of a single datagram");
 
@@ -458,12 +495,17 @@ else
             {
                 var t = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetworkV6, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
                 _ = t.ConnectAsync(new IPEndPoint(IPAddress.Parse(Lost6), 443)).ContinueWith(_ => { Thread.Sleep(4000); t.Dispose(); });
-            }, 443);
+            }, $"[{Lost6}]:443", allDirect);
             Check("one direct IPv6 TCP connection is not brought back into the tunnel", tcpSeen <= 2,
                 $"{tcpSeen}{(tcpSeen > 100 ? "+" : "")} TUN connection(s) to [{Lost6}]:443 within 5 s of a single connect");
 
             var stillWorks = await GetAsync("https://www.gstatic.com/generate_204");
             Check("direct IPv4 is unaffected", stillWorks.Ok, stillWorks.Detail);
+            // At Warning, once: a client that runs the core at "warning" has to see why direct
+            // IPv6 does not work. The field log had 66 000 lines of it at Info, read by nobody.
+            var said = CoreLog().Split('\n').Where(l => l.Contains("IPv6 cannot be pinned to")).ToList();
+            Check("the core says, once and as a warning, that IPv6 is refused on this adapter",
+                said.Count == 1 && said[0].Contains("[Warning]"), said.Count == 0 ? "not said" : $"{said.Count} line(s): {said[0].Trim()}");
         }
     }
     finally
@@ -476,11 +518,11 @@ else
 // Counts the TUN connections one action leads to. More than a couple to the same destination is
 // the loop; the core is stopped the moment that is clear, which closes every socket of the
 // loop — the runner needs its ephemeral ports as much as a user's machine does.
-async Task<int> TurnsAsync(Action trigger, int port)
+async Task<int> TurnsAsync(Action trigger, string destination, string config)
 {
     if (!XrayInterop.IsRunning())
     {
-        XrayInterop.Start(Run(new WindowsSplitRules(SplitTunnelingMode.Whitelist, ["no-such-app.exe"])));
+        XrayInterop.Start(config);
         await WaitAdapterAsync(TimeSpan.FromSeconds(20));
     }
     var seen = new HashSet<ulong>();
@@ -489,11 +531,23 @@ async Task<int> TurnsAsync(Action trigger, int port)
     while (watch.Elapsed < TimeSpan.FromSeconds(5) && seen.Count <= 100)
     {
         foreach (var c in monitor.Connections())
-            if (c.Destination == $"[{Lost6}]:{port}") seen.Add(c.Id);
+            if (c.Destination == destination) seen.Add(c.Id);
         await Task.Delay(100);
     }
     if (seen.Count > 100) XrayInterop.Stop();
     return seen.Count;
+}
+
+// The core's log so far; it is open for writing while the core runs.
+string CoreLog()
+{
+    try
+    {
+        using var stream = new FileStream(Path.Combine(logs, "client.log"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+    catch (Exception ex) { return "(unreadable: " + ex.Message + ")"; }
 }
 
 Finish();

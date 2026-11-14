@@ -23,13 +23,17 @@ go build -buildmode=c-shared -trimpath -buildvcs=false \
   -o xray.dll ./libxray
 ```
 
-The shipped `xray.dll` is fork commit **d813c77d** — the fork rebased onto upstream v26.10.10, release
-`lib-from-v26.10.10` (the core logs it at start: `Xray 26.10.10 … d813c77`). It carries the
-embedded-TUN lifecycle, live controls, outbound binding by route metric, the gVisor NIC
-attached only after its handlers, and an adapter GUID that is not still held by the previous
-adapter's device (`proxy/tun/fork_open_windows.go` — a reconnect used to fail with wintun's
-"problem code: 0x1F" until a reboot). When replacing it, keep this line current — the version string
-is the only way to tell from a user's log which core they ran.
+The shipped `xray.dll` is fork commit **1ce07a2a** — upstream v26.10.10 plus the fork (the core
+logs it at start: `Xray 26.10.10 … 1ce07a2a`). It carries the embedded-TUN lifecycle, live
+controls, outbound binding by route metric, the gVisor NIC attached only after its handlers, an
+adapter GUID that is not still held by the previous adapter's device
+(`proxy/tun/fork_open_windows.go` — a reconnect used to fail with wintun's "problem code: 0x1F"
+until a reboot), and the two things that keep the core's own sockets out of the TUN when the
+pin does not hold: an address family the physical interface will not take is sealed to loopback
+(`fork_pin.go`), and a connection reaching the TUN from one of the core's own sockets is dropped
+(`fork_loop.go`). Before those, a machine with IPv6 unticked on its adapter turned one direct
+IPv6 datagram into 16 000 sockets and ran out of ephemeral ports. When replacing it, keep this
+line current — the version string is the only way to tell from a user's log which core they ran.
 
 **`wintun.dll` must sit beside `Horus.exe`, not in a subfolder.** The core loads it with
 `LOAD_LIBRARY_SEARCH_APPLICATION_DIR`, which is the directory of the process's executable — not
@@ -42,8 +46,8 @@ The core owns the TUN in-process: its `tun` inbound creates the wintun adapter, 
 IPv6 halves) on it, and points the adapter's DNS at `198.18.0.2`. The routes live on the
 adapter, so they vanish with it — a crash cannot strand them. The core pins every socket it
 opens to the physical interface (`autoOutboundsInterface`), so its own connection to the node
-never enters the tunnel; when no physical interface exists it refuses the socket instead of
-letting it loop. It also keeps DNS from leaving by any other interface
+never enters the tunnel; when no physical interface exists, or the interface will not take one
+of the socket's address families, it refuses that much of the socket instead of letting it loop. It also keeps DNS from leaving by any other interface
 (`autoSystemWfpBlockLeak: ["dns"]`), so Windows does not ask the router's resolver in parallel;
 the filters live in a dynamic WFP session, which Windows deletes with the process. See
 `Platforms/Windows/Tunnel/WindowsTunnelConfig.cs`.
