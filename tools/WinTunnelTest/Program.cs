@@ -437,6 +437,11 @@ try
 finally { foreach (var sock in hoard) sock.Dispose(); }
 Check("with every UDP port taken, the client says the machine is out of ports", shortage?.Udp == PortPressure.Exhausted,
     $"{shortage?.Describe()}; {hoardEnd}");
+// By the count alone: a bind that happens to win a port some system socket just freed must not
+// be what decides it (it did, once, on this runner).
+var byCount = shortage is null ? PortPressure.Ok : EphemeralPorts.Assess(shortage.UdpInUse, EphemeralPorts.DefaultRangeSize, bindRefused: false);
+Check("and says so from the count of ports in use, not from a lucky bind", byCount == PortPressure.Exhausted,
+    $"{shortage?.UdpInUse} in use -> {byCount}");
 var released = EphemeralPorts.Judge(PortTable.LocalPorts(tcp: false), PortTable.LocalPorts(tcp: true));
 Check("and that they are back once released", released.Worst == PortPressure.Ok, released.Describe());
 

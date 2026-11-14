@@ -7,7 +7,8 @@ description: How the Windows tunnel is built and how to test a change to it with
 
 ## What runs
 
-The core (`xray.dll`, the fork's `libxray`) runs **in-process and owns the TUN**: its `tun`
+The core (`xray.dll`, the fork's `libxray`, on upstream v26.11.9 with its own TCP/IP stack —
+gVisor is gone) runs **in-process and owns the TUN**: its `tun`
 inbound creates the wintun adapter, installs `0/1 + 128/1` on it, answers DNS at
 `198.18.0.2`, keeps DNS off every other interface with WFP filters in a dynamic session
 (`autoSystemWfpBlockLeak`, gone with the process), and pins every socket it opens to the
@@ -136,6 +137,16 @@ let `windows-tunnel` run against it. Fork changes go through `bash fork/bin/fork
 - **Recovery must not restart the core** while a swap (`XrayReplaceOutbound`) can do: a restart
   removes the adapter and every connection on the machine with it.
 - `IP_UNICAST_IF` takes the interface index in **network** byte order for IPv4, host order for IPv6.
+- **`IPV6_UNICAST_IF` answers `WSAEINVAL` (10022) when IPv6 is unticked on the adapter**
+  (`Disable-NetAdapterBinding -ComponentID ms_tcpip6`), while the IPv4 half of the same
+  dual-stack socket pins fine. That is the 0.12.0 port-exhaustion loop. WinTunnelTest unbinds
+  `ms_tcpip6` from the runner's adapter to reproduce it (last section; it rebinds after) — and
+  with `autoOutboundsInterface: ""` it checks the core's own loop guard with nothing pinned.
+- **A successful `bind` does not mean there are ports.** On the runner a bind succeeded right
+  after the 16 365th socket was refused with `WSAENOBUFS`. Count the ports in use (`PortTable`).
+- **`fork export` needs the upstream base tag locally.** Upstream deletes old release tags'
+  refs from time to time; `git tag vX.Y.Z <commit>` (the commit is a parent of the fork's
+  last "Rebase fork onto upstream" merge) puts it back.
 - `wintun.dll` must sit beside `Horus.exe`; the core loads it from the application directory.
 - WinRT `FileOpenPicker` fails in an elevated process — Horus is always elevated; use
   `GetOpenFileNameW` (`ExePicker`).

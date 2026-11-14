@@ -22,13 +22,16 @@ namespace Horus.Platforms.Windows.Tunnel
         public const int DefaultRangeSize = DefaultRangeEnd - DefaultRangeStart + 1;
 
         /// <summary>
-        /// Ports left before a range counts as used up. A few always come and go with the
-        /// system's own sockets; on the runner bind failed with 19 of 16 384 not ours.
+        /// Share of the range in use from which it counts as used up. Windows refuses before the
+        /// last port: on a hosted runner bind failed with 16 365 of 16 384 in use on one run and
+        /// with 16 083 (98 %) on the next — part of the range is excluded on many machines
+        /// (Hyper-V, WSL and Docker reserve blocks of it; <c>netsh int ipv4 show excludedportrange</c>),
+        /// which is the likely reason, not a measured one.
         /// </summary>
-        public const int ExhaustedMargin = 64;
+        public const double ExhaustedShare = 0.97;
 
         /// <summary>Share of the range in use from which it is worth saying so.</summary>
-        public const double LowShare = 0.9;
+        public const double LowShare = 0.85;
 
         public static bool IsExhaustion(SocketError error) => error == SocketError.NoBufferSpaceAvailable;
 
@@ -43,7 +46,7 @@ namespace Horus.Platforms.Windows.Tunnel
         /// </summary>
         public static PortPressure Assess(int inUse, int rangeSize, bool bindRefused)
         {
-            if (bindRefused || inUse >= rangeSize - ExhaustedMargin) return PortPressure.Exhausted;
+            if (bindRefused || inUse >= rangeSize * ExhaustedShare) return PortPressure.Exhausted;
             return inUse >= rangeSize * LowShare ? PortPressure.Low : PortPressure.Ok;
         }
 

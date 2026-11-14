@@ -226,7 +226,8 @@ public class WindowsLoopGuardTests
 
     [Theory]
     [InlineData(16_384, PortPressure.Exhausted)]   // every port of Windows' default range
-    [InlineData(16_365, PortPressure.Exhausted)]   // what the runner had when bind failed
+    [InlineData(16_365, PortPressure.Exhausted)]   // what the runner had when bind failed, first run
+    [InlineData(16_083, PortPressure.Exhausted)]   // and on the second: Windows refuses before the last port
     [InlineData(15_000, PortPressure.Low)]
     [InlineData(1_200, PortPressure.Ok)]
     public void Ports_in_use_are_judged_against_the_dynamic_range(int inUse, PortPressure expected) =>

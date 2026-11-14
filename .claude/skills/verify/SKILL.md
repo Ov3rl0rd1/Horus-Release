@@ -43,7 +43,7 @@ failed with "Missing from the publish output: publish/win-x64/wintun.dll".
 | Android Debug | 39 warnings, 0 errors |
 | Windows Debug | 129 warnings, 0 errors |
 | WinUiTypeCheck | builds, warnings are the shared MVVM-toolkit ones |
-| tests | **464 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed (26.10.2026) |
+| tests | **498 passed**, 6 skipped (live-API and bench export, need env vars), 0 failed (14.11.2026) |
 
 The counts are noisy by design (obsolete MAUI `Frame`, `CA1416` platform-availability,
 `CS0067` unused events on the stub services). What matters is that no **new kind** appears —
@@ -97,6 +97,10 @@ not one — it is the wrong TFM. `Horus.csproj:14-16` is the source of truth.
   matched by path; a dead proxy never takes the adapter down (hold closed, then fail open).
 - `AccountServerRulesTests` — the server is the account's: followed when it moves, never
   re-selected by a connect.
+- `WindowsLoopGuardTests` — IPv6 is not routed into the TUN when the core cannot pin it to the
+  adapter (and is then blocked outside it); a destination looping from our own sockets is
+  blocked ahead of every rule; port exhaustion is judged by ports in use; "no node answers the
+  ping" with a working proxy is explained, not blamed on the nodes.
 
 When touching the port, the YAML generator or the API models, expect these to fail first and
 treat that as the tests working.
